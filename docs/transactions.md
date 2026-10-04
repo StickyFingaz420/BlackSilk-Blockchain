@@ -989,26 +989,46 @@ and a node could serve a distribution that was monotone with the right total but
 decoy ages old, so the young real input stood out as the newest member. Tested:
 `rings_do_not_depend_on_the_nodes_distribution` (a skewed node gets the honest node's
 rings, scanned and restored wallets) and `no_spend_path_requests_the_distribution`
-(`wallet/src/wallet/tests_sync.rs`); the e2e ring tests count the requests too. The
-endpoint stays for tools.
+(`wallet/src/wallet/tests_sync.rs`, with `a_lying_first_output_cannot_restart_the_scanned_index`
+and `a_spend_straight_after_a_restore_backfills_with_a_warning` for what follows); the
+e2e ring tests count the requests too. The endpoint stays for tools.
 
-Before the distribution is used, the index must hold every output from global index 0
-and pass a cheap shape check from consensus facts: no output at height 0 (the genesis
-body is empty), every height `1..=synced` present with at least one coinbase output
-(every block's coinbase has at least one), heights non-decreasing and none above the
-synced block. A backfill that fails it is refused and not stored, so the next spend
-fetches it again. A wallet file written before the index existed, with no block synced
-since, indexes its synced block again from `/blocks` (checked against its own block
-id), whose `first_output` ends the backfill.
+**What is checked, precisely.**
+- *Scanned range* (from the restore height on). Keys, commitments, coinbase flags and
+  heights come from the blocks the wallet scanned: each block matches its id and its
+  `tx_root` and extends the previous one; their headers are checked from the genesis
+  while a restored wallet catches up, or always with `set_verify_headers`. The global
+  index of each scanned block's first output must continue the index exactly (RT-D1
+  F1): a node that misstates it is refused, and can no longer make the wallet discard
+  its scanned range and backfill it. The exception is the *first* scanned block (the
+  restore point, or the rescan after a reorganization deeper than the kept window):
+  its `first_output` is the node's, checked only to be at least its height − 1, and 0
+  for block 1. A wallet scanned from the genesis therefore derives every position and
+  every height itself.
+- *Backfill* (below the restore height). Fetched once with `/outputs`, as the whole
+  range `0 .. start`, and checked only for shape against consensus facts before it is
+  stored: no output at height 0 (the genesis body is empty), every height `1..=synced`
+  present with at least one coinbase output (every coinbase has at least one), heights
+  non-decreasing and none above the synced block. A backfill that fails is not stored.
+- *Old wallet files* (written before the index existed, no block synced since). The
+  synced block is fetched again from `/blocks`, checked against the wallet's own block
+  id and `tx_root`; its `first_output` must agree with the global indices of the
+  wallet's own outputs and is then where the backfill ends.
 
-**Residual (F38-2; 38 W11, P1).** The heights of outputs below the restore height are
-the node's `/outputs` answers. The shape check catches a gap, a stale tail or a block
-without a coinbase output, but not a consistent fabrication: a node that serves the
-backfill can still choose the distribution, the keys and the commitments of that older
-range. For a wallet scanned from the genesis the whole distribution comes from checked
-blocks. Verifying the backfill (38 W11) is P1. Until then, restore from your own node.
-The decoy draws come from an operating-system-seeded RNG, not the hedged stream (F38-5,
-not implemented): a cloned machine or a broken OS RNG repeats decoys.
+**When the backfill is made (RT-D1 F2).** By the `sync` that catches up, not by the
+spend: a spend requests nothing but `/tx`. The one exception is a spend made straight
+after a restore with no `sync` in between (the spend's own scan does not backfill): the
+spend then fetches the backfill just before `/tx`, and warns. Run `sync` after `restore`
+before spending; the CLI says so.
+
+**Residual (F38-2; 38 W11, P1).** Below the restore height the node chooses the output
+keys, commitments and heights. The shape check catches a gap, a stale tail or a block
+without a coinbase output, not a consistent fabrication, so that node still chooses the
+older part of the distribution and of the decoy pool; it also chooses where the first
+scanned block's outputs start. Verifying the backfill (38 W11) is P1. Until then,
+restore from your own node, or restore from the genesis. The decoy draws come from an
+operating-system-seeded RNG, not the hedged stream (F38-5, not implemented): a cloned
+machine or a broken OS RNG repeats decoys.
 
 **Merge avoidance (review R3-13).** When no single output covers a payment, input
 selection first takes at most one output per source transaction. Outputs stored

@@ -146,6 +146,13 @@ impl Wallet {
         // the synced block itself is indexed from the block feed, which
         // gives where the missing range ends (its `first_output`).
         if self.index.is_empty() && self.synced_height > 0 {
+            if self.synced_height < self.restore_height {
+                // Nothing scanned yet (a rescan from the restore height was
+                // interrupted, RT-D1 F3): the next sync scans it.
+                return Err(WalletError::BadNodeData(
+                    "the output index is empty: sync again".into(),
+                ));
+            }
             self.index_synced_block(node)?;
         }
         let synced = self.synced_height;
@@ -222,6 +229,17 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<Vec<InputPlan>, WalletError> {
         let next = self.synced_height + 1;
+        // Normally done by `sync`; here only when no sync completed it (a
+        // spend straight after a restore): the node then sees the backfill
+        // just before `/tx` (RT-D1 F2).
+        if self.index_needs_backfill() {
+            self.warnings.push(
+                "the output index was completed now, just before this transaction, so the \
+                 node saw the backfill requests right before it; after a restore, run `sync` \
+                 before spending"
+                    .into(),
+            );
+        }
         let cumulative = &self.complete_index(node)?;
         let target = self.params.target_block_time;
         let decoy_err = |e| WalletError::Decoys(format!("{e:?}"));

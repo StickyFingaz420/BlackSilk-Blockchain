@@ -1751,7 +1751,16 @@ fn rings_do_not_depend_on_the_nodes_distribution() {
             Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), restore).unwrap();
         base.set_header_pow(Arc::new(ZeroPow));
         base.set_allow_stale_tip(true);
-        assert_eq!(base.sync(&chain).unwrap(), 120);
+        // The backfill below the restore height is made by the sync (RT-D1
+        // F2), not by the spend.
+        let syncer = Spy::new(&chain, honest.clone());
+        assert_eq!(base.sync(&syncer).unwrap(), 120);
+        assert_eq!(
+            syncer.output_calls.get() > 0,
+            restore > 1,
+            "restore {restore}: a backfill only below the restore height"
+        );
+        assert!(!base.index_needs_backfill());
         let mut rings = Vec::new();
         for dist in [&honest, &skewed] {
             let mut w = spend_wallet(&base);
@@ -1759,11 +1768,7 @@ fn rings_do_not_depend_on_the_nodes_distribution() {
             let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9);
             w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
             assert_eq!(node.dist_calls.get(), 0, "restore {restore}: /distribution");
-            assert_eq!(
-                node.output_calls.get() > 0,
-                restore > 1,
-                "restore {restore}: a backfill only below the restore height"
-            );
+            assert_eq!(node.output_calls.get(), 0, "restore {restore}: /outputs");
             // The wallet's own distribution is the honest node's.
             assert_eq!(
                 w.index.cumulative(120).unwrap(),
@@ -1870,5 +1875,106 @@ fn an_empty_index_takes_its_extent_from_the_wallets_own_tip_block() {
     let e = w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap_err();
     assert!(e.to_string().contains("not the wallet's"), "{e}");
     assert_eq!((node.dist_calls.get(), node.output_calls.get()), (0, 0));
+    assert!(w.index.is_empty());
+    chain.lies.alter_block = None;
+
+    // RT-D1 F2: a sync does it, so the spend after it requests nothing.
+    let mut w = spend_wallet(&base);
+    let syncer = Spy::new(&chain, honest.clone());
+    w.sync(&syncer).unwrap();
+    assert!(syncer.output_calls.get() > 0, "the backfill, at sync");
+    assert_eq!(w.index.cumulative(120).unwrap(), honest);
+    let node = Spy::new(&chain, honest.clone());
+    w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+    assert_eq!((node.dist_calls.get(), node.output_calls.get()), (0, 0));
+
+    // RT-D1 F1, the legacy path: a `first_output` for block 120 that the
+    // wallet's own outputs contradict is refused (at sync: a warning).
+    chain.first_output[120] += 1;
+    let mut w = spend_wallet(&base);
+    let node = Spy::new(&chain, honest.clone());
+    w.sync(&node).unwrap();
+    assert!(w.take_warnings().iter().any(|m| m.contains("contradict")));
+    assert_eq!(node.output_calls.get(), 0);
+    assert!(w.index.is_empty());
+}
+
+/// RT-D1 F2: a spend straight after a restore, with no sync that completed
+/// the output index, still backfills (the residual), and says so.
+#[test]
+fn a_spend_straight_after_a_restore_backfills_with_a_warning() {
+    use rand_chacha::rand_core::SeedableRng;
+    let chain = rich_chain(55);
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+    let mut w = Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), 40).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_allow_stale_tip(true);
+    // RT-D1 F3: before any block is scanned, an empty index asks for a sync.
+    assert!(!w.index_needs_backfill());
+    let e = w
+        .complete_index(&Spy::new(&chain, vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("sync again"), "{e}");
+    // The mock serves no `/outputs`: the sync-time backfill fails (a
+    // warning) and the spend makes it.
+    assert_eq!(w.sync(&chain).unwrap(), 120);
+    assert!(w
+        .take_warnings()
+        .iter()
+        .any(|m| m.contains("could not be completed")));
+    assert!(w.index_needs_backfill());
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(6);
+    w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+    assert!(node.output_calls.get() > 0);
+    assert_eq!(node.dist_calls.get(), 0);
+    assert!(w.take_warnings().iter().any(|m| m.contains("run `sync`")));
+    assert_eq!(
+        w.index.cumulative(120).unwrap(),
+        honest_distribution(&chain)
+    );
+}
+
+/// RT-D1 F1 (the reviewer's probe): a node that lies once about where a
+/// block's outputs start must not make the wallet discard the outputs it
+/// scanned. Before the fix the index restarted at the lie, and the next
+/// spend backfilled everything below it from `/outputs`. Now the block is
+/// refused, the index is unchanged, and nothing needs backfilling. Block
+/// 1 must start at 0.
+#[test]
+fn a_lying_first_output_cannot_restart_the_scanned_index() {
+    let mut chain = rich_chain(54);
+    let to = wallet().primary();
+    let mut w = wallet();
+    w.set_header_pow(Arc::new(ZeroPow));
+    assert_eq!(w.sync(&chain).unwrap(), 120);
+    let before = w.index.clone();
+    assert_eq!(before.start(), 0);
+    chain.mine(&to, 0);
+    chain.mine(&to, 0);
+    let truth = chain.first_output[121];
+    for lie in [truth + 1, truth - 1, truth + 1_000] {
+        chain.first_output[121] = lie;
+        let e = w.sync(&chain).unwrap_err();
+        assert!(matches!(e, WalletError::BadNodeData(_)), "{lie}: {e}");
+        assert_eq!(w.synced_height(), 120, "{lie}");
+        assert_eq!(w.index, before, "{lie}: the index is unchanged");
+        assert!(!w.index_needs_backfill());
+        let node = Spy::new(&chain, vec![]);
+        w.complete_index(&node).unwrap();
+        assert_eq!(node.output_calls.get(), 0, "{lie}: no backfill");
+    }
+    chain.first_output[121] = truth;
+    assert_eq!(w.sync(&chain).unwrap(), 122);
+    assert_eq!(w.index.start(), 0);
+
+    // Block 1 of a wallet scanning from the genesis.
+    let mut chain = rich_chain(56);
+    chain.first_output[1] = 5;
+    let mut w = wallet();
+    w.set_header_pow(Arc::new(ZeroPow));
+    assert!(matches!(w.sync(&chain), Err(WalletError::BadNodeData(_))));
     assert!(w.index.is_empty());
 }

@@ -93,6 +93,11 @@ impl OutputIndex {
         self.entries.get(i)
     }
 
+    /// The height of the last indexed output.
+    pub fn last_height(&self) -> Option<u64> {
+        self.entries.last().map(|e| e.height)
+    }
+
     /// The indexed outputs, in global-index order.
     pub fn iter(&self) -> std::slice::Iter<'_, IndexedOutput> {
         self.entries.iter()

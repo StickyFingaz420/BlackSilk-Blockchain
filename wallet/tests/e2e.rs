@@ -1249,8 +1249,8 @@ fn rings_are_built_without_asking_the_node_about_outputs() {
 
 /// A wallet restored at a later height backfills the outputs it never
 /// scanned once: the whole range below its first scanned block, in
-/// consecutive pages that do not depend on what it spends. Later transfers
-/// make no request.
+/// consecutive pages that do not depend on what it spends, at the sync that
+/// catches up. Transfers make no request.
 #[test]
 fn a_late_restore_backfills_older_outputs_once() {
     let mut net = Net::start();
@@ -1263,16 +1263,23 @@ fn a_late_restore_backfills_older_outputs_once() {
     // Coinbases from block 41 on are this wallet's; it starts scanning there.
     let mut late = stale_ok(Wallet::from_seed(Network::Regtest, [36; 32], 41));
     net.mine_n(80, &late.primary());
-    late.sync(&net.client).unwrap();
+    // The sync that catches up makes the backfill (RT-D1 F2), the spend
+    // after it none.
+    let syncer = Flaky::new(&net.client, Submit::Forward);
+    late.sync(&syncer).unwrap();
+    {
+        let queries = syncer.queries.borrow();
+        assert_eq!(queries.len(), 1, "one page covers {first} outputs");
+        assert_eq!(queries[0], (0..first).collect::<Vec<u64>>());
+    }
     let node = Flaky::new(&net.client, Submit::Forward);
     late.transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
         .unwrap();
     assert_eq!(node.dist_calls.get(), 0, "no /distribution request (D1)");
-    {
-        let queries = node.queries.borrow();
-        assert_eq!(queries.len(), 1, "one page covers {first} outputs");
-        assert_eq!(queries[0], (0..first).collect::<Vec<u64>>());
-    }
+    assert!(
+        node.queries.borrow().is_empty(),
+        "no /outputs at spend time"
+    );
     net.mine(&miner_addr);
     late.sync(&net.client).unwrap();
     let node = Flaky::new(&net.client, Submit::Forward);

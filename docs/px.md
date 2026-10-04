@@ -829,8 +829,9 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   Tor or SOCKS support, speaks plain HTTP only (it refuses `https://` addresses), and
   ignores proxy environment variables. A node you do not control learns your IP
   address and sync times, your scan start (the wallet's birthday) and, after a
-  restore, the restore point (the `/outputs` pages it serves, at the first spend), the
-  ids of your pending transactions (`/tx/status`) and the transactions you submit. The
+  restore, the restore point (the `/outputs` pages it serves, at the first `sync` that
+  catches up; run `sync` before the first spend), the ids of your pending transactions
+  (`/tx/status`) and the transactions you submit. The
   decoy distribution of your v1 rings comes from the wallet's own output index, not
   from the node; after a restore, the part below the restore height is the node's
   unverified backfill, which that node controls (transactions.md §11.3.1). It does not

@@ -790,10 +790,11 @@ A wallet that uses someone else's node reveals to that node, and over plaintext 
 anyone on the path:
 - its IP address;
 - where it starts scanning (`/blocks?from=`), which approximates its birthday;
-- when it sends, from `/tx` itself, and, the first time a restored wallet spends, from
-  the one-time `/outputs` backfill just before it. The wallet does not fetch
-  `/distribution`: its decoy distribution comes from its own output index
-  (transactions.md §11.3.1);
+- when it sends, from `/tx` itself. The wallet does not fetch `/distribution` (its decoy
+  distribution comes from its own output index), and the one-time `/outputs` backfill
+  of a restored wallet is made by the `sync` that catches up, not by the spend, unless
+  the wallet spends straight after the restore without a `sync` (transactions.md
+  §11.3.1);
 - the transaction itself, together with its IP address. The node stems it, so the
   network does not learn the origin, but that node's operator does.
 

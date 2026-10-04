@@ -322,7 +322,37 @@ impl Wallet {
     /// caught up or when enabled (`set_verify_headers`), the header chain is
     /// checked from the genesis (`crate::headers`). A refused block is not
     /// applied: the wallet stays at the block before it.
+    ///
+    /// Once caught up, it also completes the output index (the one-time
+    /// `/outputs` backfill below the restore height, `complete_index`), so
+    /// that a later spend requests nothing but `/tx` (D1, RT-D1 F2). A failed
+    /// backfill is a warning: the next sync, or the spend, tries again.
     pub fn sync(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
+        let (h, tip) = self.sync_chain(node)?;
+        if h >= tip && self.index_needs_backfill() {
+            if let Err(e) = self.complete_index(node) {
+                self.warnings.push(format!(
+                    "the output index below the restore height could not be completed ({e}); \
+                     the next sync tries again"
+                ));
+            }
+        }
+        Ok(h)
+    }
+
+    /// Whether the output index lacks outputs the wallet has not scanned
+    /// (below its restore height, or all of them for a wallet file written
+    /// before the index existed): the work of the one-time backfill.
+    pub(super) fn index_needs_backfill(&self) -> bool {
+        self.index.start() > 0
+            || (self.index.is_empty()
+                && self.synced_height > 0
+                && self.synced_height >= self.restore_height)
+    }
+
+    /// The scan of `sync`, without completing the output index: returns the
+    /// synced height and the node's height.
+    fn sync_chain(&mut self, node: &dyn NodeApi) -> Result<(u64, u64), WalletError> {
         let info = self.check_network(node)?;
         if info.header_height > info.height {
             return Err(WalletError::Node(format!(
@@ -548,7 +578,7 @@ impl Wallet {
             ));
         }
         self.px.retain_witnesses(synced, RING_RETENTION_BLOCKS);
-        Ok(self.synced_height)
+        Ok((self.synced_height, info.height))
     }
 
     /// Records the age of the synced tip against the local clock, with a
@@ -627,9 +657,13 @@ impl Wallet {
         }
     }
 
-    /// `sync`, then `check_fresh_tip`: the start of every transaction.
+    /// The scan of `sync`, then `check_fresh_tip`: the start of every
+    /// transaction. It does not complete the output index: a backfill here
+    /// would come just before `/tx`. If an earlier sync has not done it (a
+    /// spend straight after a restore, with no `sync` in between), the spend
+    /// does, with a warning (`plans_for`).
     pub(super) fn sync_to_send(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
-        let h = self.sync(node)?;
+        let (h, _) = self.sync_chain(node)?;
         self.check_fresh_tip()?;
         Ok(h)
     }
@@ -831,9 +865,40 @@ impl Wallet {
         height: u64,
         first_output: u64,
     ) -> Result<(), WalletError> {
+        self.check_first_output(height, first_output)?;
         self.px
             .apply_block(&mut self.px_keys, &self.px_account, &block.txs, height)?;
         self.apply_v1_block(block, height, first_output);
+        Ok(())
+    }
+
+    /// Checks the node's global index of the first output of block `height`
+    /// against what the wallet knows (RT-D1 F1). Once the output index holds
+    /// outputs the wallet scanned (heights at or above the restore height),
+    /// the next block must continue it exactly: a block that "restarts" the
+    /// index would discard the scanned range and hand it to the next
+    /// backfill, with node-chosen heights. Restarting stays allowed when the
+    /// index is empty or holds only backfilled outputs (the rescan after a
+    /// reorganization deeper than the kept window). Block 1 always starts
+    /// at 0 (the genesis has no outputs), and no block starts below its
+    /// height − 1 (every block from 1 on has at least one output).
+    fn check_first_output(&self, height: u64, first_output: u64) -> Result<(), WalletError> {
+        let scanned = self
+            .index
+            .last_height()
+            .is_some_and(|h| h >= self.restore_height);
+        let bad = if scanned {
+            first_output != self.index.end()
+        } else {
+            first_output < height.saturating_sub(1) || (height == 1 && first_output != 0)
+        };
+        if bad {
+            return Err(WalletError::BadNodeData(format!(
+                "block {height}: the node places its first output at {first_output}, \
+                 the wallet's output index ends at {}",
+                self.index.end()
+            )));
+        }
         Ok(())
     }
 
@@ -857,11 +922,16 @@ impl Wallet {
     /// height above 0 (a wallet file written before the index existed, with
     /// no block synced since). Its `first_output` is where the backfill ends.
     /// One `/blocks` request for the wallet's own tip, once per such file.
+    ///
+    /// Its `first_output` is checked against the wallet's own outputs (their
+    /// global indices were recorded at earlier scans): those of earlier
+    /// blocks must lie below it, those of this block within it, and it must
+    /// be at least `h − 1` (one output per block from 1 on).
     pub(super) fn index_synced_block(&mut self, node: &dyn NodeApi) -> Result<(), WalletError> {
         let h = self.synced_height;
         let Some(&ours) = self.block_ids.get(&h) else {
             return Err(WalletError::BadNodeData(format!(
-                "no block id kept for the synced block {h}; restore the wallet from its seed"
+                "no block id kept for the synced block {h}; sync again"
             )));
         };
         let entry = node
@@ -880,7 +950,28 @@ impl Wallet {
                 "block {h} is not the wallet's"
             )));
         }
-        self.index_block(&block, h, entry.first_output);
+        let first = entry.first_output;
+        let count = block
+            .txs
+            .iter()
+            .map(|tx| tx.output_keys().len() as u64)
+            .sum::<u64>();
+        let consistent = first >= h.saturating_sub(1)
+            && (h != 1 || first == 0)
+            && self.outputs.iter().all(|o| match o.height.cmp(&h) {
+                std::cmp::Ordering::Less => o.global_index < first,
+                std::cmp::Ordering::Equal => {
+                    o.global_index >= first && o.global_index - first < count
+                }
+                std::cmp::Ordering::Greater => true,
+            });
+        if !consistent {
+            return Err(WalletError::BadNodeData(format!(
+                "block {h}: the node places its first output at {first}, which the wallet's \
+                 own outputs contradict"
+            )));
+        }
+        self.index_block(&block, h, first);
         Ok(())
     }
 
