@@ -482,11 +482,13 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
             st.tx_tracker.answer_size(peer, len, now, &mut out);
             inner.apply_tx_actions(&mut st, out, now);
         }
-        // Any copy of an id this peer was asked for within
-        // `LATE_TX_WINDOW` (its request timed out, or another announcer's
-        // answer came first): accepted, unpenalized (P2P-FIX2, RT3 F1,
-        // F1b). A pooled copy is then dropped for free.
-        (r || st.tx_tracker.is_late(&id, peer, Instant::now()), r)
+        // One copy per request of an id this peer was asked for, within
+        // `LATE_TX_WINDOW` of the request's end (it timed out, the deadline
+        // cut it, or another announcer's answer came first): accepted,
+        // unpenalized (P2P-FIX2, RT3 F1, F1b). It takes the request's
+        // record and frees the slot it still held (RT5 F1). A pooled copy
+        // is then dropped for free.
+        (r || st.tx_tracker.take_late(&id, peer, Instant::now()), r)
     };
     if !requested {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested transaction");

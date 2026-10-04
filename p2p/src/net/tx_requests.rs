@@ -38,11 +38,18 @@ pub(super) const INBOUND_DELAY: Duration = Duration::from_secs(2);
 /// Requests outstanding for one id from [`REQUEST_TIMEOUT`] after its
 /// first request on (however the earlier requests ended).
 pub(super) const PARALLEL: usize = 4;
-/// Requests outstanding for one id at once, young or old: its [`PARALLEL`]
+/// Requests outstanding for one id at once, young or old, that leave a
+/// non-preferred (inbound) announcer room to be asked: its [`PARALLEL`]
 /// slots plus as many older requests still waiting out a size-aware
 /// timeout (RT5 F2: counting only young requests allowed up to 12 copies
 /// of one slow large transaction in flight, 4 before RT4).
 pub(super) const OUTSTANDING_MAX: usize = 2 * PARALLEL;
+/// Places beyond [`OUTSTANDING_MAX`] only a preferred (outbound) announcer
+/// may take: inbound attackers that fill the 8 places cannot make an
+/// outbound announcer wait for one of them to expire (RT-ART5: 68 s, not
+/// 32 s). At most `OUTSTANDING_MAX + PREFERRED_RESERVE` (9) copies of one
+/// id are requested at once.
+pub(super) const PREFERRED_RESERVE: usize = 1;
 /// An id is dropped, with all its records, this long after its first
 /// announcement.
 pub(super) const DEADLINE: Duration = Duration::from_secs(20 * 60);
@@ -389,11 +396,11 @@ impl TxTracker {
         }
     }
 
-    /// Whether a copy of `id` from `peer` is a late answer to one of our
-    /// ended requests: one copy per request, within [`LATE_TX_WINDOW`] of
-    /// its end. It takes the record, and frees the slot the request still
-    /// held (used at the next call that wakes, as a `poll`).
-    pub(super) fn is_late(&mut self, id: &Hash, peer: PeerId, now: Instant) -> bool {
+    /// Takes the record of a late answer: whether a copy of `id` from
+    /// `peer` answers one of our ended requests, one copy per request,
+    /// within [`LATE_TX_WINDOW`] of its end. Taking it frees the slot the
+    /// request still held (used at the next call that wakes, as a `poll`).
+    pub(super) fn take_late(&mut self, id: &Hash, peer: PeerId, now: Instant) -> bool {
         let Some(late) = self.peers.get_mut(&peer).and_then(|l| l.take_late(id, now)) else {
             return false;
         };
@@ -750,14 +757,15 @@ impl TxTracker {
             // Only requests younger than `REQUEST_TIMEOUT` hold one of the
             // id's slots; an older one (a long, size-aware timeout) stays
             // acceptable without holding it (RT4), but at most
-            // `OUTSTANDING_MAX` are outstanding at once (RT5 F2).
+            // `OUTSTANDING_MAX` are outstanding at once, one more for a
+            // preferred announcer (RT5 F2, RT-ART5).
             let mut outstanding = e.anns.iter().filter(|a| young(a, now)).count();
             let mut total = e
                 .anns
                 .iter()
                 .filter(|a| matches!(a.state, AnnState::Requested { .. }))
                 .count();
-            while outstanding < allowed && total < OUTSTANDING_MAX {
+            while outstanding < allowed && total < OUTSTANDING_MAX + PREFERRED_RESERVE {
                 let peers = &self.peers;
                 let mut best: Option<usize> = None;
                 for (i, a) in e.anns.iter().enumerate() {
@@ -765,6 +773,11 @@ impl TxTracker {
                         continue;
                     };
                     if ready > now {
+                        continue;
+                    }
+                    // The reserved place is for preferred announcers only;
+                    // the others wait for an expiry (its timer is set).
+                    if !a.preferred && total >= OUTSTANDING_MAX {
                         continue;
                     }
                     if !peers.get(&a.peer).is_some_and(PeerLoad::has_room) {
@@ -858,7 +871,19 @@ impl TxTracker {
                 .iter()
                 .filter(|a| matches!(a.state, AnnState::Requested { .. }))
                 .count();
-            assert!(total <= OUTSTANDING_MAX, "{total} outstanding for one id");
+            assert!(
+                total <= OUTSTANDING_MAX + PREFERRED_RESERVE,
+                "{total} outstanding for one id"
+            );
+            let inbound = e
+                .anns
+                .iter()
+                .filter(|a| !a.preferred && matches!(a.state, AnnState::Requested { .. }))
+                .count();
+            assert!(
+                inbound <= OUTSTANDING_MAX,
+                "{inbound} non-preferred outstanding"
+            );
             if e.timeouts == 0 && e.first_asked.is_none_or(|f| self.now < f + REQUEST_TIMEOUT) {
                 assert!(young_now <= 1);
             }
@@ -1265,7 +1290,10 @@ mod tests {
                         if rng.next_u64() % 4 == 0 {
                             t.not_found(tx, p, now, &mut out);
                         } else if now <= at + LATE_TX_WINDOW {
-                            assert!(t.is_late(&tx, p, now), "seed {seed}: a late answer refused");
+                            assert!(
+                                t.take_late(&tx, p, now),
+                                "seed {seed}: a late answer refused"
+                            );
                         }
                     }
                     6 if honest_announced.is_none() && step > 20 => {
@@ -1744,8 +1772,8 @@ mod tests {
                 if answers_due && now >= at {
                     answers_due = false;
                     if answered == 1 {
-                        assert!(t.is_late(&id(1), 1, now) && t.is_late(&id(2), 1, now));
-                        assert!(!t.is_late(&id(1), 1, now), "one copy per request");
+                        assert!(t.take_late(&id(1), 1, now) && t.take_late(&id(2), 1, now));
+                        assert!(!t.take_late(&id(1), 1, now), "one copy per request");
                     } else {
                         t.not_found(id(1), 1, now, &mut out);
                         t.not_found(id(2), 1, now, &mut out);
@@ -1771,7 +1799,7 @@ mod tests {
                 "{answered}: {first:?}"
             );
             if answered == 3 {
-                assert!(t.is_late(&id(1), 1, now), "acceptable after its expiry");
+                assert!(t.take_late(&id(1), 1, now), "acceptable after its expiry");
             }
         }
     }
@@ -2114,23 +2142,21 @@ mod tests {
         assert!(over.is_empty());
     }
 
-    /// RT5 F2: with at most `OUTSTANDING_MAX` requests outstanding per id,
-    /// attackers that inflate their timeouts can fill the 8 places, and an
-    /// outbound (preferred) honest announcer, which ranks first, waits for
-    /// one: at most 4 of the 8 are young, so the oldest expires within
-    /// `longest - 30 s`, and a young slot frees within 30 s. It is asked
-    /// within `2 s + max(30 s, longest - 30 s)` (68 s at the largest
-    /// answer; 32 s without inflation, RT3).
+    /// RT5 F2, RT-ART5: inflated inbound attackers can fill the 8 places
+    /// non-preferred announcers may take, but not the place reserved for
+    /// preferred (outbound) ones (`PREFERRED_RESERVE`). An outbound honest
+    /// announcer, which ranks first, waits only for a young slot: it is
+    /// asked within `2 s + 30 s`, as before RT5 F2 (with the 8-place cap
+    /// alone, up to 68 s: RT-ART5 reproduced 67.9 s).
     #[test]
     fn rt5_a_preferred_announcer_against_inflated_attackers() {
-        let limit =
-            INBOUND_DELAY + REQUEST_TIMEOUT.max(longest_timeout() - REQUEST_TIMEOUT) + STEP * 2;
+        let limit = INBOUND_DELAY + REQUEST_TIMEOUT + STEP * 2;
         let mut worst = Duration::ZERO;
         let mut over = Vec::new();
         for s in S5_ALL {
-            for k in [8usize, 64] {
+            for k in [8usize, 16, 64] {
                 // Every second of the first 200 (the first request
-                // periods and the turnover of the 8 places).
+                // periods and the turnover of the places).
                 for after in (1..=200).map(Duration::from_secs) {
                     let w = rt5_wait(&vec![(s, true); k], after, true);
                     if let Some(w) = w {
@@ -2144,6 +2170,191 @@ mod tests {
         }
         eprintln!(
             "RT5 F2 preferred honest vs inflated: worst {worst:?}, limit {limit:?}; over: {over:?}"
+        );
+        assert!(over.is_empty());
+    }
+
+    /// RT-ART5 (the reviewer's worst shape for the 8-place cap alone): `k`
+    /// inflated inbound attackers; the one asked first answers `NotFound`
+    /// at 61.9 s, at the edge of its slot, so that 4 old and 4 young
+    /// requests are outstanding when an honest preferred announcer comes at
+    /// 62.1 s. It was asked after 67.9 s (the oldest place's expiry); with
+    /// the reserved place, within 32 s (here: at once).
+    #[test]
+    fn rt5_the_worst_shape_for_an_outbound_announcer_keeps_32_s() {
+        for k in [8u64, 16, 64] {
+            let t0 = Instant::now();
+            let target = id(7);
+            let honest: PeerId = 1_000_000;
+            let at = t0 + Duration::from_millis(62_100);
+            let mut t = TxTracker::default();
+            let mut out = Actions::default();
+            for p in 0..k {
+                t.announce(target, p, false, t0, &mut out);
+                t.answer_size(p, MAX_RELAY_FRAME, t0, &mut out);
+            }
+            let mut first: Option<PeerId> = None;
+            let mut now = t0;
+            let mut got = None;
+            let mut announced = false;
+            let mut before = 0;
+            while now < t0 + Duration::from_secs(400) && got.is_none() {
+                for (p, ids) in &out.requests {
+                    if ids.contains(&target) {
+                        if *p == honest {
+                            got = Some(now - at);
+                        }
+                        first.get_or_insert(*p);
+                    }
+                }
+                t.check();
+                now += STEP;
+                out = Actions::default();
+                if now >= t0 + Duration::from_millis(61_900)
+                    && now < t0 + Duration::from_millis(62_000)
+                {
+                    t.not_found(target, first.expect("an attacker was asked"), now, &mut out);
+                }
+                if !announced && now >= at {
+                    before = t.requests();
+                    t.announce(target, honest, true, now, &mut out);
+                    announced = true;
+                }
+                t.poll(now, &mut out);
+            }
+            eprintln!(
+                "RT-ART5 worst shape, k = {k}: {before} outstanding at the honest announcement; \
+                 asked after {got:?}"
+            );
+            if k >= 16 {
+                assert_eq!(before, OUTSTANDING_MAX, "the shape: 4 old and 4 young");
+            }
+            assert!(
+                got.is_some_and(|w| w <= REQUEST_TIMEOUT + INBOUND_DELAY),
+                "k = {k}: {got:?}"
+            );
+        }
+    }
+
+    /// 16 inflated inbound attackers announce the target at t0; the one
+    /// asked first answers `NotFound` at 61.9 s (the worst shape above);
+    /// `outbound` inflated, silent outbound attackers announce at
+    /// `outbound_at`, and an outbound honest announcer at `after`. Its
+    /// wait, and whether every outbound attacker had been asked before it
+    /// announced; `None`: the id was dropped.
+    fn outbound_attackers_wait(
+        outbound: u64,
+        outbound_at: Duration,
+        after: Duration,
+    ) -> Option<(Duration, bool)> {
+        let inbound = 16;
+        let t0 = Instant::now();
+        let target = id(7);
+        let honest: PeerId = 1_000_000;
+        let at = t0 + after;
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        for p in 0..inbound {
+            t.announce(target, p, false, t0, &mut out);
+            t.answer_size(p, MAX_RELAY_FRAME, t0, &mut out);
+        }
+        let attackers: Vec<PeerId> = (inbound..inbound + outbound).collect();
+        let mut first: Option<PeerId> = None;
+        let mut now = t0;
+        let (mut joined, mut announced, mut all_asked) = (false, false, false);
+        while now <= t0 + DEADLINE {
+            for (p, ids) in &out.requests {
+                if ids.contains(&target) {
+                    if *p == honest {
+                        return Some((now - at, all_asked));
+                    }
+                    first.get_or_insert(*p);
+                }
+            }
+            t.check();
+            if announced && t.len() == 0 {
+                return None;
+            }
+            now += STEP;
+            out = Actions::default();
+            if now >= t0 + Duration::from_millis(61_900) && now < t0 + Duration::from_millis(62_000)
+            {
+                if let Some(f) = first {
+                    t.not_found(target, f, now, &mut out);
+                }
+            }
+            if !joined && now >= t0 + outbound_at {
+                for p in &attackers {
+                    t.announce(target, *p, true, now, &mut out);
+                    t.answer_size(*p, MAX_RELAY_FRAME, now, &mut out);
+                }
+                joined = true;
+            }
+            if !announced && now >= at {
+                all_asked = joined && attackers.iter().all(|p| t.is_requested(&target, *p));
+                t.announce(target, honest, true, now, &mut out);
+                announced = true;
+            }
+            t.poll(now, &mut out);
+        }
+        None
+    }
+
+    /// RT-ART5: the reserved place is for any preferred announcer, so an
+    /// outbound peer that is itself an inflated attacker can hold it. An
+    /// outbound honest announcer then waits, as with the 8-place cap alone,
+    /// until a young slot and a place are both free: at most 4 of the 9
+    /// outstanding requests are young, so the oldest expires within
+    /// `T - 30 s`, and a young slot frees within 30 s. With every outbound
+    /// attacker already asked, it is asked within `2 s + max(30 s, T - 30
+    /// s)` (70 s at the largest answer); each of `m` outbound attackers not
+    /// yet asked that ranks ahead of it adds at most `max(30 s, T - 30 s)`.
+    /// Measured with 1, 2 and 4 outbound attackers: at most 67.5 s (an
+    /// attacker still waiting for a young slot takes the reserved place
+    /// just before the honest announcer comes), 37.5 s once all of them
+    /// were asked. Outbound peers are the ones this node chose: the attacker must be
+    /// among its outbound connections.
+    #[test]
+    fn rt5_outbound_attackers_can_hold_the_reserved_place() {
+        let gap = REQUEST_TIMEOUT.max(longest_timeout() - REQUEST_TIMEOUT);
+        let asked_limit = INBOUND_DELAY + gap + STEP * 2;
+        let mut rows = Vec::new();
+        let mut over = Vec::new();
+        for m in [1u64, 2, 4] {
+            let limit = INBOUND_DELAY + gap * (m as u32 + 1) + STEP * 2;
+            for outbound_at in [1u64, 31, 62, 63, 92, 120].map(Duration::from_secs) {
+                let (mut worst, mut worst_asked) = (Duration::ZERO, Duration::ZERO);
+                // Every half second for 200 s from the attackers' arrival.
+                for half in 1..=400u64 {
+                    let after = outbound_at + Duration::from_millis(500 * half);
+                    let w = outbound_attackers_wait(m, outbound_at, after);
+                    match w {
+                        Some((w, all_asked)) => {
+                            worst = worst.max(w);
+                            if all_asked {
+                                worst_asked = worst_asked.max(w);
+                                if w > asked_limit {
+                                    over.push((m, outbound_at, after, w, asked_limit));
+                                }
+                            }
+                            if w > limit {
+                                over.push((m, outbound_at, after, w, limit));
+                            }
+                        }
+                        None => over.push((m, outbound_at, after, Duration::MAX, limit)),
+                    }
+                }
+                // Measured, not proven for m > 1: the fallback stays
+                // within 2 s + max(30 s, T - 30 s) (67.5 s at most here).
+                if worst > asked_limit {
+                    over.push((m, outbound_at, Duration::ZERO, worst, asked_limit));
+                }
+                rows.push((m, outbound_at.as_secs(), worst, worst_asked));
+            }
+        }
+        eprintln!(
+            "RT-ART5 outbound attackers (m, attackers at s, worst, worst once all were asked): \
+             {rows:?}; limits {asked_limit:?} once asked, 2 s + (m + 1) x {gap:?}; over: {over:?}"
         );
         assert!(over.is_empty());
     }
@@ -2186,7 +2397,7 @@ mod tests {
                         break;
                     };
                     assert!(
-                        t.is_late(&x, h, now),
+                        t.take_late(&x, h, now),
                         "{delay:?}: an honest late answer refused"
                     );
                     accepted += 1;
@@ -2259,7 +2470,53 @@ mod tests {
              (timeout {:?}); growth (s, n): {at:?}",
             t.peers[&0].timeout()
         );
-        // RT5 F2: at most `OUTSTANDING_MAX` (8) at once; 12 before.
-        assert_eq!(most, OUTSTANDING_MAX, "{most}");
+        // RT5 F2: at most `OUTSTANDING_MAX` (8) at once for the inbound
+        // announcers, one more for an outbound one; 12 before.
+        assert!(most <= OUTSTANDING_MAX + PREFERRED_RESERVE, "{most}");
+    }
+
+    /// RT-ART5: peak copies of one slow PX-sized id with `npref` slow
+    /// outbound and 20 slow inbound announcers, all at once or the outbound
+    /// ones coming one by one: never more than 9.
+    #[test]
+    fn rt5_copies_in_flight_never_exceed_nine() {
+        let mut rows = Vec::new();
+        for npref in [0u64, 1, 4, 8, 9, 12] {
+            for staggered in [false, true] {
+                let t0 = Instant::now();
+                let mut t = TxTracker::default();
+                let mut out = Actions::default();
+                let n = 20 + npref;
+                for p in 0..n {
+                    t.register_peer(p, 0);
+                    t.answer_size(p, 2_200_000, t0, &mut out);
+                }
+                for p in 0..20 {
+                    t.announce(id(1), p, false, t0, &mut out);
+                }
+                let mut next = 20;
+                let mut now = t0;
+                let mut most = 0;
+                while now < t0 + Duration::from_secs(300) {
+                    let mut out = Actions::default();
+                    while next < n
+                        && (!staggered || now >= t0 + Duration::from_secs(10 * (next - 20)))
+                    {
+                        t.announce(id(1), next, true, now, &mut out);
+                        next += 1;
+                    }
+                    t.poll(now, &mut out);
+                    most = most.max(t.requests());
+                    t.check();
+                    now += STEP;
+                }
+                rows.push((npref, staggered, most));
+                assert!(
+                    most <= OUTSTANDING_MAX + PREFERRED_RESERVE,
+                    "{npref}: {most}"
+                );
+            }
+        }
+        eprintln!("RT-ART5 copies (outbound, staggered, peak): {rows:?}");
     }
 }
