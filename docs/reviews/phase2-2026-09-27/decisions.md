@@ -1549,3 +1549,32 @@ Every external citation was verified against its primary source (res-freeze.md ย
   for no consensus reason. It is regenerated only with a later reviewed revision.
 - RT-PXDET finding 1 (the third_party allow-list was not checked in CI) is being closed
   by the third-party gate (branch tpgate, under review).
+
+## Header output commitment (Lead decision, 2026-10-04)
+
+- **Problem (RT-D1b N1/N2, F38-2, F39-6).** A restored wallet takes the global index of
+  its first output and the whole older output set (for decoys) from a node,
+  unverified. A lying restore node can shift every global index (the wallet's
+  transactions become invalid on the real chain; a later honest re-spend enables a ring
+  intersection) or fabricate decoy candidates. v3 headers commit to nothing about outputs.
+- **Research (agent report, primary sources).** Grin headers commit `output_mmr_size`
+  and `output_root`, and PIBD verifies every segment against them. Zcash commits its
+  note-commitment root (hashFinalSaplingRoot, then ZIP-221/244 history MMR). Monero
+  commits nothing in headers; FCMP++ binds its tree root through transactions. A count
+  alone stops index shifting but not forged decoys; a root closes both. BlackSilk
+  downloads the whole backfill anyway, so the wallet just recomputes the root: no
+  per-output proofs, and no new request pattern.
+- **Decision: v3 headers carry `output_count` (u64) and `output_root` (MMR over v1
+  outputs in global-index order).** The header grows from 100 to 140 B; proof-of-work
+  cost is unchanged. New rule B-OMR: a body whose outputs do not give the committed count
+  and root makes the block invalid. Wallets check `first_output` and the backfill
+  against the header before the restore point (verified backfill, 38 W11, closed by this
+  rather than left at P1).
+- **Why now:** after launch, a header field needs a hard fork and a migration of
+  wallets and miners. The authorized testnet reset makes this the cheap moment.
+- `px_root` in the header (removes the 100-block PX residual, px.md ยง11.4) is evaluated
+  in the implementation, not assumed.
+- Implementation: branch `omr`, one consensus revision with its record, rule samples
+  and one re-pin, red-team reviewed before merge.
+- Limits: a node that mines its own chain from genesis still passes the header check
+  (the existing F39-10 bound); nothing above is implemented or tested yet.
