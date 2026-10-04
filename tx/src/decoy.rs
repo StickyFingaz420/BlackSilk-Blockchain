@@ -31,7 +31,7 @@
 //! Floating point is fine here: this is wallet policy, and every choice is
 //! re-checked by consensus (C1). Given the RNG, the ring is deterministic.
 
-use crate::params::{RING_SIZE, SPENDABLE_AGE};
+use crate::params::{COINBASE_MATURITY, RING_SIZE, SPENDABLE_AGE};
 use rand_core::RngCore;
 
 const GAMMA_SHAPE: f64 = 19.28;
@@ -158,6 +158,44 @@ pub fn usable_outputs(cumulative: &[u64], height: u64) -> Result<u64, DecoyError
     Ok(Picker::new(cumulative, height, 1)?.usable)
 }
 
+/// The ring-member rule for a transaction in the block at `height`, over the
+/// output distribution `cumulative` of the current chain: the outputs at
+/// least `SPENDABLE_AGE` blocks deep, and of those the coinbase outputs only
+/// if at least `COINBASE_MATURITY` blocks deep. It is the consensus age rule
+/// C1 (`validate::resolve_input_rings`) expressed over global indices, the
+/// one definition wallets pass to the picker as `eligible`
+/// (tx/tests/decoy_statistics.rs checks the two agree output by output).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingEligibility {
+    usable: u64,
+    coinbase_limit: u64,
+}
+
+impl RingEligibility {
+    pub fn new(cumulative: &[u64], height: u64) -> Result<Self, DecoyError> {
+        let usable = usable_outputs(cumulative, height)?;
+        // Coinbase outputs of blocks `0..=height − 60` are mature.
+        let coinbase_limit = height
+            .checked_sub(COINBASE_MATURITY)
+            .and_then(|h| cumulative.get(h as usize).copied())
+            .unwrap_or(0);
+        Ok(Self {
+            usable,
+            coinbase_limit,
+        })
+    }
+
+    /// The number of outputs at least `SPENDABLE_AGE` blocks deep.
+    pub fn usable(&self) -> u64 {
+        self.usable
+    }
+
+    /// Whether output `index`, a coinbase output or not, may be a ring member.
+    pub fn allows(&self, index: u64, coinbase: bool) -> bool {
+        index < self.usable && !(coinbase && index >= self.coinbase_limit)
+    }
+}
+
 /// The gamma picker over a checked output distribution.
 struct Picker<'a> {
     cumulative: &'a [u64],
@@ -198,19 +236,42 @@ impl<'a> Picker<'a> {
     /// The block at the age the gamma distribution draws; `None` if that age
     /// lies beyond the start of the chain.
     fn draw_block<R: RngCore>(&self, rng: &mut R) -> Option<usize> {
-        let mut x = gamma(rng, GAMMA_SHAPE, GAMMA_SCALE).exp();
+        let age = gamma(rng, GAMMA_SHAPE, GAMMA_SCALE).exp();
+        let x = self.past_lock(age, || uniform01(rng));
+        self.block_at(x)
+    }
+
+    /// The spendable-age shift: an age (seconds) past the 10-block lock loses
+    /// the lock; one inside it becomes `recent()` (uniform in (0, 1]) times
+    /// the last 15 blocks.
+    fn past_lock(&self, age: f64, recent: impl FnOnce() -> f64) -> f64 {
         let lock = SPENDABLE_AGE as f64 * self.t;
-        if x > lock {
-            x -= lock;
+        if age > lock {
+            age - lock
         } else {
-            x = uniform01(rng) * RECENT_SPEND_WINDOW_BLOCKS * self.t;
+            recent() * RECENT_SPEND_WINDOW_BLOCKS * self.t
         }
+    }
+
+    /// The block holding the output `x` seconds (at the average output time)
+    /// back from the newest usable one; `None` beyond the start of the chain.
+    fn block_at(&self, x: f64) -> Option<usize> {
         let back = (x / self.average_output_time) as u64;
         if back >= self.usable {
             return None;
         }
         let target = self.usable - 1 - back;
         Some(self.cumulative.partition_point(|&c| c <= target))
+    }
+
+    /// The blocks searched when the drawn block `b` has no eligible output:
+    /// `b ± w`, `w = clamp(depth / 4, 9, 720)`, cut to the usable blocks.
+    fn neighbourhood(&self, b: usize) -> std::ops::RangeInclusive<usize> {
+        let last = self.cumulative.len() - 1;
+        let depth = last - b + SPENDABLE_AGE as usize;
+        let w = (depth / NEIGHBOURHOOD_DEPTH_DIVISOR)
+            .clamp(NEIGHBOURHOOD_MIN_BLOCKS, NEIGHBOURHOOD_MAX_BLOCKS);
+        b.saturating_sub(w)..=(b + w).min(last)
     }
 
     /// A uniform eligible output of blocks `blocks`, if any.
@@ -241,18 +302,13 @@ impl<'a> Picker<'a> {
         if let Some(i) = self.uniform_in(rng, b..=b, eligible) {
             return Some(i);
         }
-        let last = self.cumulative.len() - 1;
-        let depth = last - b + SPENDABLE_AGE as usize;
-        let w = (depth / NEIGHBOURHOOD_DEPTH_DIVISOR)
-            .clamp(NEIGHBOURHOOD_MIN_BLOCKS, NEIGHBOURHOOD_MAX_BLOCKS);
-        self.uniform_in(rng, b.saturating_sub(w)..=(b + w).min(last), eligible)
+        self.uniform_in(rng, self.neighbourhood(b), eligible)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::COINBASE_MATURITY;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
@@ -352,6 +408,60 @@ mod tests {
         let cum = chain(3_000, 3);
         let ring = select_ring(&mut rng, &cum, 3_000, 120, 30, |i| i % 2 == 0).unwrap();
         assert!(ring.iter().all(|i| i % 2 == 0));
+    }
+
+    /// The spendable-age shift at its boundary, deterministically (review
+    /// RT-ASTATS M1: a lock of 9 or 11 blocks survives the statistical suite).
+    /// Chain: 5,000 blocks of 4 outputs, spend height 5,000, so the newest
+    /// usable block is 4,990 (10 deep) and the average output time 30 s.
+    #[test]
+    fn the_lock_shift_starts_the_age_at_the_spendable_age() {
+        let cum = chain(5_000, 4);
+        let p = Picker::new(&cum, 5_000, 120).unwrap();
+        let never = || -> f64 { panic!("an age past the lock is not redrawn") };
+        // 10.5 blocks old: half a block past the lock, so the newest usable block.
+        assert_eq!(p.block_at(p.past_lock(10.5 * 120.0, never)), Some(4_990));
+        // 11.5 blocks: one block older.
+        assert_eq!(p.block_at(p.past_lock(11.5 * 120.0, never)), Some(4_989));
+        // Inside the lock (its end included): uniform over the last 15 blocks.
+        assert_eq!(p.past_lock(9.5 * 120.0, || 0.5), 0.5 * 15.0 * 120.0);
+        assert_eq!(p.past_lock(10.0 * 120.0, || 1.0), 15.0 * 120.0);
+        // Seconds to blocks: [0, T) is the newest usable block.
+        assert_eq!(p.block_at(0.0), Some(4_990));
+        assert_eq!(p.block_at(119.0), Some(4_990));
+        assert_eq!(p.block_at(120.0), Some(4_989));
+        assert_eq!(p.block_at(4_991.0 * 120.0), None, "older than the chain");
+    }
+
+    /// The neighbourhood `b ± clamp(depth / 4, 9, 720)` (review RT-ASTATS L2).
+    #[test]
+    fn the_neighbourhood_is_a_quarter_of_the_depth_within_bounds() {
+        let cum = chain(5_000, 4);
+        let p = Picker::new(&cum, 5_000, 120).unwrap();
+        let at_depth = |d: usize| p.neighbourhood(5_000 - d);
+        assert_eq!(at_depth(20), 4_971..=4_989, "minimum 9");
+        assert_eq!(
+            at_depth(10),
+            4_981..=4_990,
+            "cut at the newest usable block"
+        );
+        assert_eq!(at_depth(400), 4_500..=4_700, "a quarter of 400");
+        assert_eq!(at_depth(4_000), 280..=1_720, "maximum 720");
+        assert_eq!(at_depth(5_000), 0..=720, "cut at genesis");
+    }
+
+    /// The ring-member rule at both age boundaries. Chain: 200 blocks of 2
+    /// outputs (output `2b` of block `b` treated as its coinbase), height 200.
+    #[test]
+    fn ring_eligibility_boundaries() {
+        let cum = chain(200, 2);
+        let rule = RingEligibility::new(&cum, 200).unwrap();
+        assert_eq!(rule.usable(), cum[190]);
+        // Block 190 is 10 deep, block 191 is 9 deep.
+        assert!(rule.allows(381, false) && !rule.allows(382, false));
+        // Coinbase: block 140 is 60 deep, block 141 is 59 deep.
+        assert!(rule.allows(280, true) && !rule.allows(282, true));
+        assert!(rule.allows(282, false));
     }
 
     #[test]
