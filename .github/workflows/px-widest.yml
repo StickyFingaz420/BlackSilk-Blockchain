@@ -35,6 +35,12 @@ jobs:
   measure:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    # `shell: bash` makes GitHub run every step as `bash -eo pipefail`: the
+    # prove and model steps pipe into tee, and without pipefail a failed or
+    # OOM-killed prover would exit with tee's status 0 and the job would pass.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
