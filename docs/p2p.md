@@ -661,7 +661,11 @@ never used in any check or sent to a peer:
     it ends, however the earlier requests ended (RT3 F2: counting only timeouts let
     `NotFound` and Busy answers just before the timeout keep it at one). Only a
     request younger than 30 s holds a slot: an older one, waiting out a longer
-    size-aware timeout, stays acceptable without holding it (RT4). A `NotFound` or a
+    size-aware timeout, stays acceptable without holding it (RT4). At most 8
+    requests per id (`OUTSTANDING_MAX`, twice the slots) are outstanding at once,
+    young or old (RT5 F2: counting only young ones let one slow large transaction,
+    a PX answer on a slow or Tor link, be asked of up to 12 announcers at once, 4
+    before RT4; `rt5_copies_in_flight_for_one_slow_large_id`). A `NotFound` or a
     disconnect ends a request at once and the next candidate is asked.
   - **Timeouts.** A request times out after 30 s plus the time the peer's expected
     answer size takes at 64 KiB/s (a known PX-sized answer: about 64 s). When it
@@ -701,31 +705,65 @@ never used in any check or sent to a peer:
     as Busy just before their timeout, reconnect and announce again, or first make
     their expected answer size large (a decoded answer of the largest size: it
     lengthens their timeouts, not the time they hold a slot) all hold a slot at most
-    30 s. An inbound honest announcer is asked within `2 s + 30 s × (1 + ⌈k / 4⌉)`;
-    an outbound one within 32 s of the first request (inbound attackers). The
-    deadline holds this up to `k = 152`, more than the 64 inbound slots; beyond, the
-    id is dropped and comes back with a later announcement. With the random priority
-    the expected delay is about half the bound. Before RT4 a size-inflating attacker
-    held a slot about 98 s (`30 s + MAX_RELAY_FRAME / 64 KiB/s`), and inflating cost
-    one undecoded frame.
+    30 s, and each is asked at most once ahead of the honest announcer (a Busy or
+    retried record ranks behind it, a `NotFound` ends it). An inbound honest
+    announcer is asked within `2 s + max(30 s × (1 + ⌈k / 4⌉), T × ⌈k / 8⌉)`, where
+    `T` is the attackers' longest request timeout (30 s plus their expected answer
+    size at 64 KiB/s; at most about 98 s, after a decoded answer of the largest
+    size): the 4 slots turn over every 30 s, the 8 outstanding places (RT5 F2) at
+    least every `T`, and the slower sets the pace. For `T ≤ 60 s` (expected answers
+    up to about 1.9 MB: every attacker that does not inflate) this is
+    `2 s + 30 s × (1 + ⌈k / 4⌉)`, as before RT5; attackers inflated to the largest
+    answer lengthen it, at `k = 64` from 512 s to 786 s (measured: 786 s; the bound
+    is tight). An outbound honest announcer, which ranks first, is asked within
+    `2 s + max(30 s, T − 30 s)` of its announcement: at most 4 of the 8 outstanding
+    requests are young, so the oldest expires within `T − 30 s` (32 s without
+    inflation, as before; 70 s at the largest answer, 38 s measured,
+    `rt5_a_preferred_announcer_against_inflated_attackers`). The deadline holds the
+    bound up to `k = 152` without inflation and `k = 96` with it, more than the 64
+    inbound slots; beyond, the id is dropped and comes back with a later
+    announcement. With the random priority the expected delay is about half the
+    bound. This longer bound for inflating attackers is the accepted cost of RT5
+    F2's cap: without it, 4 new requests per 30 s whatever the timeouts, and every
+    slow honest copy of a large transaction was paid for in bandwidth, which on a
+    Tor link slows every other answer too. Before RT4 a size-inflating attacker held
+    a slot about 98 s (`30 s + MAX_RELAY_FRAME / 64 KiB/s`), and inflating cost one
+    undecoded frame.
     - Before RT2, about 30 s per silent announcer in arrival order, and without
       bound behind one announcer's junk queue
       (`rt2_a_timed_out_request_is_not_parked_behind_a_junk_queue`).
-  - **Late answers.** Any copy of an id a peer was asked for is accepted from it,
-    unpenalized, for 5 minutes after its request ended: timed out, cut by the
-    deadline, or another announcer's answer came first (RT3 F1: with up to 4
+  - **Late answers.** One copy of an id a peer was asked for is accepted from it
+    per request, unpenalized, for 5 minutes after its request ended: timed out, cut
+    by the deadline, or another announcer's answer came first (RT3 F1: with up to 4
     requests at once, every other honest answer was penalized as unrequested, +10
-    each; P2P-FIX2 before it for timeouts). Each peer has its own memory of these,
-    at most 160, oldest dropped first, freed when it disconnects; the peer whose
-    answer was taken is not recorded. 160 is its 16 in-flight slots × 300 s / 30 s,
-    which holds only while requests run to their timeout: a request ended by another
-    announcer's answer frees its slot at once, so a burst of such endings can push
-    earlier entries out, and their late answers are then penalized as unrequested
-    (RT5 F1, Low; `rt5_fast_endings_push_a_peers_late_answers_out`; open, P1 before
-    a public testnet). Before
-    RT4 one node-wide map of 10 000 was filled for free with conflicting variants of
-    a pooled transaction, and honest parallel answers were penalized again
-    (`rt4_a_full_late_answer_memory_penalizes_parallel_honest_answers_again`).
+    each; P2P-FIX2 before it for timeouts). The copy takes the record; the peer
+    whose answer was taken is not recorded. A request ended before its expiry (by
+    another announcer's answer, or the deadline) is still being answered: it keeps
+    its peer's in-flight slot until that answer, the peer's `NotFound`, or its
+    expiry, and its 5 minutes count from its expiry (RT5 F1). Each peer has its own
+    memory of these, freed when it disconnects, and it is a bound: an entry
+    outlives its answer only if its request held a slot to its expiry, at least
+    30 s after it was asked, so the entries of the last 5 minutes are at most
+    16 slots × (300 s + 30 s) / 30 s = 176, plus at most 16 still holding a slot
+    (`LATE_PER_PEER` = 192; the tracker's invariant check, run throughout every
+    tracker test, finds nothing pushed out).
+    - Before RT5 F1 an early ending freed the slot at once, so a burst of them
+      (each new request to the peer ended at once by another announcer's answer)
+      pushed earlier entries out of a memory of 160, and the peer's honest late
+      answers to them were penalized as unrequested. Freeing the slot early also
+      let more answers be on their way from a peer than its in-flight caps allow.
+      `rt5_fast_endings_push_a_peers_late_answers_out` now ends every request to
+      one peer at once for 10 minutes (9 600 endings with its answers 1 s later,
+      320 with them 200 s later): every answer is accepted.
+    - Rejected alternatives: a memory of `PEER_TRACKED` (2 000) entries is not a
+      bound either (a forgotten id leaves the peer's tracked set, so endings are
+      limited only by the relay rate: 9 600 in 10 minutes above); accepting any
+      `Tx` whose id the peer announced lately (its `known_txs`) would give up the
+      rule that a peer sends only what it was asked for, which ties its answers to
+      its in-flight caps, without bounding anything more.
+    - Before RT4 one node-wide map of 10 000 was filled for free with conflicting
+      variants of a pooled transaction, and honest parallel answers were penalized
+      again (`rt4_a_full_late_answer_memory_penalizes_parallel_honest_answers_again`).
   - Neither a timeout nor a `NotFound` is penalized: transaction relay is best
     effort.
   - **A host that reconnects** within 10 minutes gets what its last connection was
@@ -740,11 +778,15 @@ never used in any check or sent to a peer:
     (`rt4_a_reconnecting_spy_reads_the_pool_in_an_order_that_names_the_node`).
   - Tested: the tracker's property test (random announce, answer, `NotFound`, Busy,
     pause, timeout, disconnect and reconnect sequences, with attackers that are
-    silent, answer `NotFound`, get Busy, or reconnect; invariants: every id has a
-    request or a timer, no cap is exceeded, at most 4 requests per id and one
-    before its first request period ends, and an honest announcer is asked within
-    the bound), RT3's adversarial tests, and the network tests named above and in
-    this section.
+    silent, answer `NotFound`, get Busy, or reconnect, and with late answers and
+    `NotFound`s to requests another answer ended; invariants: every id has a
+    request or a timer, no cap is exceeded, at most 4 young and 8 outstanding
+    requests per id and one young before its first request period ends, a peer's
+    in-flight count is its requests plus its ended ones still holding a slot, the
+    late-answer memory pushes nothing out, every late answer within its window is
+    accepted, and an honest announcer is asked within the bound), RT3's, RT4's and
+    RT5's adversarial tests, and the network tests named above and in this
+    section.
   - The per-peer sets of announced and known transaction ids are capped (50 000;
     cleared when exceeded: forgetting only costs a redundant announcement).
 - **Stem transactions stay private.** An `InvTx` for a transaction in our stempool

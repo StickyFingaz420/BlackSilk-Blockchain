@@ -38,6 +38,11 @@ pub(super) const INBOUND_DELAY: Duration = Duration::from_secs(2);
 /// Requests outstanding for one id from [`REQUEST_TIMEOUT`] after its
 /// first request on (however the earlier requests ended).
 pub(super) const PARALLEL: usize = 4;
+/// Requests outstanding for one id at once, young or old: its [`PARALLEL`]
+/// slots plus as many older requests still waiting out a size-aware
+/// timeout (RT5 F2: counting only young requests allowed up to 12 copies
+/// of one slow large transaction in flight, 4 before RT4).
+pub(super) const OUTSTANDING_MAX: usize = 2 * PARALLEL;
 /// An id is dropped, with all its records, this long after its first
 /// announcement.
 pub(super) const DEADLINE: Duration = Duration::from_secs(20 * 60);
@@ -69,16 +74,24 @@ pub(super) const GLOBAL_PAUSE_MAX: Duration = Duration::from_secs(30);
 /// it (RT3 F1b; a PX transaction takes about 35 s at 64 KiB/s).
 pub(super) const LATE_TX_WINDOW: Duration = Duration::from_secs(5 * 60);
 
-/// Ended requests remembered per peer (oldest dropped first): its
-/// in-flight cap times the requests one slot can end within the window if
-/// each ran to its 30 s timeout (16 x 300 s / 30 s). That is not a bound:
-/// a request another announcer's answer ends frees its slot at once, so a
-/// fast burst of such endings can push earlier entries out (RT5 F1, Low,
-/// `rt5_fast_endings_push_a_peers_late_answers_out`; a P1 record before a
-/// public testnet). Each peer has its own: one peer's entries never
-/// crowd out another's (RT4: one node-wide map was filled for free with
-/// junk answers, and honest answers were penalized again).
-pub(super) const LATE_PER_PEER: usize = 160;
+/// Ended requests remembered per peer: a bound, not a guess (RT5 F1). An
+/// entry outlives its answer only if its request held one of the peer's
+/// [`PEER_IN_FLIGHT`] slots to its expiry, at least [`REQUEST_TIMEOUT`]
+/// after it was asked: a request ended early (another announcer's answer,
+/// the deadline) keeps its slot until its answer, its `NotFound` or its
+/// expiry, and the answer consumes the entry. Entries whose slot was
+/// released within the last [`LATE_TX_WINDOW`] each held a slot through
+/// the 30 s before that release, at most 16 at once, so there are at most
+/// 16 x (300 s + 30 s) / 30 s = 176 of them, plus at most 16 still holding
+/// a slot. Before RT5 F1 an early ending freed the slot at once, a burst of
+/// such endings pushed earlier entries out of a 160-entry memory, and
+/// their honest late answers were penalized as unrequested
+/// (`rt5_fast_endings_push_a_peers_late_answers_out`). Each peer has its
+/// own: one peer's entries never crowd out another's (RT4: one node-wide
+/// map was filled for free with junk answers, and honest answers were
+/// penalized again).
+pub(super) const LATE_PER_PEER: usize =
+    PEER_IN_FLIGHT * (LATE_TX_WINDOW.as_secs() / REQUEST_TIMEOUT.as_secs() + 2) as usize;
 
 /// A peer's network class: clearnet, or onion (an onion address, or an
 /// inbound connection through our hidden service).
@@ -163,19 +176,59 @@ struct PeerLoad {
     /// at again when it has room.
     waiting: VecDeque<Hash>,
     waiting_set: HashSet<Hash>,
-    /// Its ended requests whose answers stay acceptable, oldest first.
-    late: VecDeque<(Hash, Instant)>,
+    /// Its ended requests whose answers stay acceptable, one copy each,
+    /// oldest first.
+    late: VecDeque<Late>,
+    /// Entries [`LATE_PER_PEER`] pushed out (tests: the bound says none).
+    #[cfg(test)]
+    evicted: usize,
+}
+
+/// An ended request of a peer whose answer stays acceptable (once).
+#[derive(Clone, Copy, Debug)]
+struct Late {
+    id: Hash,
+    /// When it timed out, or (`hold`) when it will: a copy is accepted
+    /// until [`LATE_TX_WINDOW`] after.
+    at: Instant,
+    /// Ended before its expiry (another announcer's answer, the deadline):
+    /// the peer is still answering it, so it holds one of the peer's
+    /// in-flight slots until its answer, its `NotFound` or `at`. Its key in
+    /// `TxTracker::holds`.
+    hold: Option<u64>,
 }
 
 impl PeerLoad {
-    /// Remembers an ended request for `id` (FIFO within this peer).
-    fn remember_late(&mut self, id: Hash, now: Instant) {
+    /// Remembers an ended request for `id`, accepted until
+    /// [`LATE_TX_WINDOW`] after `at` (entries out of their window go first;
+    /// the bound of [`LATE_PER_PEER`] says nothing is pushed out).
+    fn remember_late(&mut self, id: Hash, at: Instant, hold: Option<u64>, now: Instant) {
         self.late
-            .retain(|(x, t)| *x != id && now.duration_since(*t) <= LATE_TX_WINDOW);
-        self.late.push_back((id, now));
+            .retain(|l| l.hold.is_some() || now.saturating_duration_since(l.at) <= LATE_TX_WINDOW);
+        self.late.push_back(Late { id, at, hold });
         while self.late.len() > LATE_PER_PEER {
-            self.late.pop_front();
+            // Never one that holds a slot (at most `PEER_IN_FLIGHT`).
+            let Some(i) = self.late.iter().position(|l| l.hold.is_none()) else {
+                break;
+            };
+            self.late.remove(i);
+            #[cfg(test)]
+            {
+                self.evicted += 1;
+            }
         }
+    }
+
+    /// Removes and returns an acceptable entry for `id` (one holding a
+    /// slot first).
+    fn take_late(&mut self, id: &Hash, now: Instant) -> Option<Late> {
+        let ok = |l: &Late| l.id == *id && now.saturating_duration_since(l.at) <= LATE_TX_WINDOW;
+        let i = self
+            .late
+            .iter()
+            .position(|l| ok(l) && l.hold.is_some())
+            .or_else(|| self.late.iter().position(ok))?;
+        self.late.remove(i)
     }
 }
 
@@ -240,16 +293,11 @@ impl Inner {
     /// Forgets `id` in the tracker (it arrived, or is known otherwise). The
     /// answers of its other outstanding requests stay acceptable: those
     /// peers did what was asked (RT3 F1: they were penalized as
-    /// unrequested). `taken`: the peer whose answer was just taken; it is
-    /// not remembered (RT4).
+    /// unrequested), and each holds its slot until it answers (RT5 F1).
+    /// `taken`: the peer whose answer was just taken; it is not remembered
+    /// (RT4).
     pub(super) fn forget_tx(st: &mut State, id: &Hash, taken: Option<PeerId>) {
-        let now = Instant::now();
-        let t = &mut st.tx_tracker;
-        for peer in t.forget_requested(id) {
-            if Some(peer) != taken {
-                t.remember_late(*id, peer, now);
-            }
-        }
+        st.tx_tracker.forget_requested(id, taken, Instant::now());
     }
 }
 
@@ -260,6 +308,11 @@ pub(super) struct TxTracker {
     txs: HashMap<Key, TxEntry>,
     peers: HashMap<PeerId, PeerLoad>,
     timers: BTreeSet<(Instant, Key)>,
+    /// Slots held by requests ended before their expiry, by expiry
+    /// ([`Late::hold`]): freed then if not answered before.
+    holds: BTreeSet<(Instant, u64, PeerId)>,
+    /// The last [`Late::hold`] key.
+    seq: u64,
     salt: RandomState,
     /// Peers that got room during a call: their waiting ids are looked at
     /// before it returns.
@@ -274,6 +327,8 @@ impl Default for TxTracker {
             txs: HashMap::new(),
             peers: HashMap::new(),
             timers: BTreeSet::new(),
+            holds: BTreeSet::new(),
+            seq: 0,
             salt: RandomState::new(),
             freed: Vec::new(),
             now: Instant::now(),
@@ -302,23 +357,48 @@ impl TxTracker {
         self.peers.get(&peer).map_or(0, |l| l.class)
     }
 
-    /// Remembers that `peer`'s request for `id` ended without its answer:
-    /// any copy from it stays acceptable for [`LATE_TX_WINDOW`], within its
-    /// own [`LATE_PER_PEER`] (oldest dropped first).
-    pub(super) fn remember_late(&mut self, id: Hash, peer: PeerId, now: Instant) {
+    /// `peer`'s request for `id`, expiring at `expiry`, ended before its
+    /// answer (another announcer's answer came first, or the deadline cut
+    /// it): its answer stays acceptable, and it keeps its slot until that
+    /// answer, a `NotFound` or `expiry` (RT5 F1). Past its expiry it is a
+    /// timeout: the slot is freed now.
+    fn end_unanswered(&mut self, id: Hash, peer: PeerId, expiry: Instant, now: Instant) {
+        let Some(l) = self.peers.get_mut(&peer) else {
+            return;
+        };
+        if expiry <= now {
+            l.remember_late(id, now, None, now);
+            l.in_flight = l.in_flight.saturating_sub(1);
+            self.freed.push(peer);
+            return;
+        }
+        self.seq += 1;
+        l.remember_late(id, expiry, Some(self.seq), now);
+        self.holds.insert((expiry, self.seq, peer));
+    }
+
+    /// Frees the slot of `peer` that `late` held, if it held one.
+    fn release(&mut self, peer: PeerId, late: Late) {
+        let Some(seq) = late.hold else {
+            return;
+        };
+        self.holds.remove(&(late.at, seq, peer));
         if let Some(l) = self.peers.get_mut(&peer) {
-            l.remember_late(id, now);
+            l.in_flight = l.in_flight.saturating_sub(1);
+            self.freed.push(peer);
         }
     }
 
     /// Whether a copy of `id` from `peer` is a late answer to one of our
-    /// requests ([`Self::remember_late`]).
-    pub(super) fn is_late(&self, id: &Hash, peer: PeerId, now: Instant) -> bool {
-        self.peers.get(&peer).is_some_and(|l| {
-            l.late
-                .iter()
-                .any(|(x, t)| x == id && now.duration_since(*t) <= LATE_TX_WINDOW)
-        })
+    /// ended requests: one copy per request, within [`LATE_TX_WINDOW`] of
+    /// its end. It takes the record, and frees the slot the request still
+    /// held (used at the next call that wakes, as a `poll`).
+    pub(super) fn is_late(&mut self, id: &Hash, peer: PeerId, now: Instant) -> bool {
+        let Some(late) = self.peers.get_mut(&peer).and_then(|l| l.take_late(id, now)) else {
+            return false;
+        };
+        self.release(peer, late);
+        true
     }
 
     /// Whether `peer` has an outstanding request for `id`.
@@ -405,31 +485,36 @@ impl TxTracker {
         }
     }
 
-    /// [`Self::forget`], returning the peers whose requests for `id` were
-    /// still outstanding (their answers stay acceptable).
-    pub(super) fn forget_requested(&mut self, id: &Hash) -> Vec<PeerId> {
+    /// Forgets `id` (in both network classes), returning the peers whose
+    /// requests for it were still outstanding, but `taken` (the peer whose
+    /// answer was just taken: its slot is freed). Their answers stay
+    /// acceptable, and each holds its slot until it comes (RT5 F1).
+    pub(super) fn forget_requested(
+        &mut self,
+        id: &Hash,
+        taken: Option<PeerId>,
+        now: Instant,
+    ) -> Vec<PeerId> {
         let mut asked = Vec::new();
         for class in [0, 1] {
-            let key = (class, *id);
-            if let Some(e) = self.txs.get(&key) {
-                asked.extend(
-                    e.anns
-                        .iter()
-                        .filter(|a| matches!(a.state, AnnState::Requested { .. }))
-                        .map(|a| a.peer),
-                );
-            }
-            self.remove(&key);
+            asked.extend(self.remove(&(class, *id), taken, now));
         }
         asked
     }
 
-    /// `peer` answered `NotFound` for `id`.
+    /// `peer` answered `NotFound` for `id`: its request ends; or, if it had
+    /// ended already, the slot it still held is freed.
     pub(super) fn not_found(&mut self, id: Hash, peer: PeerId, now: Instant, out: &mut Actions) {
         self.poll(now, out);
         let key = (self.class(peer), id);
         if self.end_request(&key, peer, |a| a.state = AnnState::Done) {
             self.eval(key, now, out);
+        } else if let Some(late) = self
+            .peers
+            .get_mut(&peer)
+            .and_then(|l| l.take_late(&id, now))
+        {
+            self.release(peer, late);
         }
         self.wake(now, out);
     }
@@ -492,6 +577,11 @@ impl TxTracker {
         let Some(load) = self.peers.remove(&peer) else {
             return;
         };
+        for l in &load.late {
+            if let Some(seq) = l.hold {
+                self.holds.remove(&(l.at, seq, peer));
+            }
+        }
         for id in load.tracked {
             let key = (load.class, id);
             if let Some(e) = self.txs.get_mut(&key) {
@@ -510,13 +600,31 @@ impl TxTracker {
     /// filling that candidate's peer, say).
     pub(super) fn poll(&mut self, now: Instant, out: &mut Actions) {
         self.now = self.now.max(now);
-        while let Some(&(t, key)) = self.timers.first() {
-            if t > now {
-                break;
+        loop {
+            let timer = self.timers.first().copied().filter(|(t, _)| *t <= now);
+            let hold = self.holds.first().copied().filter(|(t, ..)| *t <= now);
+            match (timer, hold) {
+                // A slot held by a request ended early whose expiry came
+                // unanswered: freed (its answer stays acceptable, as a
+                // timed-out one's).
+                (_, Some((t, seq, peer))) if timer.is_none_or(|(tt, _)| t <= tt) => {
+                    self.holds.remove(&(t, seq, peer));
+                    if let Some(l) = self.peers.get_mut(&peer) {
+                        if let Some(x) = l.late.iter_mut().find(|x| x.hold == Some(seq)) {
+                            x.hold = None;
+                        }
+                        l.in_flight = l.in_flight.saturating_sub(1);
+                        self.freed.push(peer);
+                    }
+                    self.wake(t, out);
+                }
+                (Some((t, key)), _) => {
+                    self.timers.remove(&(t, key));
+                    self.eval(key, t, out);
+                    self.wake(t, out);
+                }
+                (None, _) => break,
             }
-            self.timers.remove(&(t, key));
-            self.eval(key, t, out);
-            self.wake(t, out);
         }
         // Room freed outside a call that wakes (a forget, RT4).
         self.wake(now, out);
@@ -563,21 +671,32 @@ impl TxTracker {
         true
     }
 
-    /// Removes `key` with all its records.
-    fn remove(&mut self, key: &Key) {
+    /// Removes `key` with all its records. Its outstanding requests but
+    /// `taken`'s (freed: its answer came) stay acceptable and keep their
+    /// slots until answered ([`Self::end_unanswered`]); their peers are
+    /// returned.
+    fn remove(&mut self, key: &Key, taken: Option<PeerId>, now: Instant) -> Vec<PeerId> {
         let Some(e) = self.txs.remove(key) else {
-            return;
+            return Vec::new();
         };
         self.timers.remove(&(e.timer, *key));
+        let mut ended = Vec::new();
         for a in e.anns {
-            if let Some(l) = self.peers.get_mut(&a.peer) {
-                l.tracked.remove(&key.1);
-                if matches!(a.state, AnnState::Requested { .. }) {
+            let Some(l) = self.peers.get_mut(&a.peer) else {
+                continue;
+            };
+            l.tracked.remove(&key.1);
+            if let AnnState::Requested { expiry, .. } = a.state {
+                if Some(a.peer) == taken {
                     l.in_flight = l.in_flight.saturating_sub(1);
                     self.freed.push(a.peer);
+                } else {
+                    self.end_unanswered(key.1, a.peer, expiry, now);
+                    ended.push(a.peer);
                 }
             }
         }
+        ended
     }
 
     /// Looks at `key` as of `now`: drops it at its deadline or when no
@@ -590,17 +709,10 @@ impl TxTracker {
         };
         self.timers.remove(&(e.timer, key));
         if now >= e.deadline {
-            // Requests cut by the deadline stay acceptable (RT4).
-            let cut: Vec<PeerId> = e
-                .anns
-                .iter()
-                .filter(|a| matches!(a.state, AnnState::Requested { .. }))
-                .map(|a| a.peer)
-                .collect();
-            self.remove(&key);
-            for p in cut {
+            // Requests cut by the deadline stay acceptable (RT4), and keep
+            // their slots until answered (RT5 F1).
+            for p in self.remove(&key, None, now) {
                 out.expired.push((key.1, p));
-                self.remember_late(key.1, p, now);
             }
             return;
         }
@@ -611,7 +723,7 @@ impl TxTracker {
                     out.expired.push((key.1, a.peer));
                     let mut load = self.peers.get_mut(&a.peer);
                     if let Some(l) = load.as_mut() {
-                        l.remember_late(key.1, now);
+                        l.remember_late(key.1, now, None, now);
                     }
                     let dropped = load
                         .as_ref()
@@ -637,9 +749,15 @@ impl TxTracker {
             let allowed = e.allowed(now);
             // Only requests younger than `REQUEST_TIMEOUT` hold one of the
             // id's slots; an older one (a long, size-aware timeout) stays
-            // acceptable without holding it (RT4).
+            // acceptable without holding it (RT4), but at most
+            // `OUTSTANDING_MAX` are outstanding at once (RT5 F2).
             let mut outstanding = e.anns.iter().filter(|a| young(a, now)).count();
-            while outstanding < allowed {
+            let mut total = e
+                .anns
+                .iter()
+                .filter(|a| matches!(a.state, AnnState::Requested { .. }))
+                .count();
+            while outstanding < allowed && total < OUTSTANDING_MAX {
                 let peers = &self.peers;
                 let mut best: Option<usize> = None;
                 for (i, a) in e.anns.iter().enumerate() {
@@ -675,11 +793,13 @@ impl TxTracker {
                 out.ask(a.peer, key.1);
                 e.first_asked.get_or_insert(now);
                 outstanding += 1;
+                total += 1;
             }
         }
         let live = e.anns.iter().any(|a| a.state != AnnState::Done);
         if !live {
-            self.remove(&key);
+            // No request is outstanding: nothing to remember.
+            self.remove(&key, None, now);
             return;
         }
         let mut timer = e.deadline;
@@ -733,11 +853,18 @@ impl TxTracker {
             // period ends.
             let young_now = e.anns.iter().filter(|a| young(a, self.now)).count();
             assert!(young_now <= PARALLEL);
+            let total = e
+                .anns
+                .iter()
+                .filter(|a| matches!(a.state, AnnState::Requested { .. }))
+                .count();
+            assert!(total <= OUTSTANDING_MAX, "{total} outstanding for one id");
             if e.timeouts == 0 && e.first_asked.is_none_or(|f| self.now < f + REQUEST_TIMEOUT) {
                 assert!(young_now <= 1);
             }
         }
         assert_eq!(self.timers.len(), self.txs.len());
+        let mut holding = 0;
         for (peer, l) in &self.peers {
             assert!(l.tracked.len() <= PEER_TRACKED);
             assert!(l.in_flight <= PEER_IN_FLIGHT);
@@ -747,8 +874,19 @@ impl TxTracker {
                 .flat_map(|e| e.anns.iter())
                 .filter(|a| a.peer == *peer && matches!(a.state, AnnState::Requested { .. }))
                 .count();
-            assert_eq!(real, l.in_flight);
+            // Requests ended before their answer hold their slots (RT5 F1).
+            let held = l.late.iter().filter(|x| x.hold.is_some()).count();
+            for x in &l.late {
+                if let Some(seq) = x.hold {
+                    assert!(self.holds.contains(&(x.at, seq, *peer)));
+                }
+            }
+            holding += held;
+            assert_eq!(real + held, l.in_flight);
+            assert!(l.late.len() <= LATE_PER_PEER);
+            assert_eq!(l.evicted, 0, "the late-answer memory is a bound (RT5 F1)");
         }
+        assert_eq!(holding, self.holds.len());
     }
 }
 
@@ -936,7 +1074,7 @@ mod tests {
         t.announce(id(1), 2, true, t0, &mut out);
         assert!(asked(&out, 1, id(1)) && asked(&out, 2, id(1)));
         assert_eq!(t.len(), 2);
-        assert_eq!(t.forget_requested(&id(1)).len(), 2);
+        assert_eq!(t.forget_requested(&id(1), None, t0).len(), 2);
         assert_eq!(t.len(), 0);
         t.check();
     }
@@ -990,7 +1128,15 @@ mod tests {
         let mut out = Actions::default();
         t.poll(t0 + DEADLINE, &mut out);
         assert_eq!(t.len(), 0);
+        // The requests the deadline cut keep their slots until answered or
+        // expired (RT5 F1).
+        // (Two at a time, asked at 2 s + 30 s x 39 = 1 172 s.)
+        assert_eq!(t.requests(), 2);
+        t.check();
+        let mut out = Actions::default();
+        t.poll(t0 + DEADLINE + REQUEST_TIMEOUT, &mut out);
         assert_eq!(t.requests(), 0);
+        t.check();
         let mut out = Actions::default();
         t.announce(id(5), 1, true, t0 + DEADLINE, &mut out);
         t.peer_gone(1, t0 + DEADLINE, &mut out);
@@ -999,9 +1145,11 @@ mod tests {
     }
 
     /// Property test: random sequences of announcements, answers,
-    /// `NotFound`s, Busy and global drops, timeouts and disconnects keep
-    /// the invariants (`check`), and an honest announcer among `k` silent
-    /// ones is asked within the bound of docs/p2p.md §7.
+    /// `NotFound`s, Busy and global drops, timeouts, disconnects, and late
+    /// answers and `NotFound`s to requests another answer ended keep the
+    /// invariants (`check`); every late answer within its window is
+    /// accepted (RT5 F1); and an honest announcer among `k` attackers is
+    /// asked within the bound of docs/p2p.md §7.
     #[test]
     fn random_sequences_keep_the_invariants_and_the_bound() {
         for seed in 0..60u64 {
@@ -1015,6 +1163,8 @@ mod tests {
             let mut honest_announced: Option<Instant> = None;
             let mut honest_asked: Option<Instant> = None;
             let mut outstanding: Vec<(Hash, PeerId)> = Vec::new();
+            // Requests ended early by another answer: (id, peer, when).
+            let mut ended: Vec<(Hash, PeerId, Instant)> = Vec::new();
             let note = |out: &Actions,
                         outstanding: &mut Vec<(Hash, PeerId)>,
                         at: Instant,
@@ -1061,7 +1211,11 @@ mod tests {
                         if tx != target {
                             outstanding.remove(i);
                             if t.is_requested(&tx, p) {
-                                let _ = t.forget_requested(&tx);
+                                // The other requests for it end early:
+                                // their answers are still to come (RT5 F1).
+                                for q in t.forget_requested(&tx, Some(p), now) {
+                                    ended.push((tx, q, now));
+                                }
                                 outstanding.retain(|x| x.0 != tx);
                             }
                         }
@@ -1090,6 +1244,7 @@ mod tests {
                         let old = attackers[i];
                         t.peer_gone(old, now, &mut out);
                         outstanding.retain(|x| x.1 != old);
+                        ended.retain(|x| x.1 != old);
                         attackers[i] = next_peer;
                         t.announce(target, next_peer, false, now, &mut out);
                         next_peer += 1;
@@ -1099,6 +1254,19 @@ mod tests {
                         let p = k as PeerId + (rng.next_u64() % 3) as PeerId;
                         t.peer_gone(p, now, &mut out);
                         outstanding.retain(|x| x.1 != p);
+                        ended.retain(|x| x.1 != p);
+                    }
+                    8 if !ended.is_empty() => {
+                        // A late answer (or `NotFound`) to a request ended
+                        // early: accepted once, within its window, and its
+                        // slot is freed (RT5 F1).
+                        let i = (rng.next_u64() as usize) % ended.len();
+                        let (tx, p, at) = ended.swap_remove(i);
+                        if rng.next_u64() % 4 == 0 {
+                            t.not_found(tx, p, now, &mut out);
+                        } else if now <= at + LATE_TX_WINDOW {
+                            assert!(t.is_late(&tx, p, now), "seed {seed}: a late answer refused");
+                        }
                     }
                     6 if honest_announced.is_none() && step > 20 => {
                         honest_announced = Some(now);
@@ -1124,9 +1292,9 @@ mod tests {
                     note(&out, &mut outstanding, now, &mut honest_asked);
                     t.check();
                 }
-                let bound = INBOUND_DELAY
-                    + REQUEST_TIMEOUT * (1 + k.div_ceil(PARALLEL) as u32)
-                    + Duration::from_millis(500);
+                // Some attackers inflated: the stated bound with the
+                // longest timeout (RT5 F2).
+                let bound = stated_bound(k, longest_timeout()) + Duration::from_millis(500);
                 let waited = honest_asked.expect("the honest announcer is asked") - at;
                 assert!(
                     waited <= bound,
@@ -1134,6 +1302,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The longest request timeout an attacker can get: after a decoded
+    /// answer of the largest size (about 98 s).
+    fn longest_timeout() -> Duration {
+        REQUEST_TIMEOUT
+            + Duration::from_secs((super::super::dispatch::MAX_RELAY_FRAME / REQUEST_RATE) as u64)
+    }
+
+    /// The stated bound of docs/p2p.md §7 (RT5 F2): an inbound honest
+    /// announcer behind `k` attackers whose longest request timeout is
+    /// `longest` is asked within `2 s + max(30 s x (1 + ceil(k / 4)),
+    /// longest x ceil(k / 8))`: the 4 slots turn over every 30 s, the 8
+    /// outstanding places at least every `longest`, and each attacker is
+    /// asked at most once ahead of it.
+    fn stated_bound(k: usize, longest: Duration) -> Duration {
+        let slots = REQUEST_TIMEOUT * (1 + k.div_ceil(PARALLEL) as u32);
+        let places = longest * k.div_ceil(OUTSTANDING_MAX) as u32;
+        INBOUND_DELAY + slots.max(places)
     }
 
     // ------------------------------------------------ RT3-TM2P2P red team
@@ -1230,8 +1417,16 @@ mod tests {
         }
     }
 
+    /// The bound against attackers that do not inflate their timeouts
+    /// (each `REQUEST_TIMEOUT`): `2 s + 30 s x (1 + ceil(k / 4))`.
     fn bound(k: usize) -> Duration {
-        INBOUND_DELAY + REQUEST_TIMEOUT * (1 + k.div_ceil(PARALLEL) as u32) + STEP * 2
+        stated_bound(k, REQUEST_TIMEOUT) + STEP * 2
+    }
+
+    /// The bound against any attackers, some inflated to the largest
+    /// answer (RT5 F2).
+    fn bound_any(k: usize) -> Duration {
+        stated_bound(k, longest_timeout()) + STEP * 2
     }
 
     /// Runs `trials` simulations; the worst wait (`None`: dropped).
@@ -1515,36 +1710,70 @@ mod tests {
     /// RT4-TM2P2P: room that a `forget_requested` frees (an id arriving
     /// another way: a fluffed stem transaction, a copy from another
     /// announcer) wakes nobody: `forget_requested` takes no `Actions`, and
-    /// `poll` drains the freed peers only when a timer is due. A candidate
-    /// waiting on that peer (its id's only timer is its 20-minute deadline)
-    /// waits for an unrelated tracker event. Expected to FAIL while the gap
-    /// exists.
+    /// `poll` drained the freed peers only when a timer was due. A
+    /// candidate waiting on that peer (its id's only timer is its
+    /// 20-minute deadline) waited for an unrelated tracker event. Since RT5
+    /// F1 a request ended by another announcer's answer keeps its slot until
+    /// its own answer comes (or its `NotFound`, or its expiry): the room
+    /// comes then, and is used at the next poll.
     #[test]
     fn rt4_room_freed_by_a_forget_is_used_at_the_next_poll() {
-        let t0 = Instant::now();
-        let mut t = TxTracker::default();
-        let mut out = Actions::default();
-        for n in 1..=3 {
-            t.announce(id(n), 1, true, t0, &mut out);
-        }
-        assert_eq!(t.requests(), 2, "two before the first answer; id 3 waits");
-        assert_eq!(t.forget_requested(&id(1)), vec![1]);
-        assert_eq!(t.forget_requested(&id(2)), vec![1]);
-        let mut now = t0;
-        let mut first = None;
-        while now < t0 + Duration::from_secs(120) && first.is_none() {
-            now += Duration::from_millis(250);
+        // `answered`: how the room comes: 0 the peer's own answer was the
+        // one taken, 1 its late answers, 2 its `NotFound`s, 3 nothing (the
+        // requests' expiry).
+        for answered in 0..4 {
+            let t0 = Instant::now();
+            let mut t = TxTracker::default();
             let mut out = Actions::default();
-            t.poll(now, &mut out);
-            if asked(&out, 1, id(3)) {
-                first = Some(now - t0);
+            for n in 1..=3 {
+                t.announce(id(n), 1, true, t0, &mut out);
+            }
+            assert_eq!(t.requests(), 2, "two before the first answer; id 3 waits");
+            let taken = (answered == 0).then_some(1);
+            let ended = if taken.is_some() { vec![] } else { vec![1] };
+            assert_eq!(t.forget_requested(&id(1), taken, t0), ended);
+            assert_eq!(t.forget_requested(&id(2), taken, t0), ended);
+            // The answers come 5 s later.
+            let at = t0 + Duration::from_secs(5);
+            let mut now = t0;
+            let mut first = None;
+            let mut answers_due = answered == 1 || answered == 2;
+            while now < t0 + Duration::from_secs(120) && first.is_none() {
+                now += Duration::from_millis(250);
+                let mut out = Actions::default();
+                if answers_due && now >= at {
+                    answers_due = false;
+                    if answered == 1 {
+                        assert!(t.is_late(&id(1), 1, now) && t.is_late(&id(2), 1, now));
+                        assert!(!t.is_late(&id(1), 1, now), "one copy per request");
+                    } else {
+                        t.not_found(id(1), 1, now, &mut out);
+                        t.not_found(id(2), 1, now, &mut out);
+                    }
+                }
+                t.poll(now, &mut out);
+                if asked(&out, 1, id(3)) {
+                    first = Some(now - t0);
+                }
+                t.check();
+            }
+            eprintln!("RT4 lost wakeup ({answered}): id 3 asked after {first:?}");
+            // The next poll after the room came: the forget (the peer's
+            // own answer taken), its answers, or the requests' expiry (no
+            // answer: 30 s).
+            let room = match answered {
+                0 => Duration::ZERO,
+                1 | 2 => at - t0,
+                _ => REQUEST_TIMEOUT,
+            };
+            assert!(
+                first.is_some_and(|d| d >= room && d <= room + Duration::from_millis(250)),
+                "{answered}: {first:?}"
+            );
+            if answered == 3 {
+                assert!(t.is_late(&id(1), 1, now), "acceptable after its expiry");
             }
         }
-        eprintln!("RT4 lost wakeup: id 3 asked after {first:?} (None: not within 120 s)");
-        assert!(
-            first.is_some_and(|d| d <= Duration::from_secs(1)),
-            "{first:?}"
-        );
     }
 
     /// RT4 strategies of size-inflating attackers. Each makes its expected
@@ -1657,19 +1886,19 @@ mod tests {
                     "{s:?} x{k}: {w:?}"
                 );
                 assert!(
-                    w.is_some_and(|w| w <= bound(k)),
-                    "the silent bound: {s:?} x{k}: {w:?}"
+                    w.is_some_and(|w| w <= bound_any(k)),
+                    "the single bound: {s:?} x{k}: {w:?}"
                 );
             }
-            // Beyond 44, within the 64 inbound slots: the silent bound
-            // holds and the deadline drops nothing.
+            // Beyond 44, within the 64 inbound slots: the single bound
+            // (RT5 F2) holds and the deadline drops nothing.
             for k in [45, 52, 64] {
                 let w = honest_wait_inflated(s, k, late).map(|w| w + late);
                 eprintln!(
-                    "RT4 inflated {s:?} x{k}: {w:?}, silent bound {:?}",
-                    bound(k)
+                    "RT4 inflated {s:?} x{k}: {w:?}, single bound {:?}",
+                    bound_any(k)
                 );
-                assert!(w.is_some_and(|w| w <= bound(k)), "{s:?} x{k}: {w:?}");
+                assert!(w.is_some_and(|w| w <= bound_any(k)), "{s:?} x{k}: {w:?}");
             }
         }
     }
@@ -1831,11 +2060,16 @@ mod tests {
                 .collect();
             let after = Duration::from_millis(100 + rng.next_u64() % 180_000);
             let w = rt5_wait(&mix, after, false);
+            let b = if mix.iter().any(|s| s.1) {
+                bound_any(k)
+            } else {
+                bound(k)
+            };
             if let Some(w) = w {
-                worst_ratio = worst_ratio.max(w.as_secs_f64() / bound(k).as_secs_f64());
+                worst_ratio = worst_ratio.max(w.as_secs_f64() / b.as_secs_f64());
             }
-            if !w.is_some_and(|w| w <= bound(k)) {
-                over.push((seed, k, after, w, bound(k)));
+            if !w.is_some_and(|w| w <= b) {
+                over.push((seed, k, after, w, b));
             }
         }
         eprintln!(
@@ -1866,8 +2100,9 @@ mod tests {
                             let w = rt5_wait(&vec![(s, inflate); k], after, false);
                             worst = worst.zip(w).map(|(a, b)| a.max(b));
                         }
-                        if !worst.is_some_and(|w| w <= bound(k)) {
-                            over.push((s, inflate, k, after, worst, bound(k)));
+                        let b = if inflate { bound_any(k) } else { bound(k) };
+                        if !worst.is_some_and(|w| w <= b) {
+                            over.push((s, inflate, k, after, worst, b));
                         }
                         rows.push((s, inflate, k, after.as_secs(), worst.map(|w| w.as_secs())));
                     }
@@ -1879,65 +2114,118 @@ mod tests {
         assert!(over.is_empty());
     }
 
-    /// RT5-TM2P2P (measurement): a peer's late-answer memory is a FIFO of
-    /// 160, sized as if its requests ended no faster than one per slot per
-    /// 30 s (16 x 300 s / 30 s). A request ended by another announcer's
-    /// answer (`forget_tx`) ends at any rate: with the peer's room refilled
-    /// at once from its waiting ids, 161 such endings in one instant push
-    /// out the first, and that peer's answer to it (still on its way) is
-    /// then an unrequested `Tx` (+10).
+    /// RT5 F2: with at most `OUTSTANDING_MAX` requests outstanding per id,
+    /// attackers that inflate their timeouts can fill the 8 places, and an
+    /// outbound (preferred) honest announcer, which ranks first, waits for
+    /// one: at most 4 of the 8 are young, so the oldest expires within
+    /// `longest - 30 s`, and a young slot frees within 30 s. It is asked
+    /// within `2 s + max(30 s, longest - 30 s)` (68 s at the largest
+    /// answer; 32 s without inflation, RT3).
     #[test]
-    fn rt5_fast_endings_push_a_peers_late_answers_out() {
-        let t0 = Instant::now();
-        let mut t = TxTracker::default();
-        let h: PeerId = 1;
-        t.register_peer(h, 0);
-        let mut out = Actions::default();
-        t.answer_size(h, 1_000, t0, &mut out);
-        let n = LATE_PER_PEER as u64 + 20;
-        for i in 0..n {
-            t.announce(id(i), h, true, t0, &mut out);
-        }
-        let mut ended = Vec::new();
-        // Each id arrives from someone else the moment it is asked of h.
-        let mut guard = 0;
-        while ended.len() < n as usize && guard < 10_000 {
-            guard += 1;
-            let asked: Vec<Hash> = (0..n)
-                .map(id)
-                .filter(|x| t.is_requested(x, h) && !ended.contains(x))
-                .collect();
-            if asked.is_empty() {
-                let mut out = Actions::default();
-                t.poll(t0, &mut out);
-                continue;
-            }
-            for x in asked {
-                for p in t.forget_requested(&x) {
-                    t.remember_late(x, p, t0);
+    fn rt5_a_preferred_announcer_against_inflated_attackers() {
+        let limit =
+            INBOUND_DELAY + REQUEST_TIMEOUT.max(longest_timeout() - REQUEST_TIMEOUT) + STEP * 2;
+        let mut worst = Duration::ZERO;
+        let mut over = Vec::new();
+        for s in S5_ALL {
+            for k in [8usize, 64] {
+                // Every second of the first 200 (the first request
+                // periods and the turnover of the 8 places).
+                for after in (1..=200).map(Duration::from_secs) {
+                    let w = rt5_wait(&vec![(s, true); k], after, true);
+                    if let Some(w) = w {
+                        worst = worst.max(w);
+                    }
+                    if !w.is_some_and(|w| w <= limit) {
+                        over.push((s, k, after, w));
+                    }
                 }
-                ended.push(x);
-                let mut out = Actions::default();
-                t.poll(t0, &mut out);
             }
         }
-        let first_late = t.is_late(&id(0), h, t0);
-        let pushed_out = (0..n).filter(|i| !t.is_late(&id(*i), h, t0)).count();
         eprintln!(
-            "RT5 late memory: {} requests to one peer ended in one instant; first still \
-             acceptable: {first_late}; {pushed_out} pushed out",
-            ended.len()
+            "RT5 F2 preferred honest vs inflated: worst {worst:?}, limit {limit:?}; over: {over:?}"
         );
-        assert_eq!(ended.len(), n as usize);
-        assert!(!first_late, "documents the FIFO: the first is pushed out");
-        assert_eq!(pushed_out, 20);
+        assert!(over.is_empty());
     }
 
-    /// RT5-TM2P2P (measurement): since only young requests hold the id's
-    /// slots, a large transaction whose honest announcers' answers are
-    /// slow (a congested or Tor link; their expected size a PX answer) is
-    /// asked of up to 4 more announcers every 30 s while the older
-    /// requests stay outstanding: the copies in flight at once for one id.
+    /// RT5-TM2P2P F1: a peer's late-answer memory was a FIFO of 160, sized
+    /// as if its requests ended no faster than one per slot per 30 s
+    /// (16 x 300 s / 30 s). A request ended by another announcer's answer
+    /// (`forget_tx`) freed its slot at once, so with the peer's room
+    /// refilled from its waiting ids, 161 such endings in one instant
+    /// pushed out the first, and that peer's answer to it (still on its
+    /// way) was an unrequested `Tx` (+10). Now an early ending keeps its
+    /// slot until the peer's answer (which takes the entry) or the
+    /// request's expiry, so the memory is a bound ([`LATE_PER_PEER`]):
+    /// every request to an honest peer ends at once, for ten minutes, its
+    /// answers coming 1 s or 200 s later, and every answer is accepted,
+    /// with nothing pushed out (`check`).
+    #[test]
+    fn rt5_fast_endings_push_a_peers_late_answers_out() {
+        for delay in [Duration::from_secs(1), Duration::from_secs(200)] {
+            let t0 = Instant::now();
+            let mut t = TxTracker::default();
+            let h: PeerId = 1;
+            t.register_peer(h, 0);
+            let mut out = Actions::default();
+            t.answer_size(h, 1_000, t0, &mut out);
+            let mut next = 0u64;
+            let mut now = t0;
+            let mut answers: VecDeque<(Instant, Hash)> = VecDeque::new();
+            let (mut ended, mut accepted, mut most_in_one_instant) = (0usize, 0usize, 0usize);
+            while now < t0 + Duration::from_secs(600) {
+                let mut out = Actions::default();
+                // The peer keeps announcing (up to its tracked ids).
+                for _ in 0..50 {
+                    t.announce(id(next), h, true, now, &mut out);
+                    next += 1;
+                }
+                // Its answers that are due arrive: each one accepted.
+                while answers.front().is_some_and(|(at, _)| *at <= now) {
+                    let Some((_, x)) = answers.pop_front() else {
+                        break;
+                    };
+                    assert!(
+                        t.is_late(&x, h, now),
+                        "{delay:?}: an honest late answer refused"
+                    );
+                    accepted += 1;
+                }
+                t.poll(now, &mut out);
+                // Each id asked of it arrives from someone else at once.
+                let asked: Vec<Hash> = out
+                    .requests
+                    .iter()
+                    .filter(|(p, _)| *p == h)
+                    .flat_map(|(_, ids)| ids.iter().copied())
+                    .collect();
+                most_in_one_instant = most_in_one_instant.max(asked.len());
+                for x in asked {
+                    assert_eq!(t.forget_requested(&x, None, now), vec![h]);
+                    answers.push_back((now + delay, x));
+                    ended += 1;
+                }
+                t.check();
+                now += Duration::from_millis(250);
+            }
+            eprintln!(
+                "RT5 late memory ({delay:?} answers): {ended} requests to one peer ended early in \
+                 10 min, at most {most_in_one_instant} in one instant; {accepted} answers, all \
+                 accepted; memory {} of {LATE_PER_PEER}",
+                t.peers[&h].late.len()
+            );
+            assert!(ended > LATE_PER_PEER, "{ended}");
+            assert!(most_in_one_instant <= PEER_IN_FLIGHT);
+            assert!(accepted + answers.len() == ended);
+        }
+    }
+
+    /// RT5-TM2P2P F2: since only young requests hold the id's slots, a
+    /// large transaction whose honest announcers' answers are slow (a
+    /// congested or Tor link; their expected size a PX answer) was asked of
+    /// up to 4 more announcers every 30 s while the older requests stayed
+    /// outstanding: 12 copies in flight at once for one id (4 before RT4).
+    /// Now at most `OUTSTANDING_MAX` (8) are outstanding at once.
     #[test]
     fn rt5_copies_in_flight_for_one_slow_large_id() {
         let t0 = Instant::now();
@@ -1971,6 +2259,7 @@ mod tests {
              (timeout {:?}); growth (s, n): {at:?}",
             t.peers[&0].timeout()
         );
-        assert!(most <= PARALLEL * 3 + 1, "{most}");
+        // RT5 F2: at most `OUTSTANDING_MAX` (8) at once; 12 before.
+        assert_eq!(most, OUTSTANDING_MAX, "{most}");
     }
 }
