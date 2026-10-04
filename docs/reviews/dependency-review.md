@@ -49,8 +49,11 @@ dependency, `fuzz/deny.toml`), the C++ RandomX reference generator and the Pytho
 vector scripts (test tooling, decisions "Agent 01" and "Agent 05").
 
 **`unsafe` code:**
-- **Workspace crates** declare `#![forbid(unsafe_code)]` (CI job `lint`), except the
-  zkVM guest SDK's `ecall`, which runs inside the VM.
+- **Workspace crates** declare `#![forbid(unsafe_code)]` at every crate root of the
+  root workspace (CI job `lint`). Outside it: the zkVM guest SDK (`zkvm/sdk`) has one
+  `unsafe` block, its `ecall`, which runs inside the VM; the guest programs
+  (`zkvm/guests/`, their own workspace) use no `unsafe` but do not declare the
+  attribute.
 - **Dependencies** contain `unsafe` internally (OS bindings, the async runtime, SIMD
   field arithmetic and ciphers, zeroization, lock-free structures): see
   `unsafe-inventory.md` for the per-crate counts.
@@ -61,6 +64,7 @@ vector scripts (test tooling, decisions "Agent 01" and "Agent 05").
 |---|---|---|---|
 | Plonky3 (`p3-*`: field, baby-bear, poseidon2, fri, merkle-tree, uni-stark, batch-stark, lookup, challenger, commit, dft, air, matrix, symmetric, security) | **=0.7.0**, every crate | The STARK proof system of PX (zk.md) | See §3. Pre-1.0: the API and the proof format change between releases. One published audit of an earlier, **non-hiding** Plonky3 is reported (Least Authority, 2024; external-review-scope.md §3); the crates' READMEs do not mention it and we have not verified it. No audit of 0.7.0 or of the hiding mode is known, and none is claimed |
 | `p3-fri`, `p3-merkle-tree`, `p3-dft` | 0.7.0, **locally patched** (`third_party/`) | Hiding FRI and Merkle commitments; the DFT | Lock-scope fixes for prover hangs (ZK-F11, ZK-F21, ZK-F28), plus two test-only additions in `p3-fri`; no other change (§3.2). Upstream's own `unsafe` is kept unchanged |
+| `p3-batch-stark` | 0.7.0, **locally patched** (`third_party/`) | The batch STARK prover | PXDET-1: the quotient randomness is drawn in instance order, not thread-scheduling order, so proof bytes are reproducible from (witness, seed); the verifier is untouched (§3.2, §4) |
 | `curve25519-dalek` | 4.1.3 | Ristretto: CLSAG, Bulletproofs+, stealth addresses, PX delivery | Mature and widely deployed. A 2019 third-party audit of the dalek libraries is reported elsewhere (reviewer-candidates.md), but the crate's README (4.1.3) does not mention one and we have not verified it, so none is claimed. The crate contains `unsafe` in its SIMD backends. The `precomputed-tables` and `zeroize` features are enabled |
 | `wasmi` | **=0.38.0** | The Wasm contract engine (`contracts/`; **not in consensus**, not integrated; since D22 "D-freeze" outside the root workspace and its `Cargo.lock`, so in no shipped binary) | wasmi's README (2.0.0) reports an audit of 0.36–0.38 by Runtime Verification (2024-11-27). **Correction (dossier 29 W-1):** the report targets 0.36.0 and the 0.36.1–0.36.5 fixes; 0.37–0.38 are only partly covered, and 0.38.0 is not itself an audited release. Its internal `unsafe` (120 occurrences) is not reviewed by us (contracts.md §16.3) |
 | `ml-kem` (RustCrypto) | **=0.3.2** | Post-quantum half of PX record delivery (ML-KEM-768) | Young crate, pre-1.0, unaudited. The `hazmat` feature is used only for FIPS 203 deterministic encapsulation with a message drawn from the caller's CSPRNG. In 0.3.2 that feature gates only documentation (`encapsulate_deterministic` is public either way), so the restriction is enforced where it is called: only `px/src/` may (`.github/scripts/hazmat-policy.sh`; decisions "Agent 44": approved for p2p with hazmat blocked). Delivery is a hybrid, so its security needs only one of Ristretto ECDH or ML-KEM to hold (docs/px.md §6) |
@@ -80,7 +84,7 @@ vector scripts (test tooling, decisions "Agent 01" and "Agent 05").
 ### 3.1 What is relied on
 
 - **Soundness** of the batch STARK with LogUp lookups, FRI with hiding, and the
-  Poseidon2 duplex challenger. Parameters: BS-ZK-2 (zk.md §9.3); the security bits are
+  Poseidon2 duplex challenger. Parameters: BS-ZK-3 (`zk/src/params.rs`, zk.md §9.3; BS-ZK-4 pending); the security bits are
   computed by the project's own tested calculator, not taken from the library.
 - **Zero knowledge** of the hiding mode (`HidingFriPcs`, `MerkleTreeHidingMmcs`),
   claimed only as statistical and conditional (zk-coverage.md). Everything private in
@@ -93,23 +97,30 @@ vector scripts (test tooling, decisions "Agent 01" and "Agent 05").
 
   One implementation serves all three, so they cannot disagree.
 
-### 3.2 The local patch
+### 3.2 The local patches
 
 - **Files:**
   - `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` (ZK-F11, completed by ZK-F28)
     and `commit` (ZK-F21), with a shared `widen` helper and its equivalence test;
   - `p3-merkle-tree/src/hiding_mmcs.rs`: `commit` (ZK-F11);
-  - `p3-dft/src/radix_2_dit_parallel.rs`: the three twiddle caches (ZK-F21).
-- **Change:** no `spin` lock is held across rayon work any more. That was first
+  - `p3-dft/src/radix_2_dit_parallel.rs`: the three twiddle caches (ZK-F21);
+  - `p3-batch-stark/src/prover.rs`: `prove_batch` (PXDET-1, 2026-10-04; the only
+    change that is not about locks, see below).
+- **Lock-scope change** (the first three files): no `spin` lock is held across rayon work any more. That was first
   claimed after ZK-F21 and was not yet true: one site remained, fixed in ZK-F28.
-  Every `lock()` in the patched crates was then re-audited.
+  Every `lock()` in the patched crates was then re-checked.
   - Random values are drawn under the lock, which is then released.
   - Twiddle tables are computed before the write lock is taken.
-- **Audit of the other locks in the Plonky3 code we run:**
+- **Review of the other locks in the Plonky3 code we run:**
   - `Radix2DFTSmallBatch` (FRI prover) already computes outside its lock;
   - `Radix2Dit`, the monty-31 DFT and the goldilocks MDS are not used.
-- **Verified (re-checked 2026-09-27):** `diff -r --strip-trailing-cr` against the
-  registry copies shows exactly these three files (plus upstream's `Cargo.lock`,
+- **PXDET-1 change** (`p3-batch-stark`): the quotient values are still computed in
+  parallel, then the `get_quotient_ldes` calls run sequentially in instance order,
+  so each instance draws the same hiding randomness upstream draws on one thread.
+  The verifier and the proof format are unchanged (third_party/README.md).
+- **Verified (re-checked 2026-09-27 for the first three; `p3-batch-stark` added
+  2026-10-04):** `diff -r --strip-trailing-cr` against the
+  registry copies shows exactly these four files (plus upstream's `Cargo.lock`,
   `.cargo_vcs_info.json` and `Cargo.toml.orig`, which were removed). The rest of
   `third_party/` is verbatim upstream 0.7.0. `hiding_pcs.rs` also carries two
   test-only additions (the `widen` equivalence test and the mask-`R` shape test).
@@ -173,7 +184,7 @@ contains the fix).
 | GHSA-vrmm-4mm5-38vm (2025-01) | High | Opened values missing from the transcript | **No.** The fix `b5ec4d9` is in v0.7.0 (933 commits earlier) |
 | GHSA-m23j-cj9m-ppg9 (2025-03) | High | Missing size checks in the FRI verifier | **No.** The fix `367f761` is in v0.7.0 (855 commits earlier) |
 | GHSA-f69f-5fx9-w9r9 (2025-06) | High | Missing final-polynomial degree check; unrandomized roll-in | **No.** The fix `e784f44` is in v0.7.0 (764 commits earlier) |
-| GHSA-3g92-f9ch-qjcm (2026-04) | Low | `PaddingFreeSponge` is not collision-resistant across different input lengths | **We use it** (`zk/src/config.rs`: the Merkle leaf hash). The advisory states it is collision-resistant when the number of hashed elements is fixed in advance, and the 0.7.0 verifiers enforce exactly that: `MerkleTreeHidingMmcs::verify_batch` and the inner `verify_batch` call `check_widths` against the verifier-known dimensions (salted widths included), so every leaf input has a fixed length. Our shapes are public and fixed (P-1). `Hk` is our own sponge, with the length in the capacity. **Assessed not exploitable here; an item for the reviewer (area 2)** |
+| GHSA-3g92-f9ch-qjcm (2026-04) | Low | `PaddingFreeSponge` is not collision-resistant across different input lengths | **We use it** (`zk/src/config.rs`: the Merkle leaf hash). The advisory states it is collision-resistant when the number of hashed elements is fixed in advance, and the 0.7.0 verifiers enforce exactly that: `MerkleTreeHidingMmcs::verify_batch` and the inner `verify_batch` call `check_widths` against the verifier-known dimensions (salted widths included), so every leaf input has a fixed length. Our shapes are public and fixed (P-1). `Hk` is our own sponge, with the length in the capacity. **Assessed not exploitable here; an item for any future reviewer (area 2; none is planned)** |
 | GHSA-vj64-rjf3-w3v7 / CVE-2026-46654 (2026-05) | High | `MultiField32Challenger` transcript malleability | **No.** We use `DuplexChallenger` over BabyBear, not `MultiField32Challenger`, and the listed affected versions are < 0.4.3 and < 0.5.3 |
 
 **Limitation:** this covers published advisories only. It says nothing about unreported
@@ -200,12 +211,14 @@ bugs, and the hiding mode has no published audit (external-review-scope.md §3).
    refuses wasmi in `Cargo.lock` and `fuzz/Cargo.lock`, so it matters only if the Wasm
    contract system is ever integrated.
 6. **Still open from dossier 44** (not done in W3-44): cargo-vet with the
-   non-audit criterion `blacksilk-internal-review` (S9, P2); the `third_party/`
-   re-verification in CI (S2/SC-11); aligning `fuzz/Cargo.lock` with `Cargo.lock`
+   non-audit criterion `blacksilk-internal-review` (S9, P2); aligning `fuzz/Cargo.lock` with `Cargo.lock`
    (SC-5: the fuzz lock resolves `libc`, `proc-macro2`, `thiserror`, `zerocopy`,
    `tokio` and others to other versions); `getrandom` 0.4.3 (P2); dropping `fs2`
    (SC-7); a project licence and third-party notices (SC-8, owner); wallet-format
    known-answer tests before any `argon2` or `aes-gcm` bump (SC-9, wallet owner).
+   Done since: the `third_party/` re-verification in CI (S2/SC-11), by
+   `.github/scripts/third-party-gate.sh` and `tools/tpgate` (CI job `gates`,
+   merge `7e86dd4`; third_party/README.md).
 
 ## 7. Graph review, 2026-09-28 (W3-44)
 
@@ -218,8 +231,8 @@ bugs, and the hiding mode has no published audit (external-review-scope.md §3).
 
 | Measure | Value | Command |
 |---|---|---|
-| `Cargo.lock` packages (crates.io) | 309 (288) | `grep -c` on the lockfile |
-| `fuzz/Cargo.lock` packages (crates.io) | 152 (138) | as above |
+| `Cargo.lock` packages (crates.io) | 309 (288); re-counted 2026-10-05 at `c13eef2`: 309 (287) | `grep -c` on the lockfile |
+| `fuzz/Cargo.lock` packages (crates.io) | 152 (138); re-counted 2026-10-05 at `c13eef2`: 152 (137) | as above |
 | Release graph, crates.io crates per target (normal and build edges, whole workspace) | 214 x86_64 Linux, 213 aarch64 Linux, 220 x86_64 Windows MSVC, 213 aarch64 macOS | `cargo tree --workspace -e normal,build --target <t>` |
 | Release graph, all targets merged | 222 crates, 144 of them with `unsafe` lines | `unsafe-inventory.md` |
 | Crates with a build script (allow-listed by exact version) | 31 in the main graph (dev-only included), 20 in the fuzz graph | `deny.toml`, `fuzz/deny.toml` `[bans.build]` |

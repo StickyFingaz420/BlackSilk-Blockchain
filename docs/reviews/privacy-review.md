@@ -10,7 +10,7 @@
 > and on the final Option A build (docs/evidence/p5-2026-09-26/, p5-2026-09-26b/).
 >
 > The claim is **statistical** zero knowledge, conditional on the open items of
-> zk-coverage.md §3; perfect zero knowledge is not claimed. It rests on Plonky3's
+> zk-coverage.md §3 (computational in practice); perfect zero knowledge is not claimed. It rests on Plonky3's
 > hiding PCS as configured, which the project has not proven (assumptions.md Z7,
 > Z11–Z13). No part of this is independently
 > audited.
@@ -82,7 +82,7 @@ It must **not** learn:
 | Table heights (the proof's shape) | **Closed.** The kernel and every registered function have public budgets; the prover pads to them and the verifier accepts exactly that shape. Before this change, heights leaked a function's execution length (for example, how many loop rounds a secret took) | `zkvm/tests/multi.rs::a_budget_fixes_the_shape_whatever_the_secret` (the shapes differ unbudgeted and are identical budgeted); `budgets_are_enforced_by_prover_and_verifier`; `px/tests/unified.rs::record_kinds_are_not_revealed_by_trace_heights`; `px/tests/kernel.rs::successful_executions_have_identical_trace_heights` |
 | Budget exhaustion | **Closed.** An over-budget execution cannot be proven: the prover returns `BudgetExceeded` and nothing is broadcast. The kernel budgets exceed measured use by about 6%; a test requires ≤ 95% use for every tested witness | `px/tests/unified.rs::budgets_leave_headroom` |
 | Proof byte length | **Supported (not closed); measured; not constant.** Field elements are written fixed-width (Plonky3 serializes them as 4-byte arrays in binary formats), so values never change the length. The length varies only in the Merkle opening proof, whose pruned query paths contain fewer nodes where queries share ancestors. The query positions are public (every verifier recomputes them from the proof), drawn by Fiat–Shamir over hiding commitments, so their distribution is the same for every witness. See P-5 | Current layout (docs/evidence/p5-2026-09-26b/, 260 proofs): the non-authentication parts are byte-identical within each shape, 1,811,565 B (transfer) and 2,359,622 B (vault); 14 pairwise tests between witness classes give p from 0.107 to 0.965, none significant. (Earlier figures in this row, 0.84% spread and a 129,898-byte non-opening part, described older layouts) |
-| Opened values | **Statistical zero knowledge, conditional** (zk-coverage.md §3): Plonky3's hiding FRI (`HidingFriPcs`, `MerkleTreeHidingMmcs`) with terminal blinding and the minimum height of 2^8 | assumption A-ZK, docs/reviews/zk-security-review.md §2; assumptions.md Z7. Internal review only; no external review is engaged (owner decision 2026-09-25) |
+| Opened values | **Statistical zero knowledge, conditional; computational in practice** (zk-coverage.md §3): Plonky3's hiding FRI (`HidingFriPcs`, `MerkleTreeHidingMmcs`) with terminal blinding and the minimum height of 2^8 | assumption A-ZK, docs/reviews/zk-security-review.md §2; assumptions.md Z7. Internal review only; no external review is engaged (owner decision 2026-09-25) |
 | Public outputs of functions | **Inherent**, and chosen by the contract author: whatever a function writes to its public output is public. Transcripts bound to the kernel (`io_hash`) are hiding (a random blind) | docs/px.md §7.2 |
 | Kernel control flow | Constant work: both nullifier forms, both record kinds and every output check run for every input | `successful_executions_have_identical_trace_heights` |
 
@@ -125,22 +125,32 @@ It must **not** learn:
 
 | Item | Status | Evidence |
 |---|---|---|
-| Origin of a transaction | PX and deploy transactions take the same Dandelion++ stem as v1 transfers (stem conflicts keyed by key images **and** nullifiers) | `p2p/src/net.rs::stem_keys`; `p2p/tests/network.rs` |
+| Origin of a transaction | PX and deploy transactions take the same Dandelion++ stem as v1 transfers (stem conflicts keyed by key images **and** nullifiers) | `p2p/src/net/stem.rs::stem_keys`; `p2p/tests/network.rs` |
 | Relay volume | PX relays are rate-limited per peer (0.2/s, burst 4) and globally (2/s, burst 10). Honest traffic is below both. Under a flood, a node delays PX relays, which does not reveal an origin | `p2p/src/net.rs::px_rate` |
 | Submission through a remote node | **Inherent.** The node sees the submitter's IP, and the wallet's RPC traffic is plaintext HTTP: the wallet has **no Tor or TLS support**, so it cannot reach a remote node over Tor. Users should run their own node (which can itself connect to peers over Tor) | docs/px.md §12 (its "or reach one over Tor" does not work with the current wallet) |
 | Stem probing | **Open, low (P-6).** A peer that already knows a nullifier (its own transaction) can test whether a node holds a conflicting stem transaction. This is the known Dandelion++ property and needs knowledge of the spent record | docs/p2p.md §8 |
 
 ### 2.6 Wallet scanning
 
-- **Closed.** The wallet:
+- **Bounded leak, not closed** (corrected 2026-10-05 after TM2-PRIV C-3,
+  docs/reviews/phase2-2026-09-27/research/tm2-privacy.md §10). The wallet:
   - downloads whole blocks (`/blocks`), the complete, ordered commitment list
     (`/px/commitments`) and the complete registration list (`/px/contracts`), each
     paged from its current count;
   - trial-decrypts every ciphertext locally;
   - resolves positions locally.
-- It never sends the node a record, position, nullifier, key or address. The only
-  wallet-specific values the node sees are its sync height and its commitment and
-  registration counts, which every wallet at the same height sends alike.
+- It never sends the node a record, position, nullifier, key or address, and resolves
+  ring members locally. Since D1 it derives the decoy distribution from its local output
+  index and no longer asks `/distribution` at spend time (`wallet/src/index.rs`).
+- What the node still learns (bounded, not nothing):
+  - the wallet's **scan start** (restore height): sync begins there, and the one-time
+    `/outputs` backfill of the outputs below it fetches the whole range in fixed pages,
+    the same requests for every wallet with that restore height
+    (`Wallet::complete_index`, `wallet/src/wallet/px_flows.rs`);
+  - **when** the wallet syncs, and its sync height and commitment and registration
+    counts (alike for every wallet at the same height);
+  - the hashes of its own pending transactions, through the rebroadcast `/tx/status`
+    probes (`wallet/src/wallet/rebroadcast.rs`), on top of the submission itself (§2.5).
 - **Evidence:**
   - `wallet/src/px.rs` (no other node calls);
   - `wallet/src/node.rs` (the whole `NodeApi` surface);
@@ -171,7 +181,7 @@ It must **not** learn:
 | P-7 | Uniform fees are a wallet convention, not a consensus rule | **Resolved** (2026-09-25): the fee of every PX transaction is exactly `PX_STANDARD_FEE` in consensus. Side effect: fee-per-byte ordering ranks larger PX transactions (contract calls) lower under congestion (docs/px.md §11.5) |
 | P-8 | Contract calls reveal which contract and function ran, and so the timing between related calls (such as a LOCK and its CLAIM) | Inherent: the verifier needs the program. Documented to users (docs/px.md §12); analysed in §3b. Automatic delays and recursion are not implemented |
 | P-10 | **The proofs reveal the kernel's execution profile** (ZK-F29): each table's LogUp terminal is published unblinded, and the Program table's terminal is a function of the per-instruction execution counts alone. Measured: 33 distinct count vectors over 100 witnesses; one real input vs two real inputs are always distinguishable, and counts vary with amounts and keys | **Fixed in code** (R12, terminal blinding in our circuits; owner-approved). Hiding up to ~2^−124 under Z7/Z12. Reviewed internally in rounds 2–4; consensus-affecting (testnet reset to v2) |
-| P-11 | **Small tables may leak through the openings** (ZK-F30): with a 64-row table, about 104–110 opened points exceed its 64 random rows. Correction: Poseidon2 is shared, so the vault does not create a 64-row table; the smallest witness table in a transfer was 128 rows. (The "margin of about 18" stated here earlier was wrong: the bound is 232 openings, ePrint 2024/1037 eq. 17, so 128 rows did not suffice.) | **Fixed in code** (R12): minimum table height 2^8, and 232 ≤ 256 (Z13, checked in every build) |
+| P-11 | **Small tables may leak through the openings** (ZK-F30): with a 64-row table, about 104–110 opened points exceed its 64 random rows. Correction: Poseidon2 is shared, so the vault does not create a 64-row table; the smallest witness table in a transfer was 128 rows. (The "margin of about 18" stated here earlier was wrong: the bound is 232 openings, ePrint 2024/1037 eq. 17, so 128 rows did not suffice.) | **Fixed in code** (R12): minimum table height 2^8, and 232 ≤ 256 (Z13, checked in every build). Under BS-ZK-3 the build check counts both opening points, as Plonky3 0.8 does: 2·(108 + 8·2) = 248 ≤ 256 (`zk/src/params.rs`) |
 | P-9 | The wallet could spend a v1 input again with a new ring after a transaction that had been relayed: after a transport failure, 20 blocks after submitting, or after a reorganization | **Fixed** (2026-09-25, §3c): transactions are stored and rebroadcast unchanged; inputs are released only on an `Invalid` verdict; a later spend reuses the stored ring (W-5). Residuals: key-image linkability, and rings lost on a restore from seed |
 
 ## 3a. P-5 in detail: why proof-length variation carries no witness information
@@ -186,6 +196,13 @@ transfer, 2,359,622 B vault); 14 pairwise tests (7 pairs × 2 statistics) give p
 0.107 to 0.965, none below the multiple-comparison threshold 0.05/14 ≈ 0.0036. The
 older measurements below are kept as the record.
 
+**Re-run on the frozen kernel (BS-ZK-3, PXDET-1; freeze gate B3, PASS;
+docs/evidence/freeze-b2-b3-2026-10-04/):** 60, 30 and 30 proofs for n_fn = 0, 1 and 2; the
+non-digest bytes are identical within each shape (2,049,372, 2,683,996 and 3,339,573 B);
+mean totals about 2.40, 3.00 and 3.63 MB; no pairwise test below the Bonferroni
+threshold 0.05/20 = 0.0025 (smallest p 0.074). The figures above are those of the
+former set BS-ZK-2.
+
 ### Claim
 
 For a fixed statement shape (the same programs and budgets), the encoded length of a
@@ -193,7 +210,7 @@ PX proof is a deterministic function of the shape and of the FRI query positions
 `Q`. `Q` has the same distribution whatever the witness. So the length has the same
 distribution for every witness, and observing it tells nothing about the witness.
 
-### 1. Measured (this machine, BS-ZK-2, Plonky3 0.7.0)
+### 1. Measured (this machine, the former set BS-ZK-2, Plonky3 0.7.0)
 
 - **Everything but the Merkle authentication data has a fixed length.**
   `px/tests/proof.rs::a_private_transfer_proves_verifies_and_applies_once` splits a

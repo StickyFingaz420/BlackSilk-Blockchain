@@ -71,11 +71,14 @@ Code: `zkvm/src/air/util.rs` (`blind_consume`, `blind_provide`), `zkvm/src/air/m
   - That is harmless: the values are independent per table and carry no witness
     data.
 - **C2:** the hiding PCS keeps the committed columns (the blinding columns included)
-  hidden, **statistically**. For BS-ZK-2 each table meets the per-table conditions of
+  hidden, **statistically** (and conditionally; computational in practice, see
+  zk-coverage.md §4). For BS-ZK-3, the current set (BS-ZK-2 was the set when this was
+  written; BS-ZK-4 is pending), each table meets the per-table conditions of
   the published construction (docs/reviews/zk-coverage.md); the construction as a
   whole does not directly cover our system:
   - witness randomization, ePrint 2024/1037 §4.2 eq. (17): `2·(e·n_F + n_D) ≤ h ≤ |H|`,
-    i.e. **2·(8 + 108) = 232 ≤ 256**, the minimum height. A `const` assertion checks
+    counting both opening points as Plonky3 0.8 does, **2·(108 + 8·2) = 248 ≤ 256**,
+    the minimum height (the paper's n_F = 1 reading gave the former 2·(8 + 108) = 232). A `const` assertion checks
     the inequality in every build; the prover and the verifier enforce the minimum
     height (`zk/src/lib.rs`);
   - the FRI mask (Protocol 2, Lemma 2): Plonky3 commits a separate randomization
@@ -83,7 +86,7 @@ Code: `zkvm/src/air/util.rs` (`blind_consume`, `blind_provide`), `zkvm/src/air/m
     extension. The verifier checks `R`'s presence, public width and height; a test
     checks its full committed width. Upstream calls it "only statistically ZK".
   - Correction: internal review round 2 (Z2) held that the mask was the 4 per-matrix
-    random codewords and spanned only half the extension. That premise was wrong and
+    random codewords (BS-ZK-2; BS-ZK-3 has 8) and spanned only half the extension. That premise was wrong and
     Z2 is withdrawn (internal-review-log.md, round 3).
   - Earlier versions of this note gave "108 queries plus 2 out-of-domain points" or
     124 openings. Those counts were wrong: the paper counts each extension-field

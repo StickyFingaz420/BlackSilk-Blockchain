@@ -261,13 +261,13 @@ parallel. Now the random columns are drawn sequentially under the lock (the same
 values in the same order), and a shared helper `widen` builds the widened matrices
 after the lock is released. A unit test (`widen_matches_with_random_cols`) shows the
 result is identical to `with_random_cols` for the same RNG state. Every `lock()` in
-the three patched crates now does sequential work only.
+the three lock-scope patched crates now does sequential work only.
 
 **Diff against the published crates** (since 2026-10-04 checked on every CI run;
-the exact diffs are `patches/p3-fri.patch`, `patches/p3-merkle-tree.patch` and
-`patches/p3-dft.patch`; first re-checked 2026-09-27 with
-`diff -r --strip-trailing-cr` against the registry's 0.7.0 copies; only these three
-source files differ, apart from upstream's `Cargo.lock`, `.cargo_vcs_info.json` and
+the exact diffs are `patches/p3-fri.patch`, `patches/p3-merkle-tree.patch`,
+`patches/p3-dft.patch` and `patches/p3-batch-stark.patch`; the first three were
+re-checked 2026-09-27 with `diff -r --strip-trailing-cr` against the registry's 0.7.0
+copies; only these four source files differ, apart from upstream's `Cargo.lock`, `.cargo_vcs_info.json` and
 `Cargo.toml.orig`, which were removed):
 - `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` and `commit`, one block each (the
   `get_quotient_ldes` block also moves upstream's comment on the random values and
@@ -298,7 +298,7 @@ already has one; see below). Then the exact pins move to that version, after
 re-running the full test suite and `zkvm/tests/stress.rs`.
 
 **Tested against upstream's own suites (2026-09-25):**
-- the three patched files were applied to the v0.7.0 release commit (`fb93826`), whose
+- the three lock-scope patched files were applied to the v0.7.0 release commit (`fb93826`), whose
   sources equal the crates.io copies;
 - `cargo test` passes for `p3-dft` (44 tests), `p3-merkle-tree` (99) and `p3-fri`
   (65, including the equivalence test added with ZK-F28), with and without rayon
