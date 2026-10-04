@@ -161,6 +161,10 @@ pub const REVISIONS: &[Revision] = &[
         id: "PX-R:ciphertext-r-canonical-not-identity",
         record: "px-ciphertext-r",
     },
+    Revision {
+        id: "RX-SALT:blacksilk-randomx-argon2-salt",
+        record: "rx-salt",
+    },
 ];
 
 /// The three digests of one network.
@@ -554,8 +558,9 @@ fn rule_samples(network: Network) -> Manifest {
 }
 
 /// The RandomX configuration, read from the crate
-/// (`blacksilk_randomx::config_entries`, RTFP3-2), and its pinned known
-/// answer (`blacksilk_randomx::FINGERPRINT_KAT`, the reference vector 1a).
+/// (`blacksilk_randomx::config_entries`, RTFP3-2; BlackSilk's Argon2 salt,
+/// record #rx-salt), and its pinned known answer
+/// (`blacksilk_randomx::FINGERPRINT_KAT`, BlackSilk's vector bs-1a).
 /// No hash is computed here: a light-mode hash needs a 256 MiB cache, too
 /// costly for `/info` and `--version`. The known answer is a pinned copy that
 /// the crate's vector test requires the crate to compute, as
@@ -564,7 +569,7 @@ fn randomx_entries(m: &mut Manifest) {
     use blacksilk_randomx::ConfigValue;
     m.text(
         "randomx.variant",
-        "RandomX v1 (rx/0), light-mode verification",
+        "RandomX v1, BlackSilk Argon2 salt, light-mode verification",
     )
     .size("randomx.HASH_SIZE", blacksilk_randomx::HASH_SIZE)
     .size("randomx.MAX_KEY_SIZE", blacksilk_randomx::MAX_KEY_SIZE);
@@ -1478,10 +1483,14 @@ mod tests {
         assert_eq!(
             get("randomx.KAT.hash"),
             Value::Text(
-                "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f".to_string()
+                "424838440b398cd20d703905167a6d07b19816b0ab246b678218649fa7d70802".to_string()
             )
         );
         assert_eq!(get("randomx.PROGRAM_ITERATIONS"), Value::U64(2048));
+        assert_eq!(
+            get("randomx.ARGON_SALT"),
+            Value::Bytes(b"BlackSilk/RandomX/v1".to_vec())
+        );
         let verdict = |case: &str| match get(&format!("rules.sample.verdict ({case})")) {
             Value::Text(t) => t,
             other => panic!("{other:?}"),

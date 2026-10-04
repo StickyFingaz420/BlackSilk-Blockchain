@@ -245,8 +245,8 @@ fn wait_for_node(node: &str, cookie: Option<&Path>) -> Result<(Client, rpc::Info
 static SELF_TEST_SKIPPED: AtomicBool = AtomicBool::new(false);
 
 /// The start-up self-test (decisions "Agent 08", TM2-3): the reference
-/// vectors in light mode, the code every node verifies with and this miner
-/// mines with in light mode. A full-mode dataset is checked against its
+/// vectors and BlackSilk's (`START_UP_VECTORS`) in light mode, the code
+/// every node verifies with and this miner mines with in light mode. A full-mode dataset is checked against its
 /// cache whenever one is built (`PowContext::try_new`).
 fn start_up_self_test(skip: bool) -> Result<(), Fatal> {
     if skip {
@@ -260,26 +260,28 @@ fn start_up_self_test(skip: bool) -> Result<(), Fatal> {
     let took = blacksilk_randomx::self_test::self_test_light()
         .map_err(|m| Fatal::SelfTest(self_test_message(&m.to_string())))?;
     log::info!(
-        "RandomX self-test passed: {} reference vectors (light mode) in {took:.1?}",
-        blacksilk_randomx::self_test::VECTORS.len()
+        "RandomX self-test passed: {} known answers (reference and BlackSilk, light mode) in \
+         {took:.1?}",
+        blacksilk_randomx::self_test::START_UP_VECTORS.len()
     );
     Ok(())
 }
 
 /// `--randomx-self-test`: light mode, then full mode unless `light`.
 fn self_test_only(light: bool, threads: usize) -> Result<(), Fatal> {
-    use blacksilk_randomx::self_test::{check_full, VECTORS};
+    use blacksilk_randomx::self_test::{check_full, START_UP_VECTORS};
     start_up_self_test(false)?;
     if !light {
         log::info!(
             "full mode: building a 2 GiB dataset for each of the test keys on {threads} \
              threads (minutes)"
         );
-        let took = check_full(&VECTORS, threads)
+        let took = check_full(&START_UP_VECTORS, threads)
             .map_err(|m| Fatal::SelfTest(self_test_message(&m.to_string())))?;
         log::info!(
-            "RandomX self-test passed: {} reference vectors (full mode) in {took:.1?}",
-            VECTORS.len()
+            "RandomX self-test passed: {} known answers (reference and BlackSilk, full mode) \
+             in {took:.1?}",
+            START_UP_VECTORS.len()
         );
     }
     Ok(())

@@ -1,10 +1,16 @@
-//! Pure-Rust implementation of the RandomX proof-of-work (version 1, as used by Monero).
+//! Pure-Rust implementation of the RandomX proof-of-work (version 1).
 //!
 //! This is a port of the reference implementation by tevador
 //! (<https://github.com/tevador/RandomX>, BSD-3-Clause) and is verified against its
 //! official test vectors. It contains no `unsafe` code and no FFI. Floating point
 //! rounding modes are emulated exactly in software (module `fpu`), so results are
 //! identical on every platform.
+//!
+//! BlackSilk hashes with its own Argon2 salt ([`Variant::BlackSilk`], the
+//! default of [`Cache::new`]); every other parameter is the reference
+//! configuration. The official vectors are Monero's `rx/0` salt
+//! ([`Variant::MoneroRx0`]), kept to test the engine
+//! (docs/reviews/v3-consensus-changes.md#rx-salt).
 //!
 //! * [`Cache`]: built from a key (256 MiB); enough to verify hashes ("light mode").
 //! * [`Dataset`]: expanded from a cache (~2 GiB); makes hashing much faster ("full mode").
@@ -37,6 +43,29 @@ mod vm;
 pub use dataset::{Cache, Dataset};
 pub use vm::Vm;
 
+/// The RandomX configurations this crate hashes with. They differ only in the
+/// Argon2 salt, the one parameter the RandomX designers recommend each project
+/// change (`doc/configuration.md`); the salt enters only the initial Argon2
+/// hash `H0` of the cache, so everything after the cache fill is shared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Variant {
+    /// BlackSilk's proof of work: salt `"BlackSilk/RandomX/v1"`. Consensus.
+    BlackSilk,
+    /// Monero's `rx/0` (salt `b"RandomX\x03"`): only for the reference test
+    /// vectors ([`self_test::VECTORS`]), never for consensus.
+    MoneroRx0,
+}
+
+impl Variant {
+    /// The Argon2 salt of this variant.
+    pub const fn argon_salt(self) -> &'static [u8] {
+        match self {
+            Variant::BlackSilk => config::ARGON_SALT,
+            Variant::MoneroRx0 => config::ARGON_SALT_MONERO,
+        }
+    }
+}
+
 /// Size of a RandomX hash in bytes.
 pub const HASH_SIZE: usize = 32;
 
@@ -56,8 +85,8 @@ pub enum ConfigValue {
     Ints(Vec<u64>),
 }
 
-/// The RandomX configuration this crate hashes with, read from its own
-/// constants (`config.rs`), in a fixed order: the consensus fingerprint lists
+/// The RandomX configuration this crate hashes with ([`Variant::BlackSilk`]),
+/// read from its own constants (`config.rs`), in a fixed order: the consensus fingerprint lists
 /// these (node/src/fingerprint.rs, RTFP3-2), so a changed parameter changes
 /// the fingerprint. Every value is consensus-critical.
 pub fn config_entries() -> Vec<(&'static str, ConfigValue)> {
@@ -161,20 +190,21 @@ pub struct KnownAnswer {
     pub hash: &'static str,
 }
 
-/// The pinned known answer of the consensus fingerprint (RTFP3-2): the
-/// reference implementation's "Hash test 1a" (`src/tests/tests.cpp`). A light
-/// hash needs a 256 MiB cache, too costly at node start-up, so the
-/// fingerprint lists this **pinned copy** and `tests::hash_1a` requires the
-/// crate to compute it (the pattern of `zkvm::prove::CIRCUIT_DIGEST`). A
-/// change of the algorithm fails that test; a change of this value changes
-/// the fingerprint.
+/// The pinned known answer of the consensus fingerprint (RTFP3-2):
+/// BlackSilk's "bs-1a", the key and input of the reference implementation's
+/// "Hash test 1a" (`src/tests/tests.cpp`) hashed with [`Variant::BlackSilk`]
+/// (`self_test::BLACKSILK_VECTORS`). A light hash needs a 256 MiB cache, too
+/// costly at node start-up, so the fingerprint lists this **pinned copy** and
+/// `tests::blacksilk_vectors` requires the crate to compute it (the pattern of
+/// `zkvm::prove::CIRCUIT_DIGEST`). A change of the algorithm or of the salt
+/// fails that test; a change of this value changes the fingerprint.
 pub const FINGERPRINT_KAT: KnownAnswer = KnownAnswer {
     key: b"test key 000",
     input: b"This is a test",
-    hash: "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
+    hash: "424838440b398cd20d703905167a6d07b19816b0ab246b678218649fa7d70802",
 };
 
-/// Convenience: build a cache for `key` and hash `input` in light mode.
+/// Convenience: build BlackSilk's cache for `key` and hash `input` in light mode.
 /// Building the cache dominates the cost; reuse a [`Cache`] when hashing repeatedly.
 pub fn hash_light(key: &[u8], input: &[u8]) -> [u8; HASH_SIZE] {
     let cache = Cache::new(key);
@@ -183,7 +213,9 @@ pub fn hash_light(key: &[u8], input: &[u8]) -> [u8; HASH_SIZE] {
 
 #[cfg(test)]
 mod tests {
-    //! Official test vectors from the reference `src/tests/tests.cpp`.
+    //! Official test vectors from the reference `src/tests/tests.cpp` (Monero's
+    //! salt, [`Variant::MoneroRx0`]), and BlackSilk's known answers
+    //! ([`Variant::BlackSilk`]: the same keys and inputs; record #rx-salt).
 
     use super::*;
     use crate::aes_gen::fill_aes_1rx4;
@@ -193,12 +225,18 @@ mod tests {
 
     fn cache_000() -> &'static Cache {
         static CACHE: OnceLock<Cache> = OnceLock::new();
-        CACHE.get_or_init(|| Cache::new(b"test key 000"))
+        CACHE.get_or_init(|| Cache::with_variant(b"test key 000", Variant::MoneroRx0))
     }
 
     fn cache_001() -> &'static Cache {
         static CACHE: OnceLock<Cache> = OnceLock::new();
-        CACHE.get_or_init(|| Cache::new(b"test key 001"))
+        CACHE.get_or_init(|| Cache::with_variant(b"test key 001", Variant::MoneroRx0))
+    }
+
+    /// BlackSilk's cache of `test key 000` (`Cache::new`, the consensus path).
+    fn bs_cache_000() -> &'static Cache {
+        static CACHE: OnceLock<Cache> = OnceLock::new();
+        CACHE.get_or_init(|| Cache::new(b"test key 000"))
     }
 
     /// Key of "Hash test 1f" (upstream PR #326): 31 bytes. The reference declares a
@@ -214,7 +252,7 @@ mod tests {
 
     fn cache_1f() -> &'static Cache {
         static CACHE: OnceLock<Cache> = OnceLock::new();
-        CACHE.get_or_init(|| Cache::new(&KEY_1F))
+        CACHE.get_or_init(|| Cache::with_variant(&KEY_1F, Variant::MoneroRx0))
     }
 
     #[test]
@@ -223,6 +261,59 @@ mod tests {
         assert_eq!(mem[0], 0x191e0e1d23c02186);
         assert_eq!(mem[1568413], 0xf1b62fe6210bf8b1);
         assert_eq!(mem[33554431], 0x1f47f056d05cd99b);
+    }
+
+    /// The words of `cache_initialization` in BlackSilk's cache of the same
+    /// key: different from the reference's (the salt changed the fill), and
+    /// pinned (generated by this crate; `argon2_crate_fills_the_same_cache`
+    /// checks the whole fill independently).
+    #[test]
+    fn blacksilk_cache_initialization() {
+        let mem = bs_cache_000().memory();
+        assert_eq!(bs_cache_000().variant(), Variant::BlackSilk);
+        assert_eq!(mem[0], BS_MEM_0);
+        assert_eq!(mem[1568413], BS_MEM_1);
+        assert_eq!(mem[33554431], BS_MEM_2);
+        let reference = cache_000().memory();
+        for i in [0, 1568413, 33554431] {
+            assert_ne!(mem[i], reference[i], "word {i}");
+        }
+    }
+
+    /// Independent check of the only salt-dependent stage: the RandomX cache
+    /// is the raw Argon2d memory with `outlen = 0` in `H0` (spec 7.1), which
+    /// is exactly what the RustCrypto `argon2` crate's `fill_memory` computes
+    /// (it hashes `H0` with an empty output). Every 64-bit word of both
+    /// caches of `test key 000`, BlackSilk's and the reference's, must agree.
+    /// The reference salt is the control: its cache is also pinned by the
+    /// official vectors.
+    #[test]
+    fn argon2_crate_fills_the_same_cache() {
+        use argon2::{Algorithm, Argon2, Block, Params, Version};
+        let params = Params::new(
+            config::ARGON_MEMORY,
+            config::ARGON_ITERATIONS,
+            config::ARGON_LANES,
+            None,
+        )
+        .unwrap();
+        let argon = Argon2::new(Algorithm::Argon2d, Version::V0x13, params);
+        let mut blocks = vec![Block::new(); config::ARGON_MEMORY as usize];
+        for (cache, salt) in [
+            (bs_cache_000(), b"BlackSilk/RandomX/v1".as_slice()),
+            (cache_000(), b"RandomX\x03".as_slice()),
+        ] {
+            assert_eq!(cache.variant().argon_salt(), salt);
+            argon
+                .fill_memory(b"test key 000", salt, &mut blocks)
+                .unwrap();
+            let theirs = blocks.iter().flat_map(|b| b.as_ref().iter().copied());
+            assert!(
+                theirs.eq(cache.memory().iter().copied()),
+                "{:?}: the argon2 crate fills a different cache",
+                cache.variant()
+            );
+        }
     }
 
     #[test]
@@ -297,10 +388,32 @@ mod tests {
             b"This is a test",
             "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
         );
-        // The fingerprint's pinned known answer is this vector, and the crate
-        // computes it (RTFP3-2).
-        assert_eq!(FINGERPRINT_KAT.key, b"test key 000");
-        check(cache_000(), FINGERPRINT_KAT.input, FINGERPRINT_KAT.hash);
+    }
+
+    /// BlackSilk's known answers bs-1a to bs-1f (a copy pinned separately
+    /// from `self_test::BLACKSILK_VECTORS`): the reference keys and inputs
+    /// with BlackSilk's salt, each different from the reference answer. The
+    /// fingerprint's pinned known answer is bs-1a, and the crate computes it
+    /// (RTFP3-2).
+    #[test]
+    fn blacksilk_vectors() {
+        let want = [BS_1A, BS_1B, BS_1C, BS_1D, BS_1E, BS_1F];
+        let vectors = self_test::BLACKSILK_VECTORS;
+        for ((v, reference), want) in vectors.iter().zip(&self_test::VECTORS).zip(want) {
+            assert_eq!(v.variant, Variant::BlackSilk);
+            assert_eq!((v.key, v.input), (reference.key, reference.input));
+            assert_eq!(hex::encode(v.hash), want, "{}", v.name);
+            assert_ne!(v.hash, reference.hash, "{}", v.name);
+        }
+        self_test::check_light(&vectors).expect("BlackSilk vectors");
+        assert_eq!(FINGERPRINT_KAT.key, vectors[0].key);
+        assert_eq!(FINGERPRINT_KAT.input, vectors[0].input);
+        assert_eq!(FINGERPRINT_KAT.hash, BS_1A);
+        check(bs_cache_000(), FINGERPRINT_KAT.input, FINGERPRINT_KAT.hash);
+        assert_eq!(
+            hex::encode(hash_light(b"test key 000", b"This is a test")),
+            BS_1A
+        );
     }
 
     /// `config_entries` reads the crate's own constants: spot values of the
@@ -311,7 +424,10 @@ mod tests {
         let get = |k: &str| e.iter().find(|(n, _)| *n == k).unwrap().1.clone();
         assert_eq!(get("PROGRAM_ITERATIONS"), ConfigValue::Int(2048));
         assert_eq!(get("ARGON_MEMORY_KIB"), ConfigValue::Int(262_144));
-        assert_eq!(get("ARGON_SALT"), ConfigValue::Bytes(b"RandomX\x03"));
+        assert_eq!(
+            get("ARGON_SALT"),
+            ConfigValue::Bytes(b"BlackSilk/RandomX/v1")
+        );
         assert_eq!(get("SUPERSCALAR_LATENCY"), ConfigValue::Int(170));
         match get("FREQ") {
             ConfigValue::Ints(f) => assert_eq!((f.len(), f.iter().sum::<u64>()), (29, 256)),
@@ -324,17 +440,25 @@ mod tests {
     }
 
     /// `Cache::try_new` (fallible allocation, for optional builds) builds the
-    /// same cache as `Cache::new`: the same memory, and vector 1a.
+    /// same cache as `Cache::new` (BlackSilk's): the same memory, and bs-1a.
     #[test]
     fn try_new_builds_the_same_cache() {
         let cache = Cache::try_new(b"test key 000").expect("256 MiB");
-        assert!(cache.memory() == cache_000().memory());
-        check(
-            &cache,
-            b"This is a test",
-            "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
-        );
+        assert_eq!(cache.variant(), Variant::BlackSilk);
+        assert!(cache.memory() == bs_cache_000().memory());
+        check(&cache, b"This is a test", BS_1A);
     }
+
+    /// The pinned BlackSilk answers (generated by this crate; record #rx-salt).
+    const BS_1A: &str = "424838440b398cd20d703905167a6d07b19816b0ab246b678218649fa7d70802";
+    const BS_1B: &str = "7d742273815a73a2fea8b7e0102bf8b47d6b7cd2657a3cd7a7d2dd9f4e798d8f";
+    const BS_1C: &str = "182e687dcbd7d60daecef46c8b7a3369fa0b0e5517d21b57a31b1bf7ff9c5bb6";
+    const BS_1D: &str = "7c5f9da95f68936abddc00535549716ccb5c1c5965fe31fc7cd8d047950bcede";
+    const BS_1E: &str = "a4687b72af500c1e764655b42db9580ee0b72a6c06b8020d97597ec037b2c1bf";
+    const BS_1F: &str = "2d2e59cff0b64955878021d9c35b3300f93980434522b15e8cde421210ca35ae";
+    const BS_MEM_0: u64 = 0x17e29b325605d985;
+    const BS_MEM_1: u64 = 0xef0cec13efeca6e3;
+    const BS_MEM_2: u64 = 0x822616767d3ded6b;
 
     #[test]
     fn hash_1b() {
@@ -389,7 +513,8 @@ mod tests {
 
     /// Full mode (the miner's default) must give the official vectors and agree
     /// with light mode (what nodes verify with) on random inputs, for both
-    /// reference keys and the 31-byte key of vector 1f. Needs ~2.3 GiB RAM and
+    /// reference keys and the 31-byte key of vector 1f, and the same for
+    /// BlackSilk's salt on `test key 000` (bs-1a to bs-1c). Needs ~2.3 GiB RAM and
     /// several minutes (one dataset per key), so it is opt-in:
     /// `cargo test --release -p blacksilk-randomx -- --ignored --nocapture`.
     /// CI runs it in the `randomx-full` job.
@@ -403,7 +528,7 @@ mod tests {
         .unwrap();
         type Vectors<'a> = Vec<(&'a [u8], &'a str)>;
         let vector_1f = hex::decode(INPUT_1F).unwrap();
-        let cases: [(&Cache, Vectors); 3] = [
+        let cases: [(&Cache, Vectors); 4] = [
             (
                 cache_000(),
                 vec![
@@ -435,6 +560,17 @@ mod tests {
                 ],
             ),
             (cache_1f(), vec![(&vector_1f, HASH_1F)]),
+            (
+                bs_cache_000(),
+                vec![
+                    (b"This is a test", BS_1A),
+                    (b"Lorem ipsum dolor sit amet", BS_1B),
+                    (
+                        b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua",
+                        BS_1C,
+                    ),
+                ],
+            ),
         ];
         for (k, (cache, vectors)) in cases.iter().enumerate() {
             let started = std::time::Instant::now();

@@ -204,13 +204,14 @@ const _: () = {
 };
 
 /// Runs the RandomX start-up self-test (`blacksilk_randomx::self_test`):
-/// the reference vectors in light mode, as this node verifies. `Ok` with
+/// the reference vectors and BlackSilk's in light mode, as this node
+/// verifies. `Ok` with
 /// the time taken, or the operator's message for a mismatch.
 pub fn randomx_self_test() -> Result<Duration, String> {
     blacksilk_randomx::self_test::self_test_light().map_err(|m| {
         format!(
-            "RandomX self-test failed: {m}. This build of the node hashes the reference \
-             vectors differently, so it would verify blocks differently from the network \
+            "RandomX self-test failed: {m}. This build of the node hashes the known \
+             answers differently, so it would verify blocks differently from the network \
              (a fork). Do not run it: rebuild with the documented toolchain \
              (tools/release-build.sh) and report the device (CPU, OS, toolchain) and this \
              line (docs/testnet.md §4.2). --skip-randomx-self-test starts anyway, for \

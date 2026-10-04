@@ -5,6 +5,7 @@ use crate::config::{
     ARGON_MEMORY, CACHE_ACCESSES, CACHE_LINE_SIZE, CACHE_SIZE, DATASET_ITEM_COUNT,
 };
 use crate::superscalar::{self, Blake2Generator, SsProgram};
+use crate::Variant;
 use std::collections::TryReserveError;
 
 /// `len` zero words, or the allocation error (no abort).
@@ -32,14 +33,22 @@ pub struct Cache {
     memory: Vec<u64>,
     programs: Vec<SsProgram>,
     key: Vec<u8>,
+    variant: Variant,
 }
 
 impl Cache {
-    /// Builds the cache for `key` (Argon2d fill + 8 SuperscalarHash programs).
-    /// Takes roughly a second and allocates 256 MiB.
+    /// Builds BlackSilk's cache for `key` ([`Variant::BlackSilk`]: Argon2d
+    /// fill + 8 SuperscalarHash programs). Takes roughly a second and
+    /// allocates 256 MiB.
     pub fn new(key: &[u8]) -> Self {
+        Self::with_variant(key, Variant::BlackSilk)
+    }
+
+    /// [`Cache::new`] for an explicit `variant`: [`Variant::MoneroRx0`] only
+    /// to check the engine against the reference test vectors.
+    pub fn with_variant(key: &[u8], variant: Variant) -> Self {
         let memory = vec![0u64; ARGON_MEMORY as usize * QWORDS_IN_BLOCK];
-        Self::with_memory(key, memory)
+        Self::with_memory(key, variant, memory)
     }
 
     /// [`Cache::new`], but an allocation failure is returned instead of
@@ -47,11 +56,11 @@ impl Cache {
     /// The cache is the same.
     pub fn try_new(key: &[u8]) -> Result<Self, TryReserveError> {
         let memory = zeroed(ARGON_MEMORY as usize * QWORDS_IN_BLOCK)?;
-        Ok(Self::with_memory(key, memory))
+        Ok(Self::with_memory(key, Variant::BlackSilk, memory))
     }
 
-    fn with_memory(key: &[u8], mut memory: Vec<u64>) -> Self {
-        argon2d::fill_memory(key, &mut memory);
+    fn with_memory(key: &[u8], variant: Variant, mut memory: Vec<u64>) -> Self {
+        argon2d::fill_memory(key, variant.argon_salt(), &mut memory);
 
         let mut gen = Blake2Generator::new(key, 0);
         let programs = (0..CACHE_ACCESSES)
@@ -62,12 +71,18 @@ impl Cache {
             memory,
             programs,
             key: key.to_vec(),
+            variant,
         }
     }
 
     /// The key this cache was built from.
     pub fn key(&self) -> &[u8] {
         &self.key
+    }
+
+    /// The variant (Argon2 salt) this cache was built with.
+    pub fn variant(&self) -> Variant {
+        self.variant
     }
 
     #[cfg(test)]
@@ -100,6 +115,7 @@ impl Cache {
 pub struct Dataset {
     items: Vec<u64>,
     key: Vec<u8>,
+    variant: Variant,
 }
 
 impl Dataset {
@@ -134,12 +150,18 @@ impl Dataset {
         Self {
             items,
             key: cache.key.clone(),
+            variant: cache.variant,
         }
     }
 
     /// The key the dataset was derived from.
     pub fn key(&self) -> &[u8] {
         &self.key
+    }
+
+    /// The variant of the cache the dataset was derived from.
+    pub fn variant(&self) -> Variant {
+        self.variant
     }
 
     pub(crate) fn item(&self, item_number: u64) -> [u64; 8] {

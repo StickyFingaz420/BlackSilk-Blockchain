@@ -15,3 +15,6 @@ aes = { version = "=0.8.4", features = ["hazmat"] }
 
 [dev-dependencies]
 hex = "0.4"
+# The independent check of the Argon2 cache fill (record #rx-salt): already in
+# the lockfile (wallet), pinned to that version; tests only.
+argon2 = { version = "=0.5.3", default-features = false, features = ["alloc"] }

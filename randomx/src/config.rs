@@ -1,10 +1,44 @@
 //! RandomX v1 parameters (reference `configuration.h`, `common.hpp`).
 //! These values are consensus-critical and must not be changed.
+//!
+//! BlackSilk's RandomX is the reference configuration with one change, the
+//! Argon2 salt ([`ARGON_SALT`]; docs/reviews/v3-consensus-changes.md#rx-salt),
+//! as the RandomX designers recommend for every project (`doc/configuration.md`:
+//! "Every implementation should choose a unique salt value"). Every other value
+//! is the reference default, which the same document says should not be
+//! changed. [`ARGON_SALT_MONERO`] is the reference salt, kept for the official
+//! test vectors of the engine ([`crate::Variant::MoneroRx0`]).
 
 pub(crate) const ARGON_MEMORY: u32 = 262_144; // KiB, i.e. 1024-byte blocks
 pub(crate) const ARGON_ITERATIONS: u32 = 3;
 pub(crate) const ARGON_LANES: u32 = 1;
-pub(crate) const ARGON_SALT: &[u8] = b"RandomX\x03";
+/// BlackSilk's Argon2 salt: the consensus proof of work.
+pub(crate) const ARGON_SALT: &[u8] = b"BlackSilk/RandomX/v1";
+/// Monero's `rx/0` salt (reference `configuration.h`): only for the official
+/// test vectors of the engine, never for consensus.
+pub(crate) const ARGON_SALT_MONERO: &[u8] = b"RandomX\x03";
+
+/// The salt rules of the specification and of the deployed miners: at least
+/// 8 bytes (`doc/configuration.md`; the Argon2 minimum salt length of RFC
+/// 9106 §3.1 and of the reference `ARGON2_MIN_SALT_LENGTH`), and no NUL byte
+/// (the reference and xmrig carry the salt as a C string and take its length
+/// with `sizeof - 1` and `strlen`, so a NUL would truncate it there).
+const fn salt_is_valid(salt: &[u8]) -> bool {
+    if salt.len() < 8 {
+        return false;
+    }
+    let mut i = 0;
+    while i < salt.len() {
+        if salt[i] == 0 {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+const _: () = assert!(salt_is_valid(ARGON_SALT) && salt_is_valid(ARGON_SALT_MONERO));
+// Distinct salts (different lengths suffice, and the length enters H0).
+const _: () = assert!(ARGON_SALT.len() != ARGON_SALT_MONERO.len());
 
 pub(crate) const CACHE_ACCESSES: usize = 8;
 pub(crate) const SUPERSCALAR_LATENCY: i32 = 170;

@@ -3,7 +3,7 @@
 //! RandomX keeps the raw Argon2 memory (not the final tag), with `outlen = 0` in
 //! the initial hash, one lane, and version 0x13.
 
-use crate::config::{ARGON_ITERATIONS, ARGON_LANES, ARGON_MEMORY, ARGON_SALT};
+use crate::config::{ARGON_ITERATIONS, ARGON_LANES, ARGON_MEMORY};
 use crate::hash::blake2b_long;
 use blake2::digest::{Digest, Update};
 use blake2::Blake2b512;
@@ -15,15 +15,16 @@ const TYPE_ARGON2D: u32 = 0;
 
 type Block = [u64; QWORDS_IN_BLOCK];
 
-/// Fills `memory` (`ARGON_MEMORY * 128` quadwords) from `key`.
-pub(crate) fn fill_memory(key: &[u8], memory: &mut [u64]) {
+/// Fills `memory` (`ARGON_MEMORY * 128` quadwords) from `key` and the Argon2
+/// `salt` (the variant's: [`crate::Variant::argon_salt`]).
+pub(crate) fn fill_memory(key: &[u8], salt: &[u8], memory: &mut [u64]) {
     assert_eq!(memory.len(), ARGON_MEMORY as usize * QWORDS_IN_BLOCK);
     let lane_length = ARGON_MEMORY;
     let segment_length = ARGON_MEMORY / (ARGON_LANES * SYNC_POINTS);
 
     // H0 plus 8 bytes for the block counter and lane index.
     let mut seed = [0u8; 72];
-    seed[..64].copy_from_slice(&initial_hash(key));
+    seed[..64].copy_from_slice(&initial_hash(key, salt));
 
     let mut block_bytes = [0u8; 1024];
     for i in 0..2u32 {
@@ -43,7 +44,7 @@ pub(crate) fn fill_memory(key: &[u8], memory: &mut [u64]) {
     }
 }
 
-fn initial_hash(key: &[u8]) -> [u8; 64] {
+fn initial_hash(key: &[u8], salt: &[u8]) -> [u8; 64] {
     let mut h = Blake2b512::new();
     for v in [
         ARGON_LANES,
@@ -57,8 +58,8 @@ fn initial_hash(key: &[u8]) -> [u8; 64] {
     }
     Update::update(&mut h, &(key.len() as u32).to_le_bytes());
     Update::update(&mut h, key);
-    Update::update(&mut h, &(ARGON_SALT.len() as u32).to_le_bytes());
-    Update::update(&mut h, ARGON_SALT);
+    Update::update(&mut h, &(salt.len() as u32).to_le_bytes());
+    Update::update(&mut h, salt);
     Update::update(&mut h, &0u32.to_le_bytes()); // secret length
     Update::update(&mut h, &0u32.to_le_bytes()); // associated data length
     h.finalize().into()

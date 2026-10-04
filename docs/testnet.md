@@ -118,8 +118,9 @@ with the ones the two-channel release announcement publishes:
 - the **build flags** line of `blacksilk-node --version`, which must read
   `build flags: none` (no test-only code compiled in, §2);
 - the **RandomX self-test** of the device: `blacksilk-node --randomx-self-test`
-  hashes the reference implementation's vectors 1a–1f in light mode (the node's
-  verification path) and must print `RandomX self-test passed` and exit 0; on a
+  hashes the reference implementation's vectors 1a–1f (Monero's salt: the engine)
+  and BlackSilk's bs-1a to bs-1c (BlackSilk's salt: the proof of work) in light mode
+  (the node's verification path) and must print `RandomX self-test passed` and exit 0; on a
   mining device also `blacksilk-miner --randomx-self-test`, which adds the vectors in
   full mode (a 2 GiB dataset per test key: minutes; `--light` skips it). A device
   that fails it (exit 71) would fork: it does not join, and its CPU, OS and
@@ -343,11 +344,13 @@ that would name the block a deterministic panic recurs on (F48-5) is not impleme
    `systemctl reset-failed blacksilk-node` and `systemctl start blacksilk-node`.
 
 **Start-up checks.** Before the node opens its block store it runs the **RandomX
-self-test**: the reference implementation's vectors 1a–1f, hashed in light mode by the
-code that verifies blocks (decisions "Agent 08"). A build that hashes them differently
-would fork, so the node then stops with status 71 and the message `RandomX self-test
-failed: …`. The test builds three RandomX caches one at a time (256 MiB at most) and
-takes a few seconds (5.6 to 11.7 s measured on a 4-core Windows workstation whose CPU was fully loaded by other work, 2026-10-02; less on an idle device). `--skip-randomx-self-test` starts anyway, for
+self-test**: the reference implementation's vectors 1a–1f (Monero's Argon2 salt) and
+BlackSilk's vectors bs-1a to bs-1c (BlackSilk's salt, reviews/v3-consensus-changes.md#rx-salt),
+hashed in light mode by the code that verifies blocks (decisions "Agent 08"). A build
+that hashes them differently would fork, so the node then stops with status 71 and the
+message `RandomX self-test failed: …`. The test builds four RandomX caches one at a
+time (256 MiB at most) and takes a few seconds (with three caches, before the BlackSilk
+vectors were added: 5.6 to 11.7 s measured on a 4-core Windows workstation whose CPU was fully loaded by other work, 2026-10-02; less on an idle device; the fourth cache adds about a third). `--skip-randomx-self-test` starts anyway, for
 diagnosis only; it is shown in `/info` (`overrides`). After the replay the node
 re-checks stored proof-of-work hashes (§4.5).
 
@@ -578,8 +581,8 @@ blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie <node data dir>/rpc.cookie \
   payout address not valid on the node's network, or an unknown network), and 71 when
   the RandomX self-test fails; the systemd unit does not restart it then
   (`RestartPreventExitStatus=78 71`).
-- **Self-test:** at start the miner hashes the reference RandomX vectors 1a–1f in light
-  mode, and it checks every dataset it builds against the cache it came from (4 096
+- **Self-test:** at start the miner hashes the reference RandomX vectors 1a–1f and
+  BlackSilk's bs-1a to bs-1c in light mode, and it checks every dataset it builds against the cache it came from (4 096
   sampled items and one input hashed in both modes, about one light hash) before it
   mines with it. A mismatch stops the miner with status 71, which the unit does not
   restart: this build would mine blocks the node rejects. `--randomx-self-test` runs
@@ -1195,14 +1198,17 @@ always uses a new network id; never reuse one for a different genesis.
 ### 12.6 Known limitations that affect operators
 
 - **Proof of work gives no honest-majority guarantee against outsiders.** The PoW is
-  exactly Monero's RandomX (`rx/0`). Stock JIT miners (for example xmrig) and rented
-  `rx/0` hash rate are roughly 50–100× faster per core than the project's safe-Rust
-  miner, and the no-`unsafe` policy rules out a JIT here. Anyone who points such a
-  miner at the network can out-mine all honest devices and reorganize the chain.
-  The controlled trial relies on its peers being configured by hand and on no one
-  doing this; its PoW security is nominal (reviews R1-C2, R15-2). The mainnet choice
-  (standard RandomX, a BlackSilk-specific configuration, or an optional reviewed JIT
-  miner) is an open owner decision.
+  RandomX v1 with BlackSilk's own Argon2 salt (`"BlackSilk/RandomX/v1"`; every other
+  parameter is Monero's `rx/0`; reviews/v3-consensus-changes.md#rx-salt). Stock `rx/0`
+  miners, rented `rx/0` hash rate and stock RandomX ASIC firmware therefore cannot be
+  pointed at the network **unmodified**. That is the only thing the salt does: a JIT
+  miner such as xmrig takes the salt as a one-line change (minutes for anyone who
+  builds it), and is then roughly 50–100× faster per core than the project's safe-Rust
+  miner; the no-`unsafe` policy rules out a JIT here. Anyone who does this can out-mine
+  all honest devices and reorganize the chain. The controlled trial relies on its
+  peers being configured by hand and on no one doing this; its PoW security is
+  nominal (reviews R1-C2, R15-2). An optional reviewed JIT miner for mainnet is an
+  open owner decision.
 - Every block body and its undo data stay in memory (PX-F1, PX-F2); memory grows with
   the chain.
 - Every restart re-validates every block, including every PX proof (PX-F3).
