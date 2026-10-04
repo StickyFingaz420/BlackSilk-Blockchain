@@ -321,9 +321,12 @@ async fn scripted_listener(ip: &str, answer: Option<Vec<AddrEntry>>) -> Scripted
     Scripted { addr, seen, inject }
 }
 
+/// The key of the saved address tables (fixed, so slots are reproducible).
+const TABLE_KEY: [u8; 32] = [9; 32];
+
 /// A saved address table holding `addrs` in *new*.
 fn save_table(dir: &Path, addrs: &[SocketAddr]) {
-    let mut table = AddrMan::with_key([9; 32]);
+    let mut table = AddrMan::with_key(TABLE_KEY);
     table.set_private_groups(true);
     let src = NetAddr::parse("127.0.0.9:1").unwrap();
     for a in addrs {
@@ -516,10 +519,21 @@ async fn a_silent_seed_has_the_whole_timeout_to_answer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn outbound_connections_are_maintained_every_two_seconds() {
     let accepts = Arc::new(Mutex::new(Vec::new()));
+    // Four listeners whose addresses all fit in the table: the four share an
+    // IP and a source, so they share a new bucket and only the port picks
+    // the slot. A port that lands on a taken slot is replaced, not asserted
+    // (CI run 137: one in about 11 runs collided; the node was not at fault).
+    let mut probe = AddrMan::with_key(TABLE_KEY);
+    probe.set_private_groups(true);
+    let src = NetAddr::parse("127.0.0.9:1").unwrap();
     let mut addrs = Vec::new();
-    for _ in 0..4 {
+    while addrs.len() < 4 {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        addrs.push(l.local_addr().unwrap());
+        let a = l.local_addr().unwrap();
+        if !probe.add(NetAddr::Ip(a), &src, u64::from(unix_now())) {
+            continue;
+        }
+        addrs.push(a);
         let seen = accepts.clone();
         tokio::spawn(async move {
             while let Ok((s, _)) = l.accept().await {
