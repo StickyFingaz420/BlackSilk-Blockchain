@@ -4,7 +4,7 @@ These are copies of published crates with a minimal, reviewed change, used throu
 `[patch.crates-io]` in the workspace `Cargo.toml`. Each entry records what changed, why,
 and when to remove it.
 
-## CI check: published crate + allow-listed diff (RT-PXDET finding 1)
+## CI check: published crate + allow-listed diff (RT-PXDET finding 1, RT-TPGATE)
 
 `.github/scripts/third-party-gate.sh` (CI job `gates`) checks every crate directory
 here (a directory with a `Cargo.toml`) against what it claims to be:
@@ -12,29 +12,63 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
   value is the checksum `Cargo.lock` carried before the crate was patched (git history)
   and was re-checked against the static.crates.io download on 2026-10-04.
 - The gate takes that `.crate` from the local cargo cache or static.crates.io, verifies
-  the pin, unpacks it and runs `diff -ruN --strip-trailing-cr` against the copy here.
-  The documented packaging differences are dropped first, at the top level only:
-  `Cargo.toml.orig`, `.cargo_vcs_info.json` and `Cargo.lock` on the published side,
-  and cargo's unpack marker `.cargo-ok` (`{"v":1}`) on ours. Any other added, removed
-  or changed file shows up in the diff.
+  the pin, unpacks it and runs `diff -a -ruN --strip-trailing-cr` against the copy
+  here. `-a` (text mode) keeps a NUL byte from turning a file into an opaque "Binary
+  files differ" line. The documented packaging differences are dropped first, at the
+  top level only: `Cargo.toml.orig`, `.cargo_vcs_info.json` and `Cargo.lock` on the
+  published side, and cargo's unpack marker `.cargo-ok` (`{"v":1}`) on ours. Any
+  other added, removed or changed file shows up in the diff.
 - That diff, with CRs stripped and timestamps removed, must equal
   `patches/<crate>.patch` byte for byte (CRs stripped from it too). On a mismatch the
   gate names the crate and the first differing file.
-- It also fails on a patch file or pin without a crate directory here (remove them
-  with the crate), and on a `[patch]` entry in `Cargo.toml` or `fuzz/Cargo.toml`
-  that is not `{ path = "third_party/<same name>" }` (a git fork or another path).
-- `--selftest` tampers temporary copies (an edit, an added file, a removed file, a
-  re-added packaging file, a wrong pin, a missing or stale patch file, bad `[patch]`
-  entries) and expects each to fail, and expects a clean copy and a CRLF copy to pass.
+- `patches/<crate>.sha256` lists the sha256, mode and path of every tracked file of
+  the crate, hashed from the committed (index) bytes. It pins what the diff
+  normalizes: line endings, data files and file modes. The crate's working tree must
+  equal the index (nothing modified or untracked).
+- No added line of a patch may use `include!`, `include_str!`, `include_bytes!`,
+  `#[path` or a `../` path, which would pull code or data from outside the reviewed
+  diff. No current patch does.
+- Stale entries fail: a patch, manifest or pin without its crate directory.
+- Resolution, from every tracked `Cargo.lock` (root, `fuzz/`, `contracts/`,
+  `contracts/fuzz/`, `zkvm/guests/`):
+  - every `source` is crates.io;
+  - every path crate is a crate here or a BlackSilk crate (`blacksilk-*`, `guest-*`);
+  - a workspace that locks a crate here at its version locks the patched copy;
+  - no other tracked `Cargo.toml` names a package like a crate here.
+- Cargo files: in every tracked `Cargo.toml` and `.cargo/config[.toml]`, no table or
+  key starting with `patch`, `replace`, `paths` or `source` (configs also
+  `registries`, `registry`), however quoted, spaced or dotted. The only exception is
+  a workspace root's exact `[patch.crates-io]`, whose entries must each be
+  `<name> = { path = "<to root>third_party/<name>" }`.
+- `--selftest` runs tampered fixtures and expects each to fail. It also expects the
+  clean fixtures to pass, including an allow-listed NUL byte. The tampered fixtures:
+  - edits: an edit, a later edit after a NUL byte, a CRLF conversion, a mode change;
+  - files: added, removed, untracked or unstaged files, a re-added packaging file;
+  - allow-list: a wrong pin, a missing or stale patch or manifest, an `include_str!`;
+  - lockfiles: a git source, another registry, an unknown path crate, a registry copy
+    of a patched crate, a second manifest with a patched crate's name;
+  - cargo files: the `[patch]`, `[replace]`, `paths` and `[source]` spellings above.
 
 The patch files apply with `patch -p1` inside an unpacked published crate. To
-change a patched crate: make the change, then run
-`bash .github/scripts/third-party-gate.sh --write <crate>` and review the diff of
-`patches/<crate>.patch` like any other code change. Adding a crate here needs, in
-the same commit, its `PRISTINE.sha256` line (taken from `Cargo.lock` before the
-switch, or the registry index) and its patch file. The lockfile gate
-(`.github/scripts/lockfile-gate.sh`) separately requires a commit that moves a crate
-from the registry to a path or git source to name that crate.
+change a patched crate: make the change and stage it (`git add`), then run
+`bash .github/scripts/third-party-gate.sh --write <crate>`, which rewrites
+`patches/<crate>.patch` and `patches/<crate>.sha256`. Review both like any other
+code change. Adding a crate here needs, in the same commit:
+- its `PRISTINE.sha256` line (from `Cargo.lock` before the switch, or the registry
+  index);
+- its patch and manifest;
+- its `[patch.crates-io]` line in every workspace that locks it.
+
+The lockfile gate (`.github/scripts/lockfile-gate.sh`) separately requires a commit
+that moves a crate in `Cargo.lock` or `fuzz/Cargo.lock` to another source or checksum
+to name that crate.
+
+**What this does not prove.** The allow-list certifies itself: a commit can change
+a crate here and regenerate its patch and manifest in the same commit, and the gate
+passes. The gate makes such a change exact and visible, nothing more. The control is
+human review of every `third_party/` diff (a consensus path: `consensus-gate.sh`
+requires a `Consensus-Change:` trailer). Required review of these paths
+(CODEOWNERS plus branch protection) is a repository setting for the owner.
 
 ## `p3-fri`, `p3-merkle-tree` and `p3-dft` 0.7.0 (Plonky3): spin locks held across parallel work
 

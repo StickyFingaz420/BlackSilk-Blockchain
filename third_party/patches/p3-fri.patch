@@ -1,4 +1,4 @@
-diff -ruN --strip-trailing-cr a/src/hiding_pcs.rs b/src/hiding_pcs.rs
+diff -a -ruN --strip-trailing-cr a/src/hiding_pcs.rs b/src/hiding_pcs.rs
 --- a/src/hiding_pcs.rs
 +++ b/src/hiding_pcs.rs
 @@ -5,12 +5,13 @@

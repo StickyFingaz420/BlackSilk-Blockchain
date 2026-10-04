@@ -18,4 +18,5 @@ docs/evidence/mutation-*/** text eol=lf
 
 # Allow-listed third-party diffs (third-party-gate.sh): byte-compared, keep LF.
 third_party/patches/*.patch text eol=lf
+third_party/patches/*.sha256 text eol=lf
 third_party/PRISTINE.sha256 text eol=lf

@@ -1,4 +1,4 @@
-diff -ruN --strip-trailing-cr a/src/hiding_mmcs.rs b/src/hiding_mmcs.rs
+diff -a -ruN --strip-trailing-cr a/src/hiding_mmcs.rs b/src/hiding_mmcs.rs
 --- a/src/hiding_mmcs.rs
 +++ b/src/hiding_mmcs.rs
 @@ -134,14 +134,19 @@

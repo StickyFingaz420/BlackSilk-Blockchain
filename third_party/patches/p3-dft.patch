@@ -1,4 +1,4 @@
-diff -ruN --strip-trailing-cr a/src/radix_2_dit_parallel.rs b/src/radix_2_dit_parallel.rs
+diff -a -ruN --strip-trailing-cr a/src/radix_2_dit_parallel.rs b/src/radix_2_dit_parallel.rs
 --- a/src/radix_2_dit_parallel.rs
 +++ b/src/radix_2_dit_parallel.rs
 @@ -56,24 +56,28 @@

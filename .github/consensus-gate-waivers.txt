@@ -26,3 +26,9 @@ bec93ff3cfd3bd379773f7becdf1f64e4e921f26 none: predates RTFP3-10; the template g
 23be5a1f3e72258eb003b489b37ce78f2646c995 none: predates RTFP3-10; operator invalidation in chain/src/manager/ (a node-local operator command, W3-35b).
 db37a54aef808ac991ad5c56d64467056a23f10a none: predates RTFP3-10; latched template gate and operator verdicts in chain/src/manager/ (RTW3-1/7/8/11).
 0f55067540fd49891e5cd88c0a393cdda639ba53 none: predates RTFP3-10; an operator-invalidated block refused at header time in chain/src/manager/ (S5b, node-local).
+# RT-TPGATE (2026-10-04) extended the path list to the commit gates, their
+# waiver file and .cargo/ configuration. The commits below touched those
+# paths before they were consensus paths; each reason is the commit's own
+# subject. Neither changes a consensus rule (CI scripts only).
+7ef3585e95715dea917c7c28f6352dd92c722ad2 none: predates RT-TPGATE; introduces the CI commit gates (consensus-path trailer, lockfile diff, Unicode scan, F48-3); CI scripts only.
+84f68b1cf55a065795c121ee66c2a3e9b6504c81 none: predates RT-TPGATE; adds the waiver file and its reader to consensus-gate.sh; CI scripts only.

@@ -7,7 +7,8 @@
 # effect, a new transitive crate, a registry crate swapped for a path copy or a
 # git fork at the same version: RT-PXDET finding 1). A crate's source is its
 # `source = ` line; a crate without one (a path crate, e.g. a [patch] copy in
-# third_party/) counts as source "path". A crate counts as named when its name
+# third_party/) counts as source "path". A new `checksum` at the same name,
+# version and source counts as a change too (RT-TPGATE). A crate counts as named when its name
 # appears as a whole word (letters, digits, '_' and '-'); case is ignored.
 # Removals need no mention.
 #
@@ -24,20 +25,21 @@ source "$here/gate-range.sh"
 
 LOCKFILES=(Cargo.lock fuzz/Cargo.lock)
 
-# "name version source" lines of a lockfile at a commit (nothing if it has
+# "name version source checksum" lines of a lockfile at a commit (nothing if it has
 # none); a package without a `source` line has source "path".
 lock_pairs() {
   git show "$1:$2" 2>/dev/null | tr -d '\r' | awk '
-    function emit() { if (n != "") print n, v, (s == "" ? "path" : s); n = ""; v = ""; s = "" }
+    function emit() { if (n != "") print n, v, (s == "" ? "path" : s), (k == "" ? "-" : k); n = ""; v = ""; s = ""; k = "" }
     /^\[\[package\]\]/ { emit(); next }
     /^\[/ { emit(); next }
     /^name = "/ { n = $3; gsub(/"/, "", n) }
     /^version = "/ { v = $3; gsub(/"/, "", v) }
     /^source = "/ { s = $3; gsub(/"/, "", s) }
+    /^checksum = "/ { k = $3; gsub(/"/, "", k) }
     END { emit() }' | sort -u
 }
 
-# The crate names whose "name version source" triple is new in commit $1's
+# The crate names whose "name version source checksum" tuple is new in commit $1's
 # lockfile $2.
 new_names() {
   local c="$1" f="$2" p tmp
@@ -88,7 +90,7 @@ main() {
       bad=1
       gate_annotate "lockfile change not named in the commit message: $subject" \
         "Added or changed crates missing from the message: $missing
-List every added, re-versioned or re-sourced crate by name (.github/scripts/lockfile-gate.sh)."
+List every added, re-versioned, re-sourced or re-checksummed crate by name (.github/scripts/lockfile-gate.sh)."
     fi
   done
   echo "lockfile-gate: $n commits checked, $flagged add or change locked crates, $([ "$bad" = 0 ] && echo pass || echo FAIL)"
@@ -113,7 +115,7 @@ selftest() {
     git config core.autocrlf false
     lock() { # name version [source]: a one-package lockfile
       printf 'version = 4\n\n[[package]]\nname = "%s"\nversion = "%s"\n' "$1" "$2" > Cargo.lock
-      [ -z "${3:-}" ] || printf 'source = "%s"\nchecksum = "00"\n' "$3" >> Cargo.lock
+      [ -z "${3:-}" ] || printf 'source = "%s"\nchecksum = "%s"\n' "$3" "${4:-00}" >> Cargo.lock
       printf '\n[[package]]\nname = "other"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' >> Cargo.lock
     }
     reg="registry+https://github.com/rust-lang/crates.io-index"
@@ -126,10 +128,12 @@ selftest() {
     lock foo 1.0.0 "$reg";               c "registry foo again"         git-back-named
     lock foo 1.0.1 "$reg";               c "bump"                       ver-unnamed
     lock foo 1.0.2 "$reg";               c "bump FOO"                   ver-named
+    lock foo 1.0.2 "$reg" 11;            c "same version, new checksum" sum-unnamed
+    lock foo 1.0.2 "$reg" 22;            c "foo checksum"               sum-named
     printf 'version = 4\n' > Cargo.lock; c "drop everything"            removal
   ) > /dev/null || { echo "lockfile-gate selftest: fixture setup failed"; return 1; }
   local case want got
-  for case in src-unnamed:1 src-named:0 git-unnamed:1 git-back-named:0 ver-unnamed:1 ver-named:0 removal:0; do
+  for case in src-unnamed:1 src-named:0 git-unnamed:1 git-back-named:0 ver-unnamed:1 ver-named:0 sum-unnamed:1 sum-named:0 removal:0; do
     want="${case#*:}"
     case="${case%%:*}"
     if (cd "$t" && GATE_CUTOVER="$(git rev-parse cutover)" bash "$self" "$case^" "$case") > /dev/null 2>&1; then got=0; else got=$?; fi

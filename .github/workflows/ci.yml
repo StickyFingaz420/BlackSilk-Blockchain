@@ -340,7 +340,8 @@ jobs:
   # - commits changing Cargo.lock or fuzz/Cargo.lock name the crates they add,
   #   re-version or re-source (a registry crate swapped for a path or git copy);
   # - every third_party/ crate is the published crate plus its allow-listed
-  #   patch (third_party/patches/, pinned by third_party/PRISTINE.sha256);
+  #   patch and file manifest (third_party/patches/, pins in
+  #   third_party/PRISTINE.sha256), and nothing redirects a crate elsewhere;
   # - no invisible or bidirectional Unicode in tracked text files;
   # - every test-only feature is marked (tools/check-test-features.sh).
   # The SHAs come in through env, never interpolated into the script.

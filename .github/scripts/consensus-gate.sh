@@ -31,7 +31,10 @@ source "$here/gate-range.sh"
 # RTFP3-10 added the v1 cryptography, the transaction types, codec and
 # state, the chain manager, the PX prover, state and tree, RandomX, the
 # patched Plonky3 crates and the fingerprint fixture; commits before it that
-# touch them without a trailer are in the waiver file.
+# touch them without a trailer are in the waiver file. RT-TPGATE added the
+# commit gates themselves, their waiver file and every .cargo/ configuration
+# (cargo honours [patch], [paths] and [source] there); the commits before it
+# that touch them are in the waiver file too.
 is_consensus_path() {
   case "$1" in
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
@@ -43,6 +46,9 @@ is_consensus_path() {
     px/*.elf | px/*.id) return 0 ;;
     px/src/prove.rs | px/src/state.rs | px/src/tree.rs) return 0 ;;
     crypto/* | randomx/* | third_party/*) return 0 ;;
+    .github/scripts/consensus-gate.sh | .github/scripts/gate-range.sh) return 0 ;;
+    .github/scripts/lockfile-gate.sh | .github/scripts/third-party-gate.sh) return 0 ;;
+    .github/consensus-gate-waivers.txt | .cargo/* | */.cargo/*) return 0 ;;
   esac
   return 1
 }
