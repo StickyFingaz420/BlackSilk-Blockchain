@@ -1523,3 +1523,29 @@ Every external citation was verified against its primary source (res-freeze.md �
 - **PX5 out of the manifest:** the full PX5 verdicts on the golden PX fixture stay out of the fingerprint manifest (verification costs about 0.2 s, paid at start-up, `--version` and `/info`). They are pinned by `node/tests/px_fixture.rs`. The manifest keeps the stateless PX verdicts (structure, balance, strict proof decoding), the ids and the binding.
 - **Gate:** `node/src/px_fixture.{bin,txt}` are consensus paths of the gate.
 - **Determinism finding:** the PX prover is not bit-reproducible for a fixed witness and seeded RNG (two generations differ from the prunable part on, and in length). The first output is pinned; the generator never runs in CI. Open: the source, and whether a varying proof length for one witness is a fingerprint (P-5).
+
+## PXDET-1: PX proving made deterministic (2026-10-04)
+
+- **Cause (reproduced):** `p3-batch-stark` 0.7.0 drew each table's quotient randomness
+  from the shared hiding-PCS RNG inside a parallel loop, so which table got which values
+  depended on thread scheduling. That changed the quotient commitment, every later
+  challenge, the FRI query positions and so the pruned proof length.
+- **Fix:** a local `p3-batch-stark` patch (third_party/README.md) makes the draws in
+  table order; the DFTs stay parallel and there is no slowdown. Proofs are now
+  identical across runs and thread counts (`zkvm/tests/reproducible.rs`; a full PX proof
+  matched at default threads and at 3). The verifier and the set of accepted proofs are
+  unchanged, and the pinned fixture still verifies. Red-team reviewed (RT-PXDET).
+- **Privacy assessment:** the varying length was not a witness leak: it followed the
+  public query positions only (P-5 stays "supported, not closed", resting on the random
+  oracle model of Fiat–Shamir). There is no thread-count fingerprint.
+- **Decision: no smallest-nonce consensus rule.** A prover that does not take the
+  smallest proof-of-work nonce is distinguishable at about 2^16 permutations. Requiring
+  the smallest nonce would make every verifier try all smaller nonces, about 2^16
+  permutations per proof: a cheap amplification against verifiers. Taking the smallest
+  nonce stays a prover rule (the reference prover does, F27-3); third-party provers are
+  told so in docs/zk.md.
+- **The golden fixture stays pinned** (`c9e05387…`, made before the fix; still valid).
+  Regenerating it now gives `75357ff4…` reproducibly, but would mean one more re-pin
+  for no consensus reason. It is regenerated only with a later reviewed revision.
+- RT-PXDET finding 1 (the third_party allow-list was not checked in CI) is being closed
+  by the third-party gate (branch tpgate, under review).

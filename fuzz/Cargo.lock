@@ -818,8 +818,6 @@ dependencies = [
 [[package]]
 name = "p3-batch-stark"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d68b4d3ba163ef87fb27a61f1c47be9b9eb05e5320c410f9f8cf09503ae4f95"
 dependencies = [
  "hashbrown",
  "p3-air",

@@ -17,10 +17,11 @@
 //! cargo test --release -p blacksilk-node --test px_fixture -- --ignored regenerate
 //! ```
 //!
-//! which rewrites both files from fixed seeds. The deploy is reproducible,
-//! the PX transaction is not: the prover is not bit-reproducible for a fixed
-//! witness and RNG (record `px-ciphertext-r`, phase 2), so a regeneration
-//! gives another valid transaction. Never regenerate in CI. A regenerated
+//! which rewrites both files from fixed seeds. Since the `p3-batch-stark`
+//! patch (third_party/README.md, PXDET-1) the PX transaction is reproducible
+//! too: two regenerations at different thread counts gave identical bytes.
+//! The checked-in fixture was made before that patch, so a regeneration
+//! gives a different, equally valid transaction. Never regenerate in CI. A regenerated
 //! fixture changes the rules fingerprint and needs the re-pin procedure
 //! (docs/reviews/v3-consensus-changes.md#fingerprint-v3).
 //!

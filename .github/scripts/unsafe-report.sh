@@ -111,9 +111,9 @@ project; docs/reviews/dependency-review.md records what was read.
 **BlackSilk's own crates** declare \`#![forbid(unsafe_code)]\` at every crate
 root (CI job \`lint\`); the only \`unsafe\` in the repository outside
 \`third_party/\` is the zkVM guest SDK's \`ecall\`, which runs inside the VM,
-not in a shipped binary. \`third_party/\` holds three patched Plonky3 crates
+not in a shipped binary. \`third_party/\` holds four patched Plonky3 crates
 that keep upstream's \`unsafe\` unchanged; they are path crates and so not
-listed below (their registry originals \`p3-dft\`, \`p3-fri\`,
+listed below (their registry originals \`p3-batch-stark\`, \`p3-dft\`, \`p3-fri\`,
 \`p3-merkle-tree\` 0.7.0 are the reviewed baseline, third_party/README.md).
 
 **Graph:** $total crates.io crates; $with contain \`unsafe\`, $((total - with)) do not.

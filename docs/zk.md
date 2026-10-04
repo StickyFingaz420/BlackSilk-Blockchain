@@ -842,6 +842,16 @@ of scope until proof size is solved (aggregation-study.md).
 - Weak devices can use the plain v1 layer, or pre-compute proofs while idle.
 - GPU acceleration may exist outside consensus, but never as a remote service
   receiving witnesses.
+- **Prover rules that consensus does not enforce.** A proof should not reveal which
+  prover made it:
+  - Take the **smallest** valid proof-of-work nonce (F27-3). The verifier accepts any
+    valid nonce. A prover that takes another one is distinguishable at about 2^16
+    permutations. Requiring the smallest nonce in consensus would cost every verifier
+    about as much, so it is a prover rule (decisions, "PXDET-1").
+  - Draw the hiding randomness in table order. The reference prover's
+    `p3-batch-stark` patch does, so its proofs depend only on the witness and the seed
+    (PXDET-1; `zkvm/tests/reproducible.rs`). Proof length follows the public query
+    positions only (P-5).
 
 ---
 

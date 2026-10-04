@@ -4,6 +4,49 @@ These are copies of published crates with a minimal, reviewed change, used throu
 `[patch.crates-io]` in the workspace `Cargo.toml`. Each entry records what changed, why,
 and when to remove it.
 
+## `p3-batch-stark` 0.7.0 (Plonky3): quotient randomness drawn in scheduling order (PXDET-1)
+
+**Upstream behaviour:** `prove_batch` (`p3-batch-stark/src/prover.rs`) computes every
+instance's quotient inside a rayon `into_par_iter` loop, and calls
+`HidingFriPcs::get_quotient_ldes` from inside that loop. Under zero knowledge that call
+draws the quotient chunks' hiding randomness from the PCS's one shared RNG. Which
+instance takes the RNG first, and so which values each instance gets, followed thread
+scheduling.
+
+**Effect:** the quotient commitment differed between two runs with the same witness
+and seeded RNG, and so did every later Fiat–Shamir challenge and the FRI query
+positions. The pruned Merkle paths depend on the query positions, so the proof
+**length** varied as well as its bytes.
+- Measured before the patch (`zkvm/tests/reproducible.rs`, 8 threads): two in-process
+  proofs of one tiny program from one seed were 2,325,370 and 2,327,386 bytes. The
+  first difference was at byte 69, the first byte of the quotient commitment (version,
+  main cap and permutation cap make up bytes 0–68).
+- With `RAYON_NUM_THREADS=1`, the same test passed.
+
+**Change:** the quotient values are still computed in parallel per instance. The
+`get_quotient_ldes` calls then run sequentially, in instance order (one block in
+`prove_batch`). The LDEs stay parallel inside the DFT.
+- Each instance draws the same values, in the same order, that upstream draws for it
+  on a single thread. Evidence: the patched prover at the default thread count gives
+  the same proof digest as the unpatched prover with `RAYON_NUM_THREADS=1`.
+- The verifier is untouched, and the proof format and its distribution are unchanged.
+  Soundness and zero knowledge are unaffected.
+- No measurable slowdown: 18.0–18.4 s per zkvm test proof before and after, three runs
+  each, on the development machine.
+
+**Evidence after the patch (2026-10-04, branch `pxdet`, Windows, MSVC):**
+- `zkvm/tests/reproducible.rs` passes (several in-process proofs from one seed are
+  identical).
+- The same proof's digest was identical across processes at 2, 3 and the default number
+  of threads.
+- The golden PX fixture generator (`node/tests/px_fixture.rs`) ran twice, once at the
+  default thread count and once with 3 threads. Both runs gave sha256 `75357ff4…`
+  (2,408,643 bytes), and the verdict check passed both times.
+- Not yet tested: identity across operating systems and CPU architectures. Field
+  arithmetic is exact, so no difference is expected, but none has been measured.
+
+**Remove when:** upstream makes the quotient randomness order-independent.
+
 ## `p3-fri`, `p3-merkle-tree` and `p3-dft` 0.7.0 (Plonky3): spin locks held across parallel work
 
 **Upstream bug (found here, AUDIT.md ZK-F11): the prover can hang forever.**
@@ -30,10 +73,10 @@ else; the later rounds below add more. The complete list of differences from the
 published crates is under "Diff against the published crates".)
 - Within each call, the values are drawn in the same order as upstream, and are used in
   the same way. Soundness and zero knowledge are unaffected.
-- Upstream and patched alike, concurrent calls for different tables take the lock in a
-  scheduling-dependent order. So proofs are **not** byte-reproducible from a seed. That
-  is harmless for security (the randomness stays fresh and unpredictable), but no
-  document may claim reproducible proof bytes.
+- Upstream (and this patch alone), concurrent calls for different tables take the lock
+  in a scheduling-dependent order, so proofs were not byte-reproducible from a seed. The
+  `p3-batch-stark` patch above (PXDET-1) removes that: the calls are now made in
+  instance order.
 
 **Second round (AUDIT.md ZK-F21): two more sites of the same bug.** Found when the
 full test suite ran the unified-proof tests concurrently: five threads spun at 100% for
@@ -72,6 +115,10 @@ source files differ, apart from upstream's `Cargo.lock`, `.cargo_vcs_info.json` 
 - `p3-dft/src/radix_2_dit_parallel.rs`: `get_or_compute_twiddles`,
   `get_or_compute_coset_twiddles` and `get_or_compute_inverse_twiddles`, one block
   each.
+- `p3-batch-stark/src/prover.rs` (PXDET-1, 2026-10-04, `diff -r --strip-trailing-cr`
+  against the registry copy): `prove_batch`, one block. The parallel per-instance loop
+  now returns the quotient chunks, and a sequential loop computes their LDEs. The first
+  loop's type annotation changed to match.
 
 - `p3-fri/src/hiding_pcs.rs` also has a **test-only** addition (2026-09-26, internal
   review round 3): `randomization_polynomial_spans_the_extension_at_each_table_height`
