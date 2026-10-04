@@ -5,8 +5,10 @@
 //! sharing no code with it (only the parameter constants and the FRI folding
 //! schedule of `zk::honest_fri_schedule`), and checks that the two agree. It
 //! also covers terms `p3-security` does not model for a batch STARK (LogUp,
-//! the DEEP union over tables) and a Johnson column that uses only the
-//! peer-reviewed BCIKS20 proximity bound.
+//! the DEEP union over tables), a conservative union-bound term for
+//! mixed-height FRI inputs (no published theorem covers them; see
+//! `MIXED_HEIGHTS`), and a Johnson column that uses only the peer-reviewed
+//! BCIKS20 proximity bound.
 //!
 //! Evidence class: computed, by formulas stated below. The formulas follow
 //! the error terms of ethSTARK (ePrint 2021/582), Haböck's FRI summary
@@ -42,9 +44,33 @@ fn bits(log2_error: f64) -> f64 {
 }
 
 /// Conservative protocol constants for the terms p3-security does not model.
-const TABLES: f64 = 32.0; // more than any BVM-1 statement (23 at most)
+/// The table count of the widest statement any BlackSilk verifier accepts:
+/// BVM-1 with `MAX_EXECUTIONS` = 5 has 12 + 5·4 + 1 = 33 tables
+/// (`DecodeLimits::ENVELOPE.max_instances`); a PX statement has at most 23
+/// (`PROOF_LIMITS` in `px/src/prove.rs`).
+const TABLES: f64 = 33.0;
 const LOGUP_INTERACTIONS_LOG2: f64 = params::MAX_LOG_HEIGHT as f64 + 10.0; // 2^22 rows × 1,024
 const LOGUP_TUPLE_WIDTH: f64 = 64.0;
+
+/// The mixed-height union-bound term (RES-FREEZE, res-freeze.md §5.4 (b) and
+/// §8.6 item 5 (b); decisions "RES-FREEZE dossier, first pass" item 5).
+///
+/// One PX proof batches 13 to 23 tables (a BVM-1 proof up to 33) of different
+/// heights, and Plonky3's FRI rolls each height in at its own folding round.
+/// No published theorem bounds the soundness of that roll-in (the upstream
+/// advisory GHSA-f69f-5fx9-w9r9 was an unsound roll-in, fixed in Plonky3
+/// 0.7.0). The conservative stand-in used here: treat each distinct input
+/// height as its own FRI instance and take a union bound over them, so every
+/// FRI error term (the batching, every commit-phase round and the query
+/// phase) is multiplied by the number H of distinct heights, a loss of
+/// log2(H) bits.
+///
+/// H is at most the table count (`TABLES`, 33) and at most the number of
+/// committed heights in the envelope (degree bits 9 to 23, 15 values). The
+/// calculator charges the table count, log2 33 = 5.04 bits, against 3.9 for
+/// H = 15 (or 4.5 for a PX proof's 23 tables). This is a heuristic bound,
+/// not a proof that roll-in is sound.
+const MIXED_HEIGHTS: f64 = TABLES;
 
 #[derive(Clone, Copy, Debug)]
 struct Terms {
@@ -81,6 +107,20 @@ impl Terms {
         [self.ali, self.deep, self.batch, self.commit, self.logup]
             .into_iter()
             .fold(f64::INFINITY, f64::min)
+    }
+
+    /// The same terms with the mixed-height union bound (`MIXED_HEIGHTS`)
+    /// applied to the FRI terms: the batching, the commit phase and the query
+    /// phase each lose log2(H) bits. The ALI, DEEP and LogUp terms already
+    /// take their own union over tables.
+    fn with_mixed_height_union(self) -> Terms {
+        let loss = MIXED_HEIGHTS.log2();
+        Terms {
+            batch: self.batch - loss,
+            commit: self.commit - loss,
+            query: self.query - loss,
+            ..self
+        }
     }
 }
 
@@ -250,11 +290,15 @@ fn grid() -> impl Iterator<Item = ProofShape> {
 /// term, including those p3-security does not model, is at least 200 bits;
 /// the Johnson regime's algebraic bound is at least 150 bits under BCHKS25
 /// and under BCIKS20 alone, so the commitment term binds with a wide margin.
+/// With the mixed-height union term (`MIXED_HEIGHTS`), the unique-decoding
+/// figure still meets `MIN_PROVEN_BITS` at every point and the Johnson figure
+/// is still `COLLISION_BITS`.
 #[test]
 fn the_independent_calculator_agrees_with_p3_security() {
     let mut points = 0;
     let (mut worst_udr, mut worst_non_query, mut worst_jb, mut worst_jb20) =
         (f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut worst_udr_mixed = f64::INFINITY;
     for shape in grid() {
         let p3 = params::security(&shape);
         let inst = Instance::new(shape);
@@ -280,15 +324,40 @@ fn the_independent_calculator_agrees_with_p3_security() {
         assert!(jb.reported() >= params::TARGET_JOHNSON_BITS as f64, "{at}");
         assert!(p3.unique_decoding_bits >= params::MIN_PROVEN_BITS, "{at}");
         assert!(p3.johnson_bits >= params::TARGET_JOHNSON_BITS, "{at}");
+        // (d) The mixed-height union term: both floors still hold, every
+        // non-query term stays >= 200 bits, the query phase still binds unique
+        // decoding, and the Johnson figure is still the commitment term.
+        let udr_mixed = udr.with_mixed_height_union();
+        let jb_mixed = jb.with_mixed_height_union();
+        let jb20_mixed = jb20.with_mixed_height_union();
+        assert!(
+            udr_mixed.reported() >= params::MIN_PROVEN_BITS as f64,
+            "{at}: mixed {udr_mixed:?}"
+        );
+        assert!(udr_mixed.query <= udr_mixed.non_query_min(), "{at}");
+        assert!(
+            udr_mixed.non_query_min() >= 200.0,
+            "{at}: mixed {udr_mixed:?}"
+        );
+        assert_eq!(jb_mixed.reported(), params::COLLISION_BITS as f64, "{at}");
+        assert_eq!(jb20_mixed.reported(), params::COLLISION_BITS as f64, "{at}");
 
         worst_udr = worst_udr.min(udr.reported());
+        worst_udr_mixed = worst_udr_mixed.min(udr_mixed.reported());
         worst_non_query = worst_non_query.min(udr.non_query_min());
         worst_jb = worst_jb.min(jb.algebraic());
         worst_jb20 = worst_jb20.min(jb20.algebraic());
         points += 1;
     }
+    // The envelope's minimum with the mixed-height term: 105.58 − 5.04 at the
+    // smallest height, where ρ⁺ is largest.
+    assert!(
+        (100.5..100.7).contains(&worst_udr_mixed),
+        "{worst_udr_mixed}"
+    );
     println!(
         "{points} shapes: UDR >= {worst_udr:.2} bits (query-bound; other terms >= {worst_non_query:.1}); \
+         UDR with the mixed-height union over {MIXED_HEIGHTS} heights >= {worst_udr_mixed:.2}; \
          Johnson algebraic >= {worst_jb:.1} (BCHKS25), >= {worst_jb20:.1} (BCIKS20 only); \
          reported Johnson = COLLISION_BITS = {}",
         params::COLLISION_BITS
@@ -299,6 +368,8 @@ fn the_independent_calculator_agrees_with_p3_security() {
 /// constraints of degree 8; 65,536 batched functions), from the formulas
 /// above: unique decoding ≈ 105.6 bits, of which 16 are grinding and ≈ 89.6
 /// statistical (query phase alone); Johnson reported = `COLLISION_BITS`.
+/// With the mixed-height union term (log2 33 = 5.04 bits, `MIXED_HEIGHTS`):
+/// unique decoding ≈ 100.6 bits, just above the 100-bit floor; Johnson unchanged.
 #[test]
 fn headline_figures_at_the_largest_shape() {
     let shape = ProofShape {
@@ -312,6 +383,13 @@ fn headline_figures_at_the_largest_shape() {
     let statistical = udr.query - params::QUERY_POW_BITS as f64;
     assert!((89.5..89.8).contains(&statistical), "{statistical}");
     assert!((105.5..105.8).contains(&udr.reported()), "{udr:?}");
+    let mixed = udr.with_mixed_height_union();
+    assert!((5.0..5.1).contains(&MIXED_HEIGHTS.log2()));
+    assert!((100.5..100.8).contains(&mixed.reported()), "{mixed:?}");
+    assert!(
+        mixed.reported() >= params::MIN_PROVEN_BITS as f64,
+        "{mixed:?}"
+    );
     let p3 = params::security(&shape);
     assert_eq!(p3.unique_decoding_bits, 105);
     assert_eq!(p3.johnson_bits, params::COLLISION_BITS);
@@ -320,10 +398,12 @@ fn headline_figures_at_the_largest_shape() {
     let (m20, jb20) = inst.best_johnson(true);
     println!(
         "largest shape: UDR {:.2} ({statistical:.2} statistical + {} grinding); \
+         UDR with the mixed-height union {:.2}; \
          Johnson algebraic {:.1} at m = {m} (BCHKS25), {:.1} at m = {m20} (BCIKS20 only); \
          reported min(., {}) = {}",
         udr.reported(),
         params::QUERY_POW_BITS,
+        mixed.reported(),
         jb.algebraic(),
         jb20.algebraic(),
         params::COLLISION_BITS,

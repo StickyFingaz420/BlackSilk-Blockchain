@@ -8,6 +8,12 @@ package serves two purposes:
 
 It is **not** a testnet gate: the owner decided on self-reliant review on 2026-09-25.
 
+**Figures updated 2026-10-04.** The parameter set is now `BlackSilk/zk/BS-ZK-3` (8
+random codewords). The soundness figures are: Johnson hash-bound at 122
+(`COLLISION_BITS`), unique decoding ≥ 105.58 bits computed, about 100.5 with the
+mixed-height union term (a heuristic; docs/zk.md §9.3). Mentions below of BS-ZK-2, of 4
+random codewords and of "≥ 123 / ≥ 105" are as of 2026-09-27.
+
 ## 1. What to review
 
 The scope, priorities and the claims to confirm or refute are in

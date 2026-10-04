@@ -181,7 +181,7 @@ pub fn px_entries() -> Manifest {
     use blacksilk_px_core::hash::domain;
     use blacksilk_zk::params as zk;
     let mut m = Manifest::new();
-    // BS-ZK-2 (zk/src/params.rs) and the proof encoding version.
+    // The parameter set (BS-ZK-3, zk/src/params.rs) and the proof encoding version.
     m.text(
         "zk.PARAMS_ID",
         std::str::from_utf8(zk::PARAMS_ID).expect("PARAMS_ID is ASCII"),

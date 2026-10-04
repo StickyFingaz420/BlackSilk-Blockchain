@@ -512,6 +512,63 @@ mod tests {
         assert_eq!(names.len(), e.len());
     }
 
+    /// Completeness (RT-FREEZE-V): every constant declared in `config.rs`,
+    /// except the reference salt kept for the official vectors
+    /// (`ARGON_SALT_MONERO`), is listed by `config_entries`, and every entry
+    /// comes from a constant. The file is parsed, so a new parameter that is
+    /// not added to the fingerprint fails here. Grouped entries: the three
+    /// scratchpad sizes, the four scratchpad masks and the 29 instruction
+    /// frequencies are one list each, with one value per constant.
+    #[test]
+    fn config_entries_list_every_config_constant() {
+        let source = include_str!("config.rs");
+        let mut consts: Vec<&str> = Vec::new();
+        for line in source.lines().map(str::trim_start) {
+            let rest = ["pub(crate) const ", "pub const ", "const "]
+                .iter()
+                .find_map(|p| line.strip_prefix(p));
+            let Some(rest) = rest else { continue };
+            if rest.starts_with("fn ") {
+                continue;
+            }
+            let name = rest.split(':').next().unwrap().trim();
+            if name != "_" {
+                consts.push(name);
+            }
+        }
+        assert!(consts.len() > 40, "{consts:?}");
+        fn entry_of(c: &str) -> &str {
+            match c {
+                "ARGON_MEMORY" => "ARGON_MEMORY_KIB",
+                "SCRATCHPAD_L1" | "SCRATCHPAD_L2" | "SCRATCHPAD_L3" => "SCRATCHPAD_L3_L2_L1",
+                "SCRATCHPAD_L1_MASK"
+                | "SCRATCHPAD_L2_MASK"
+                | "SCRATCHPAD_L3_MASK"
+                | "SCRATCHPAD_L3_MASK64" => "SCRATCHPAD_L1_L2_L3_L3_64_MASKS",
+                c if c.starts_with("FREQ_") => "FREQ",
+                c => c,
+            }
+        }
+        let entries = config_entries();
+        let mut used = std::collections::BTreeMap::<&str, usize>::new();
+        for c in consts.iter().copied().filter(|&c| c != "ARGON_SALT_MONERO") {
+            let e = entry_of(c);
+            assert!(
+                entries.iter().any(|(n, _)| *n == e),
+                "config.rs constant {c} is not in config_entries"
+            );
+            *used.entry(e).or_default() += 1;
+        }
+        for (name, value) in &entries {
+            let n = used.get(name).copied().unwrap_or(0);
+            let expected = match value {
+                ConfigValue::Ints(v) => v.len(),
+                _ => 1,
+            };
+            assert_eq!(n, expected, "entry {name}: constants vs values");
+        }
+    }
+
     /// `Cache::try_new` (fallible allocation, for optional builds) builds the
     /// same cache as `Cache::new` (BlackSilk's): the same memory, and bs-1a.
     #[test]
