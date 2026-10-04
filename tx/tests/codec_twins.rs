@@ -34,7 +34,7 @@ fn vault_registration() -> Registration {
 /// The deploy's prefix is the transfer prefix of its v1 part with the kind
 /// byte replaced, followed by the payload (salt first).
 fn assert_prefix_twins(d: &PxDeploy, t: &Transfer) {
-    assert!(TX_VERSION < 0x80, "the version varint is one byte");
+    const { assert!(TX_VERSION < 0x80, "the version varint is one byte") };
     let dp = d.prefix_bytes();
     let tp = t.prefix_bytes();
     assert_eq!(dp[0], TX_VERSION as u8);
