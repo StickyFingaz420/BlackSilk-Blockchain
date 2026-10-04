@@ -2,8 +2,8 @@
 //! balances.
 
 use super::{
-    network_name, Balance, HeldOutput, HeldRecord, Holdings, StoredOutput, Wallet, WalletError,
-    KEPT_BLOCK_IDS, RING_RETENTION_BLOCKS,
+    network_name, Balance, HeldOutput, HeldRecord, Holdings, RestorePoint, StoredOutput, Wallet,
+    WalletError, KEPT_BLOCK_IDS, RING_RETENTION_BLOCKS,
 };
 use crate::headers::HeaderCheck;
 use crate::node::NodeApi;
@@ -205,6 +205,22 @@ fn fetch_headers(
     Ok(out)
 }
 
+/// The node's PX commitment and contract lists below block `base` (none for
+/// the genesis), for the PX backfill.
+fn backfill_lists(node: &dyn NodeApi, base: u64) -> Result<BackfillLists, WalletError> {
+    Ok(if base == 0 {
+        BackfillLists {
+            commitments: Vec::new(),
+            contracts: Vec::new(),
+        }
+    } else {
+        BackfillLists {
+            commitments: PxStore::fetch_commitments(node, base)?,
+            contracts: PxStore::fetch_contract_list(node, base)?,
+        }
+    })
+}
+
 /// The id of the node's block at `height` (computed from its header), or
 /// `None` if the node has none there.
 fn node_id_at(
@@ -285,12 +301,22 @@ impl Wallet {
     /// Removes everything learned from blocks above `height`. A record
     /// credited for its key image that goes with them hands the credit back
     /// to a duplicate below the fork (RTW1-4).
-    fn rewind(&mut self, height: u64) {
+    pub(super) fn rewind(&mut self, height: u64) {
         // Below the first scanned block the PX tree and the registrations
         // are rebuilt from a fresh backfill: the chain below the restore
         // height may have changed.
         if height < self.restore_height {
             self.px.tree = None;
+        }
+        if height < self.first_scanned() {
+            // The restore point is scanned again: pinned first, if an older
+            // file has no pin yet (RT-D1c M2), and with the header chain
+            // checked from the genesis (RT-D1c M1): the walk-back that led
+            // here read single headers without proof of work, so a node can
+            // force it, and the blocks it then serves must carry real work.
+            self.derive_restore_point();
+            self.restore_check = true;
+            self.checked_through = None;
         }
         self.outputs.retain(|o| o.height <= height);
         for o in &mut self.outputs {
@@ -322,7 +348,37 @@ impl Wallet {
     /// caught up or when enabled (`set_verify_headers`), the header chain is
     /// checked from the genesis (`crate::headers`). A refused block is not
     /// applied: the wallet stays at the block before it.
+    ///
+    /// Once caught up, it also completes the output index (the one-time
+    /// `/outputs` backfill below the restore height, `complete_index`), so
+    /// that a later spend requests nothing but `/tx` (D1, RT-D1 F2). A failed
+    /// backfill is a warning: the next sync, or the spend, tries again.
     pub fn sync(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
+        let (h, tip) = self.sync_chain(node)?;
+        if h >= tip && self.index_needs_backfill() {
+            if let Err(e) = self.complete_index(node) {
+                self.warnings.push(format!(
+                    "the output index below the restore height could not be completed ({e}); \
+                     the next sync tries again"
+                ));
+            }
+        }
+        Ok(h)
+    }
+
+    /// Whether the output index lacks outputs the wallet has not scanned
+    /// (below its restore height, or all of them for a wallet file written
+    /// before the index existed): the work of the one-time backfill.
+    pub(super) fn index_needs_backfill(&self) -> bool {
+        self.index.start() > 0
+            || (self.index.is_empty()
+                && self.synced_height > 0
+                && self.synced_height >= self.restore_height)
+    }
+
+    /// The scan of `sync`, without completing the output index: returns the
+    /// synced height and the node's height.
+    fn sync_chain(&mut self, node: &dyn NodeApi) -> Result<(u64, u64), WalletError> {
         let info = self.check_network(node)?;
         if info.header_height > info.height {
             return Err(WalletError::Node(format!(
@@ -362,17 +418,19 @@ impl Wallet {
                 self.rewind(self.restore_height.saturating_sub(1));
             }
             let base = self.synced_height;
-            Some(if base == 0 {
-                BackfillLists {
-                    commitments: Vec::new(),
-                    contracts: Vec::new(),
-                }
-            } else {
-                BackfillLists {
-                    commitments: PxStore::fetch_commitments(node, base)?,
-                    contracts: PxStore::fetch_contract_list(node, base)?,
-                }
-            })
+            // The backfill's base id must come from the header check when
+            // one is due (RT-D1d R1): a node that is not past the restore
+            // point leaves the check nothing to run on, and the ids would
+            // be its unverified single headers.
+            if base > 0 && self.verifies_headers() && base >= info.height {
+                return Err(WalletError::Node(format!(
+                    "the node (at block {}) is not past the wallet's restore point (block {}); \
+                     sync again",
+                    info.height,
+                    self.first_scanned()
+                )));
+            }
+            Some(backfill_lists(node, base)?)
         } else {
             None
         };
@@ -431,11 +489,23 @@ impl Wallet {
                     })?;
                     c.flush().map_err(bad)?;
                     let (_, last) = c.last();
-                    if self
+                    let differs = self
                         .block_ids
                         .get(&synced)
-                        .is_some_and(|ours| *ours != last)
-                    {
+                        .is_some_and(|ours| *ours != last);
+                    if synced < self.first_scanned() {
+                        // Below the restore point the wallet's id is the PX
+                        // backfill's base, itself a node's word (RT-D1c M1,
+                        // RT-D1d R1): a checked chain from the genesis that
+                        // ends elsewhere is a reorganization below the
+                        // restore point or a poisoned base. The checked id
+                        // replaces it and the PX backfill is rebuilt on it,
+                        // below, instead of failing every sync.
+                        if differs {
+                            self.block_ids.insert(synced, last);
+                            self.px.tree = None;
+                        }
+                    } else if differs {
                         return Err(WalletError::BadNodeData(
                             "the node's headers do not end at the wallet's last block".into(),
                         ));
@@ -446,6 +516,12 @@ impl Wallet {
                 }
                 Some(c)
             }
+        };
+        // A PX backfill the header check found poisoned (above) is rebuilt
+        // now, its ids anchored to the checked header (`backfill`).
+        let backfill = match backfill {
+            None if self.px.tree.is_none() => Some(backfill_lists(node, self.synced_height)?),
+            b => b,
         };
         if let Some(lists) = backfill {
             self.backfill(node, lists, backfill_ids)?;
@@ -489,6 +565,16 @@ impl Wallet {
                 // first one the backfill's base.
                 if let Some(prev) = self.block_ids.get(&(entry.height - 1)) {
                     if block.header.prev_id != *prev {
+                        if entry.height == self.first_scanned() {
+                            // The base's id came with the PX backfill, from
+                            // a node (an unchecked single header): drop that
+                            // backfill so the next sync, from this node or
+                            // another, rebuilds it instead of failing here
+                            // forever (RT-D1b N4). The output backfill below
+                            // the restore point is kept: the block is checked
+                            // against the pinned restore point.
+                            self.rewind(entry.height - 1);
+                        }
                         return Err(WalletError::BadNodeData(format!(
                             "block {from} does not extend the previous block"
                         )));
@@ -548,7 +634,7 @@ impl Wallet {
             ));
         }
         self.px.retain_witnesses(synced, RING_RETENTION_BLOCKS);
-        Ok(self.synced_height)
+        Ok((self.synced_height, info.height))
     }
 
     /// Records the age of the synced tip against the local clock, with a
@@ -627,9 +713,13 @@ impl Wallet {
         }
     }
 
-    /// `sync`, then `check_fresh_tip`: the start of every transaction.
+    /// The scan of `sync`, then `check_fresh_tip`: the start of every
+    /// transaction. It does not complete the output index: a backfill here
+    /// would come just before `/tx`. If an earlier sync has not done it (a
+    /// spend straight after a restore, with no `sync` in between), the spend
+    /// does, with a warning (`plans_for`).
     pub(super) fn sync_to_send(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
-        let h = self.sync(node)?;
+        let (h, _) = self.sync_chain(node)?;
         self.check_fresh_tip()?;
         Ok(h)
     }
@@ -831,15 +921,147 @@ impl Wallet {
         height: u64,
         first_output: u64,
     ) -> Result<(), WalletError> {
+        let id = block.id(self.params.network_id);
+        let reset = self.check_first_output(height, &id, first_output)?;
         self.px
             .apply_block(&mut self.px_keys, &self.px_account, &block.txs, height)?;
+        if reset {
+            // Another block at the restore point: the chain below it
+            // changed, so the backfill of that range is stale (RT-D1b N3).
+            self.index = crate::index::OutputIndex::default();
+        }
         self.apply_v1_block(block, height, first_output);
+        if height == self.first_scanned() {
+            self.restore_point = Some(RestorePoint {
+                height,
+                id: Some(id),
+                first_output,
+            });
+        }
         Ok(())
     }
 
-    /// The v1 part of a block: the output index, owned outputs and spends.
-    fn apply_v1_block(&mut self, block: &Block, height: u64, first_output: u64) {
-        // Every output, in the chain's global order (as `scan_block` counts).
+    /// A node's position for block `height`'s first output (`theirs`)
+    /// contradicts the wallet's (`ours`). For a restored wallet the positions
+    /// below and at the restore point came from the node used for the
+    /// restore (RT-D1b N2), so either node may be the liar.
+    pub(super) fn positions_contradicted(
+        &self,
+        height: u64,
+        theirs: u64,
+        ours: u64,
+    ) -> WalletError {
+        let restored = if self.first_scanned() > 1 {
+            " The node used for restore may have lied about output positions; restore \
+             again from a trusted node (or this node lies)."
+        } else {
+            ""
+        };
+        WalletError::BadNodeData(format!(
+            "block {height}: this node places its first output at {theirs}, the wallet's \
+             output index at {ours}.{restored}"
+        ))
+    }
+
+    /// Pins the restore point from the output index when no pin exists (a
+    /// file written before it, RT-D1c M2): the global index of the first
+    /// indexed output of the restore point, with its block id if still
+    /// kept, else position only. Nothing if the index does not reach it.
+    pub(super) fn derive_restore_point(&mut self) {
+        if self.restore_point.is_some() {
+            return;
+        }
+        let height = self.first_scanned();
+        let start = self.index.start();
+        // The index holds whole blocks (`push_block`), so the first entry of
+        // that height is the block's first output.
+        let Some(offset) = self.index.iter().position(|e| e.height == height) else {
+            return;
+        };
+        self.restore_point = Some(RestorePoint {
+            height,
+            id: self.block_ids.get(&height).copied(),
+            first_output: start + offset as u64,
+        });
+    }
+
+    /// The first block the wallet scans: its restore point.
+    pub(super) fn first_scanned(&self) -> u64 {
+        self.restore_height.max(1)
+    }
+
+    /// Checks the node's global index of the first output of block `height`
+    /// (id `id`) against what the wallet knows (RT-D1 F1, RT-D1b N1).
+    /// Returns whether the backfilled part of the index must be discarded.
+    ///
+    /// - Once the output index holds outputs the wallet scanned (heights at
+    ///   or above the restore height), the next block must continue it
+    ///   exactly: a block that "restarts" the index would discard the
+    ///   scanned range and hand it to the next backfill, with node-chosen
+    ///   heights.
+    /// - The restore point (the first scanned block) is pinned
+    ///   (`restore_point`): scanned again (a rescan after a reorganization
+    ///   deeper than the kept window, possibly forced by a node lying in the
+    ///   reorganization probe), the same block must start at the same
+    ///   position, and the backfill below it is kept, since the block id
+    ///   commits to the chain below it. Another block there is a real
+    ///   reorganization below the restore point: the backfill is discarded.
+    /// - Otherwise (the first scan, or an index from an older file): block 1
+    ///   starts at 0 (the genesis has no outputs) and no block starts below
+    ///   its height − 1 (every block from 1 on has at least one output).
+    ///   That position is the restore node's word (RT-D1b N2).
+    fn check_first_output(
+        &self,
+        height: u64,
+        id: &Hash,
+        first_output: u64,
+    ) -> Result<bool, WalletError> {
+        let contradicted = |had: u64| Err(self.positions_contradicted(height, first_output, had));
+        let scanned = self
+            .index
+            .last_height()
+            .is_some_and(|h| h >= self.restore_height);
+        if scanned {
+            if first_output != self.index.end() {
+                return contradicted(self.index.end());
+            }
+            return Ok(false);
+        }
+        if first_output < height.saturating_sub(1) || (height == 1 && first_output != 0) {
+            return Err(WalletError::BadNodeData(format!(
+                "block {height}: the node places its first output at {first_output}, below \
+                 one output per block"
+            )));
+        }
+        match &self.restore_point {
+            // The same block, or a position-only pin (RT-D1c M2: no id to
+            // tell a reorganization from a lie, so the position must hold).
+            Some(p) if p.height == height && p.id.is_none_or(|pid| pid == *id) => {
+                if first_output != p.first_output {
+                    return contradicted(p.first_output);
+                }
+                Ok(false)
+            }
+            // Another block at the restore point: a reorganization below it,
+            // believed only under the header check, whose proof of work a
+            // node cannot fake by relinking the real blocks (RT-D1c M1).
+            Some(p) if p.height == height => {
+                if self.verifies_headers() {
+                    Ok(true)
+                } else {
+                    Err(WalletError::BadNodeData(format!(
+                        "block {height}: another block at the wallet's restore point, \
+                         without a header check; refused (sync again)"
+                    )))
+                }
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Adds every output of `block` to the output index, in the chain's
+    /// global order (as `scan_block` counts).
+    fn index_block(&mut self, block: &Block, height: u64, first_output: u64) {
         self.index.push_block(
             height,
             first_output,
@@ -850,6 +1072,70 @@ impl Wallet {
                     .map(move |k| (*k.one_time_key.bytes(), *k.commitment.bytes(), coinbase))
             }),
         );
+    }
+
+    /// Indexes the synced block again, from the block feed, checked against
+    /// the wallet's own id for it: for an empty output index at a synced
+    /// height above 0 (a wallet file written before the index existed, with
+    /// no block synced since). Its `first_output` is where the backfill ends.
+    /// One `/blocks` request for the wallet's own tip, once per such file.
+    ///
+    /// Its `first_output` is checked against the wallet's own outputs (their
+    /// global indices were recorded at earlier scans): those of earlier
+    /// blocks must lie below it, those of this block within it, and it must
+    /// be at least `h − 1` (one output per block from 1 on).
+    pub(super) fn index_synced_block(&mut self, node: &dyn NodeApi) -> Result<(), WalletError> {
+        let h = self.synced_height;
+        let Some(&ours) = self.block_ids.get(&h) else {
+            return Err(WalletError::BadNodeData(format!(
+                "no block id kept for the synced block {h}; sync again"
+            )));
+        };
+        let entry = node
+            .blocks(h, 1)
+            .map_err(WalletError::Node)?
+            .blocks
+            .into_iter()
+            .next()
+            .filter(|e| e.height == h)
+            .ok_or_else(|| WalletError::BadNodeData(format!("block {h} was not served")))?;
+        let block = decode_block(&entry)?;
+        if block.id(self.params.network_id) != ours
+            || block.compute_tx_root() != block.header.tx_root
+        {
+            return Err(WalletError::BadNodeData(format!(
+                "block {h} is not the wallet's"
+            )));
+        }
+        let first = entry.first_output;
+        let count = block
+            .txs
+            .iter()
+            .map(|tx| tx.output_keys().len() as u64)
+            .sum::<u64>();
+        let consistent = first >= h.saturating_sub(1)
+            && (h != 1 || first == 0)
+            && self.outputs.iter().all(|o| match o.height.cmp(&h) {
+                std::cmp::Ordering::Less => o.global_index < first,
+                std::cmp::Ordering::Equal => {
+                    o.global_index >= first && o.global_index - first < count
+                }
+                std::cmp::Ordering::Greater => true,
+            });
+        if !consistent {
+            return Err(WalletError::BadNodeData(format!(
+                "block {h}: the node places its first output at {first}, which the wallet's \
+                 own outputs contradict. The node used for restore may have lied about \
+                 output positions; restore again from a trusted node (or this node lies)."
+            )));
+        }
+        self.index_block(&block, h, first);
+        Ok(())
+    }
+
+    /// The v1 part of a block: the output index, owned outputs and spends.
+    fn apply_v1_block(&mut self, block: &Block, height: u64, first_output: u64) {
+        self.index_block(block, height, first_output);
         // Gap-limit scan (review M-2): an output found near the edge of the
         // window moves the window, and the block is scanned again with it, so
         // later outputs of the same block (and later blocks) are found too.

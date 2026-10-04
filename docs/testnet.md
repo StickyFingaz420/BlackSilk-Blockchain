@@ -1019,8 +1019,9 @@ shape is not yet measured (aggregation-study.md).
   `rpc.cookie` can use the RPC; that includes malware running as the node's user.
 - **Use your own node for your wallet.** Rings are chosen from the wallet's own
   output index, so a remote node does not learn ring members, but it does learn your
-  IP address, your scan start (the wallet's birthday), when you send (`/distribution`
-  then `/tx`) and which transaction came from your IP (blocks.md §9). The wallet has no
+  IP address, your scan start (the wallet's birthday), when you send (`/tx`; the
+  decoy distribution comes from the wallet's own index, never `/distribution`) and
+  which transaction came from your IP (blocks.md §9). The wallet has no
   Tor or TLS support: its RPC connection is plaintext HTTP, so anyone on the path sees
   the same.
 - **P2P encryption is unauthenticated.** It hides content from passive observers

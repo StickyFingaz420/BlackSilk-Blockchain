@@ -243,6 +243,46 @@ impl std::fmt::Display for WalletError {
 
 impl std::error::Error for WalletError {}
 
+/// The first block the wallet scanned (its restore point), pinned (RT-D1b
+/// N1): a rescan that reaches it again must find the same block at the same
+/// position, or, for another block there, the backfill below it is
+/// discarded (only under a header check, RT-D1c M1).
+///
+/// `id` is `None` for a position-only pin, derived from the output index of
+/// a wallet file written before the pin existed whose block id at the
+/// restore point is no longer kept (RT-D1c M2): the position must then
+/// match whatever block is there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct RestorePoint {
+    height: u64,
+    #[serde(with = "hex_id")]
+    id: Option<Hash>,
+    first_output: u64,
+}
+
+mod hex_id {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(id: &Option<[u8; 32]>, s: S) -> Result<S::Ok, S::Error> {
+        match id {
+            Some(id) => s.serialize_some(&hex::encode(id)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<[u8; 32]>, D::Error> {
+        use serde::de::Error;
+        Option::<String>::deserialize(d)?
+            .map(|s| {
+                hex::decode(&s)
+                    .ok()
+                    .and_then(|v| v.try_into().ok())
+                    .ok_or_else(|| D::Error::custom("restore point id"))
+            })
+            .transpose()
+    }
+}
+
 /// An owned output, as persisted.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct StoredOutput {
@@ -431,6 +471,8 @@ pub struct Wallet {
     /// check continues from them instead of reading the chain from the
     /// genesis again. `None` once a block is scanned unchecked.
     checked_through: Option<u64>,
+    /// The pinned restore point (`RestorePoint`).
+    restore_point: Option<RestorePoint>,
     /// Ids of the last RandomX key blocks among the checked headers (the
     /// keys of the next ones).
     key_ids: BTreeMap<u64, Hash>,
@@ -1059,10 +1101,21 @@ mod tests {
         }
     }
 
-    /// Serves `/outputs` for any index (identity keys, 10 outputs per block,
-    /// all coinbase) and records every request.
+    /// Serves `/outputs` for any index (identity keys, 10 outputs per block
+    /// from block 1, all coinbase; or as `lie` says) and records every
+    /// request. Any `/distribution` request fails the test.
     #[derive(Default)]
-    struct Pages(std::cell::RefCell<Vec<Vec<u64>>>);
+    struct Pages(std::cell::RefCell<Vec<Vec<u64>>>, Lie);
+
+    #[derive(Default, Clone, Copy)]
+    enum Lie {
+        #[default]
+        None,
+        /// Block 100 is missing (its outputs labelled block 101).
+        MissingBlock,
+        /// Block 100 has no coinbase output.
+        NoCoinbase,
+    }
 
     impl NodeApi for Pages {
         fn info(&self) -> Result<rpc::Info, String> {
@@ -1072,19 +1125,27 @@ mod tests {
             Err("not used".into())
         }
         fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
-            Err("not used".into())
+            panic!("/distribution requested")
         }
         fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
             self.0.borrow_mut().push(indices.to_vec());
             Ok(rpc::Outputs {
                 outputs: indices
                     .iter()
-                    .map(|&index| rpc::OutputEntry {
-                        index,
-                        one_time_key: "00".repeat(32),
-                        commitment: "00".repeat(32),
-                        height: index / 10,
-                        coinbase: true,
+                    .map(|&index| {
+                        let height = index / 10 + 1;
+                        let (height, coinbase) = match self.1 {
+                            Lie::MissingBlock if height == 100 => (101, true),
+                            Lie::NoCoinbase if height == 100 => (100, false),
+                            _ => (height, true),
+                        };
+                        rpc::OutputEntry {
+                            index,
+                            one_time_key: "00".repeat(32),
+                            commitment: "00".repeat(32),
+                            height,
+                            coinbase,
+                        }
                     })
                     .collect(),
             })
@@ -1106,10 +1167,20 @@ mod tests {
     fn the_backfill_fetches_the_whole_missing_range_in_fixed_pages() {
         let mut w = wallet();
         w.index
-            .push_block(250, 2_500, [([0; 32], [0; 32], true); 3]);
-        w.synced_height = 250;
+            .push_block(251, 2_500, [([0; 32], [0; 32], true); 3]);
+        w.synced_height = 251;
+        // A backfill missing a block, or with a block without a coinbase
+        // output, is refused, and the index is left as it was.
+        for lie in [Lie::MissingBlock, Lie::NoCoinbase] {
+            let node = Pages(Default::default(), lie);
+            assert!(matches!(
+                w.complete_index(&node),
+                Err(WalletError::BadNodeData(_))
+            ));
+            assert_eq!((w.index.start(), w.index.end()), (2_500, 2_503));
+        }
         let node = Pages::default();
-        w.complete_index(&node, 2_503).unwrap();
+        let cumulative = w.complete_index(&node).unwrap();
         {
             let q = node.0.borrow();
             let pages: Vec<(u64, u64)> = q.iter().map(|p| (p[0], p.len() as u64)).collect();
@@ -1117,15 +1188,22 @@ mod tests {
             assert!(q.iter().all(|p| p.windows(2).all(|w| w[1] == w[0] + 1)));
         }
         assert!(w.index.is_complete(2_503));
-        assert_eq!(w.index.get(1_234).unwrap().height, 123);
-        // Complete: nothing more is fetched.
-        w.complete_index(&node, 2_503).unwrap();
+        assert_eq!(w.index.get(1_234).unwrap().height, 124);
+        // The distribution, from the index: 10 outputs in each of blocks
+        // 1..=250, 3 in block 251.
+        let want: Vec<u64> = (0..=250).map(|h| h * 10).chain([2_503]).collect();
+        assert_eq!(cumulative, want);
+        // Complete: nothing more is fetched, and the same distribution.
+        assert_eq!(w.complete_index(&node).unwrap(), want);
         assert_eq!(node.0.borrow().len(), 3);
-        // A distribution that disagrees with the blocks is refused.
+        // Blocks beyond the index (a synced height the index does not
+        // reach) are refused.
+        w.synced_height = 252;
         assert!(matches!(
-            w.complete_index(&node, 2_504),
+            w.complete_index(&node),
             Err(WalletError::BadNodeData(_))
         ));
+        w.synced_height = 251;
         // The index survives a save and load.
         let reloaded = Wallet::from_json(&w.to_json()).unwrap();
         assert_eq!(reloaded.index, w.index);

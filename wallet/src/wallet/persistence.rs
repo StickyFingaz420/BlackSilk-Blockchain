@@ -1,8 +1,8 @@
 //! The wallet file format: serialization, loading, window repair and autosave.
 
 use super::{
-    network_name, parse_network, AutoSave, PendingTx, RingMember, StaleTx, StoredOutput,
-    StoredTerms, Wallet, WalletError, GAP_LIMIT, MAX_INDEX_AHEAD,
+    network_name, parse_network, AutoSave, PendingTx, RestorePoint, RingMember, StaleTx,
+    StoredOutput, StoredTerms, Wallet, WalletError, GAP_LIMIT, MAX_INDEX_AHEAD,
 };
 use crate::index::OutputIndex;
 use crate::px::{PxStore, PX_GAP_LIMIT, PX_MAX_INDEX_AHEAD};
@@ -96,6 +96,10 @@ struct Persisted {
     /// starts from the genesis).
     #[serde(default)]
     checked_through: Option<u64>,
+    /// The pinned restore point (RT-D1b N1; absent in older files: pinned
+    /// at the next scan of the restore point).
+    #[serde(default)]
+    restore_point: Option<RestorePoint>,
     /// Ids (hex) of the last RandomX key blocks among the checked headers.
     #[serde(default)]
     key_ids: BTreeMap<u64, String>,
@@ -150,6 +154,7 @@ impl Wallet {
                 .map(|h| hex::encode(h.to_bytes()))
                 .collect(),
             checked_through: self.checked_through,
+            restore_point: self.restore_point,
             key_ids: self
                 .key_ids
                 .iter()
@@ -249,6 +254,9 @@ impl Wallet {
             })
             .collect::<Result<_, _>>()?;
         w.checked_through = p.checked_through;
+        w.restore_point = p.restore_point;
+        // A file written before the pin: pinned from its index (RT-D1c M2).
+        w.derive_restore_point();
         w.key_ids = p
             .key_ids
             .iter()

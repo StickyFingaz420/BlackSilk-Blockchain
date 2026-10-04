@@ -126,8 +126,11 @@ impl Wallet {
         Ok((chosen, plans))
     }
 
-    /// Makes the local output index (`crate::index`) cover every output up to
-    /// `total` (the node's count through the synced height).
+    /// Makes the local output index (`crate::index`) cover every output
+    /// through the synced height, and returns the output distribution of
+    /// blocks `0..=synced` derived from it (`OutputIndex::cumulative`). The
+    /// node's `/distribution` is not asked (docs/transactions.md §11.3.1,
+    /// F38-1, F38-6).
     ///
     /// Outputs the wallet never scanned (below its restore height, or all of
     /// them for a wallet file written before the index existed) are fetched
@@ -135,26 +138,31 @@ impl Wallet {
     /// `MAX_OUTPUTS_PER_REQUEST` consecutive indices. The requests depend only
     /// on the index's extent, never on which outputs the wallet spends, so
     /// they reveal nothing about rings (review I3 §3.9; F2 is thereby moot).
-    pub(super) fn complete_index(
-        &mut self,
-        node: &dyn NodeApi,
-        total: u64,
-    ) -> Result<(), WalletError> {
+    /// The fetched range must pass the index's shape check (every block from
+    /// 1 to the synced one present, each with a coinbase output) before it is
+    /// added; it is not otherwise verified (F38-2, 38 W11).
+    pub(super) fn complete_index(&mut self, node: &dyn NodeApi) -> Result<Vec<u64>, WalletError> {
         // Nothing indexed (an older wallet file with no block synced since):
-        // everything through the synced height is missing.
-        let end = if self.index.is_empty() {
-            total
-        } else if self.index.end() != total {
-            return Err(WalletError::BadNodeData(format!(
-                "the node counts {total} outputs through block {}, the blocks it sent {}",
-                self.synced_height,
-                self.index.end()
-            )));
-        } else {
-            self.index.start()
-        };
+        // the synced block itself is indexed from the block feed, which
+        // gives where the missing range ends (its `first_output`).
+        if self.index.is_empty() && self.synced_height > 0 {
+            if self.synced_height < self.restore_height {
+                // Nothing scanned yet (a rescan from the restore height was
+                // interrupted, RT-D1 F3): the next sync scans it.
+                return Err(WalletError::BadNodeData(
+                    "the output index is empty: sync again".into(),
+                ));
+            }
+            self.index_synced_block(node)?;
+        }
+        let synced = self.synced_height;
+        let end = self.index.start();
         if end == 0 {
-            return Ok(());
+            return self.index.cumulative(synced).map_err(|e| {
+                WalletError::BadNodeData(format!(
+                    "the output index: {e}; restore the wallet from its seed to rebuild it"
+                ))
+            });
         }
         let page = blacksilk_rpc::MAX_OUTPUTS_PER_REQUEST as u64;
         // Not pre-allocated: `end` comes from the node.
@@ -188,24 +196,27 @@ impl Wallet {
             }
             from = to;
         }
+        // Checked before it is added: a refused backfill leaves the index as
+        // it was, so the next spend fetches it again (from this node or
+        // another).
+        let cumulative = crate::index::cumulative_of(older.iter().chain(self.index.iter()), synced)
+            .map_err(|e| WalletError::BadNodeData(format!("the output backfill: {e}")))?;
         self.index
             .prepend(older, end)
             .map_err(WalletError::BadNodeData)?;
-        if !self.index.is_complete(total) {
-            return Err(WalletError::BadNodeData(
-                "the output index does not match the node's distribution".into(),
-            ));
-        }
-        Ok(())
+        Ok(cumulative)
     }
 
     /// Rings for the v1 outputs `chosen`, staged for `submit`.
     ///
     /// Privacy of ring construction (review I3 §3.9, docs/reviews/wallet-review.md
     /// F2): ring members are resolved from the local output index, so the node
-    /// is not asked about any of them. Only the output distribution (one
-    /// request, for the synced height) and, once, a backfill of outputs older
-    /// than the restore height (`complete_index`) come from the node.
+    /// is not asked about any of them, and the output distribution the picker
+    /// draws from is derived from that index (`complete_index`), so nothing is
+    /// requested at spend time but, once, a backfill of outputs older than the
+    /// restore height. The node can no longer skew decoy ages for the scanned
+    /// range (F38-1, F38-6); below the restore height the heights are the
+    /// unverified backfill's (F38-2).
     ///
     /// Decoys follow the gamma picker with coinbase maturity applied inside the
     /// draw (`blacksilk_tx::decoy`, review R3-1). An output spent before in a
@@ -218,14 +229,18 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<Vec<InputPlan>, WalletError> {
         let next = self.synced_height + 1;
-        let dist = node
-            .distribution(self.synced_height)
-            .map_err(WalletError::Node)?;
-        let cumulative = &dist.cumulative;
-        let total = *cumulative
-            .get(self.synced_height as usize)
-            .ok_or_else(|| WalletError::BadNodeData("short output distribution".into()))?;
-        self.complete_index(node, total)?;
+        // Normally done by `sync`; here only when no sync completed it (a
+        // spend straight after a restore): the node then sees the backfill
+        // just before `/tx` (RT-D1 F2).
+        if self.index_needs_backfill() {
+            self.warnings.push(
+                "the output index was completed now, just before this transaction, so the \
+                 node saw the backfill requests right before it; after a restore, run `sync` \
+                 before spending"
+                    .into(),
+            );
+        }
+        let cumulative = &self.complete_index(node)?;
         let target = self.params.target_block_time;
         let decoy_err = |e| WalletError::Decoys(format!("{e:?}"));
         // The ring-member age rule (C1), from blacksilk-tx.

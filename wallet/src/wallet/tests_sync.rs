@@ -4,9 +4,11 @@
 
 use super::mock_chain::{MockChain, ZeroPow};
 use super::*;
+use crate::node::NodeApi;
 use crate::px::digest_hex;
 use blacksilk_consensus::{BlockHeader, Hash, PowFunction};
 use blacksilk_px_core::Digest;
+use blacksilk_rpc as rpc;
 use std::sync::Arc;
 
 fn wallet() -> Wallet {
@@ -1600,4 +1602,963 @@ fn the_header_check_refuses_a_timestamp_equal_to_the_median_time_past() {
             assert!(e.contains("median time past"), "{e}");
         }
     }
+}
+
+/// A node for the spend tests (D1, F38-1, F38-6): blocks and headers from
+/// `chain`, `/outputs` answered honestly from its blocks, `/distribution`
+/// answered with `dist` and counted, submissions kept and reported accepted.
+struct Spy<'a> {
+    chain: &'a MockChain,
+    dist: Vec<u64>,
+    dist_calls: std::cell::Cell<u32>,
+    output_calls: std::cell::Cell<u32>,
+    sent: std::cell::RefCell<Vec<Vec<u8>>>,
+}
+
+impl<'a> Spy<'a> {
+    fn new(chain: &'a MockChain, dist: Vec<u64>) -> Self {
+        Self {
+            chain,
+            dist,
+            dist_calls: Default::default(),
+            output_calls: Default::default(),
+            sent: Default::default(),
+        }
+    }
+}
+
+impl NodeApi for Spy<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        self.chain.info()
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        self.chain.blocks(from, count)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        self.chain.headers(from, count)
+    }
+    fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        self.dist_calls.set(self.dist_calls.get() + 1);
+        let mut cumulative = self.dist.clone();
+        cumulative.truncate(to as usize + 1);
+        Ok(rpc::Distribution { cumulative })
+    }
+    fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+        self.output_calls.set(self.output_calls.get() + 1);
+        let all = chain_outputs(self.chain);
+        Ok(rpc::Outputs {
+            outputs: indices.iter().map(|&i| all[i as usize].clone()).collect(),
+        })
+    }
+    fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
+        self.sent.borrow_mut().push(tx.to_vec());
+        Ok(rpc::SubmitResult {
+            accepted: true,
+            id: None,
+            on_best_chain: None,
+            error: None,
+        })
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        self.chain.px_commitments(from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        self.chain.px_contracts(from)
+    }
+}
+
+/// Every output of `chain`, as an honest node's `/outputs` lists it.
+fn chain_outputs(chain: &MockChain) -> Vec<rpc::OutputEntry> {
+    let mut all = Vec::new();
+    for (h, b) in chain.blocks.iter().enumerate() {
+        for tx in &b.txs {
+            for k in tx.output_keys() {
+                all.push(rpc::OutputEntry {
+                    index: all.len() as u64,
+                    one_time_key: hex::encode(k.one_time_key.bytes()),
+                    commitment: hex::encode(k.commitment.bytes()),
+                    height: h as u64,
+                    coinbase: tx.is_coinbase(),
+                });
+            }
+        }
+    }
+    all
+}
+
+/// The honest node's distribution through the tip.
+fn honest_distribution(chain: &MockChain) -> Vec<u64> {
+    let n = chain.height() as usize;
+    (0..n)
+        .map(|h| chain.first_output[h + 1])
+        .chain([chain.info().unwrap().outputs])
+        .collect()
+}
+
+/// Key image → ring of every v1 input of an encoded transfer.
+fn rings_of(bytes: &[u8]) -> BTreeMap<[u8; 32], [u64; 16]> {
+    use blacksilk_tx::types::Transaction;
+    match Transaction::decode(bytes).unwrap() {
+        Transaction::Transfer(t) => t
+            .inputs
+            .iter()
+            .map(|i| (*i.key_image.bytes(), i.ring))
+            .collect(),
+        other => panic!("not a transfer: {other:?}"),
+    }
+}
+
+/// 120 coinbase-only blocks paying `wallet()` enough for any fee.
+fn rich_chain(seed: u64) -> MockChain {
+    let mut chain = MockChain::new(seed);
+    chain.reward = 1_000_000_000_000;
+    let to = wallet().primary();
+    for _ in 0..120 {
+        chain.mine(&to, 0);
+    }
+    chain
+}
+
+fn spend_wallet(from: &Wallet) -> Wallet {
+    let mut w = Wallet::from_json(&from.to_json()).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_allow_stale_tip(true);
+    w
+}
+
+/// D1 (dossier 38 F38-1, F38-6; docs/transactions.md §11.3.1): the decoy
+/// distribution is derived from the wallet's own output index, so a node
+/// serving a distribution that is monotone and has the right total but
+/// skews the ages old gets exactly the rings an honest node gets, for a
+/// wallet that scanned from the genesis and one restored later (whose
+/// older outputs are backfilled). Neither asks for `/distribution`.
+#[test]
+fn rings_do_not_depend_on_the_nodes_distribution() {
+    use rand_chacha::rand_core::SeedableRng;
+    let chain = rich_chain(51);
+    let honest = honest_distribution(&chain);
+    let total = *honest.last().unwrap();
+    // Skewed: three times as many outputs claimed at every height, capped at
+    // the total. Monotone, the right total, the mass moved to old blocks.
+    let skewed: Vec<u64> = honest.iter().map(|&c| (c * 3).min(total)).collect();
+    assert_ne!(skewed, honest);
+    assert_eq!(skewed.last(), Some(&total));
+    assert!(skewed.windows(2).all(|w| w[0] <= w[1]));
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+    for restore in [1, 40] {
+        let mut base =
+            Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), restore).unwrap();
+        base.set_header_pow(Arc::new(ZeroPow));
+        base.set_allow_stale_tip(true);
+        // The backfill below the restore height is made by the sync (RT-D1
+        // F2), not by the spend.
+        let syncer = Spy::new(&chain, honest.clone());
+        assert_eq!(base.sync(&syncer).unwrap(), 120);
+        assert_eq!(
+            syncer.output_calls.get() > 0,
+            restore > 1,
+            "restore {restore}: a backfill only below the restore height"
+        );
+        assert!(!base.index_needs_backfill());
+        let mut rings = Vec::new();
+        for dist in [&honest, &skewed] {
+            let mut w = spend_wallet(&base);
+            let node = Spy::new(&chain, dist.clone());
+            let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9);
+            w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+            assert_eq!(node.dist_calls.get(), 0, "restore {restore}: /distribution");
+            assert_eq!(node.output_calls.get(), 0, "restore {restore}: /outputs");
+            // The wallet's own distribution is the honest node's.
+            assert_eq!(
+                w.index.cumulative(120).unwrap(),
+                honest,
+                "restore {restore}"
+            );
+            let sent = node.sent.borrow();
+            assert_eq!(sent.len(), 1);
+            rings.push(rings_of(&sent[0]));
+        }
+        assert!(!rings[0].is_empty());
+        assert_eq!(rings[0], rings[1], "restore {restore}");
+    }
+}
+
+/// D1: no spend path asks for `/distribution`. The transfer and the deploy
+/// run whole; PX deposits and the v1 fee of contract calls build their v1
+/// inputs with `v1_plans` (the only v1 path besides those two), run here up
+/// to where they would build a PX proof (never built in these tests).
+#[test]
+fn no_spend_path_requests_the_distribution() {
+    use blacksilk_px::vault;
+    use blacksilk_tx::px::Registration;
+    use rand_chacha::rand_core::SeedableRng;
+    let chain = rich_chain(52);
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let mut base = wallet();
+    base.set_header_pow(Arc::new(ZeroPow));
+    base.set_allow_stale_tip(true);
+    assert_eq!(base.sync(&chain).unwrap(), 120);
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(3);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    spend_wallet(&base)
+        .transfer(&node, &to, 1_000, &rules, &mut rng)
+        .unwrap();
+    assert_eq!(node.dist_calls.get(), 0, "transfer");
+    assert_eq!(node.sent.borrow().len(), 1);
+
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    spend_wallet(&base)
+        .px_deploy(
+            &node,
+            vec![Registration {
+                elf: vault::VAULT_ELF.to_vec(),
+                budget: vault::BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
+            }],
+            &rules,
+            &mut rng,
+        )
+        .unwrap();
+    assert_eq!(node.dist_calls.get(), 0, "deploy");
+    assert_eq!(node.sent.borrow().len(), 1);
+
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    let mut w = spend_wallet(&base);
+    w.sync_to_send(&node).unwrap();
+    let (chosen, plans) = w.v1_plans(&node, 1_000, &mut rng).unwrap();
+    assert!(!chosen.is_empty() && plans.len() == chosen.len());
+    assert_eq!(
+        node.dist_calls.get(),
+        0,
+        "v1_plans (PX deposits, contract-call fees)"
+    );
+}
+
+/// D1, the empty-index case (a wallet file written before the output index
+/// existed, no block synced since): the synced block is indexed again from
+/// the block feed, checked against the wallet's own block id, and its first
+/// output ends the backfill. A served block that is not the wallet's is
+/// refused. No `/distribution` request either way.
+#[test]
+fn an_empty_index_takes_its_extent_from_the_wallets_own_tip_block() {
+    use rand_chacha::rand_core::SeedableRng;
+    let mut chain = rich_chain(53);
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+    let mut base = wallet();
+    base.set_header_pow(Arc::new(ZeroPow));
+    base.set_allow_stale_tip(true);
+    assert_eq!(base.sync(&chain).unwrap(), 120);
+    base.index = OutputIndex::default();
+    let honest = honest_distribution(&chain);
+
+    let mut w = spend_wallet(&base);
+    let node = Spy::new(&chain, honest.clone());
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(4);
+    w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+    assert_eq!(node.dist_calls.get(), 0);
+    assert!(node.output_calls.get() > 0, "the backfill");
+    assert_eq!(w.index.cumulative(120).unwrap(), honest);
+
+    // A node serving another block 120 is refused before anything is
+    // fetched for the backfill.
+    chain.lies.alter_block = Some((
+        120,
+        Box::new(|b: &mut blacksilk_chain::block::Block| b.header.nonce ^= 1),
+    ));
+    let mut w = spend_wallet(&base);
+    let node = Spy::new(&chain, honest.clone());
+    let e = w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap_err();
+    assert!(e.to_string().contains("not the wallet's"), "{e}");
+    assert_eq!((node.dist_calls.get(), node.output_calls.get()), (0, 0));
+    assert!(w.index.is_empty());
+    chain.lies.alter_block = None;
+
+    // RT-D1 F2: a sync does it, so the spend after it requests nothing.
+    let mut w = spend_wallet(&base);
+    let syncer = Spy::new(&chain, honest.clone());
+    w.sync(&syncer).unwrap();
+    assert!(syncer.output_calls.get() > 0, "the backfill, at sync");
+    assert_eq!(w.index.cumulative(120).unwrap(), honest);
+    let node = Spy::new(&chain, honest.clone());
+    w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+    assert_eq!((node.dist_calls.get(), node.output_calls.get()), (0, 0));
+
+    // RT-D1 F1, the legacy path: a `first_output` for block 120 that the
+    // wallet's own outputs contradict is refused (at sync: a warning).
+    chain.first_output[120] += 1;
+    let mut w = spend_wallet(&base);
+    let node = Spy::new(&chain, honest.clone());
+    w.sync(&node).unwrap();
+    assert!(w.take_warnings().iter().any(|m| m.contains("contradict")));
+    assert_eq!(node.output_calls.get(), 0);
+    assert!(w.index.is_empty());
+}
+
+/// RT-D1 F2: a spend straight after a restore, with no sync that completed
+/// the output index, still backfills (the residual), and says so.
+#[test]
+fn a_spend_straight_after_a_restore_backfills_with_a_warning() {
+    use rand_chacha::rand_core::SeedableRng;
+    let chain = rich_chain(55);
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+    let mut w = Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), 40).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_allow_stale_tip(true);
+    // RT-D1 F3: before any block is scanned, an empty index asks for a sync.
+    assert!(!w.index_needs_backfill());
+    let e = w
+        .complete_index(&Spy::new(&chain, vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("sync again"), "{e}");
+    // The mock serves no `/outputs`: the sync-time backfill fails (a
+    // warning) and the spend makes it.
+    assert_eq!(w.sync(&chain).unwrap(), 120);
+    assert!(w
+        .take_warnings()
+        .iter()
+        .any(|m| m.contains("could not be completed")));
+    assert!(w.index_needs_backfill());
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(6);
+    w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+    assert!(node.output_calls.get() > 0);
+    assert_eq!(node.dist_calls.get(), 0);
+    assert!(w.take_warnings().iter().any(|m| m.contains("run `sync`")));
+    assert_eq!(
+        w.index.cumulative(120).unwrap(),
+        honest_distribution(&chain)
+    );
+}
+
+/// RT-D1 F1 (the reviewer's probe): a node that lies once about where a
+/// block's outputs start must not make the wallet discard the outputs it
+/// scanned. Before the fix the index restarted at the lie, and the next
+/// spend backfilled everything below it from `/outputs`. Now the block is
+/// refused, the index is unchanged, and nothing needs backfilling. Block
+/// 1 must start at 0.
+#[test]
+fn a_lying_first_output_cannot_restart_the_scanned_index() {
+    let mut chain = rich_chain(54);
+    let to = wallet().primary();
+    let mut w = wallet();
+    w.set_header_pow(Arc::new(ZeroPow));
+    assert_eq!(w.sync(&chain).unwrap(), 120);
+    let before = w.index.clone();
+    assert_eq!(before.start(), 0);
+    chain.mine(&to, 0);
+    chain.mine(&to, 0);
+    let truth = chain.first_output[121];
+    for lie in [truth + 1, truth - 1, truth + 1_000] {
+        chain.first_output[121] = lie;
+        let e = w.sync(&chain).unwrap_err();
+        assert!(matches!(e, WalletError::BadNodeData(_)), "{lie}: {e}");
+        assert_eq!(w.synced_height(), 120, "{lie}");
+        assert_eq!(w.index, before, "{lie}: the index is unchanged");
+        assert!(!w.index_needs_backfill());
+        let node = Spy::new(&chain, vec![]);
+        w.complete_index(&node).unwrap();
+        assert_eq!(node.output_calls.get(), 0, "{lie}: no backfill");
+    }
+    chain.first_output[121] = truth;
+    assert_eq!(w.sync(&chain).unwrap(), 122);
+    assert_eq!(w.index.start(), 0);
+
+    // Block 1 of a wallet scanning from the genesis.
+    let mut chain = rich_chain(56);
+    chain.first_output[1] = 5;
+    let mut w = wallet();
+    w.set_header_pow(Arc::new(ZeroPow));
+    assert!(matches!(w.sync(&chain), Err(WalletError::BadNodeData(_))));
+    assert!(w.index.is_empty());
+}
+
+/// The red team's consistently shifted node (RT-D1b): `first_output` of
+/// blocks from `from` on is shifted by `k`, and the backfill has `k`
+/// fabricated outputs (height `from − 1`) before the true first output of
+/// block `from`. With `lie_ids`, its single-header answers (the wallet's
+/// reorganization probe) carry another header until the first `/blocks`
+/// request, so the wallet walks back to its restore point.
+struct Evil<'a> {
+    chain: &'a MockChain,
+    from: u64,
+    k: u64,
+    lie_ids: std::cell::Cell<bool>,
+    output_calls: std::cell::Cell<u32>,
+}
+
+impl NodeApi for Evil<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        let mut i = self.chain.info()?;
+        i.outputs += self.k;
+        Ok(i)
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        self.lie_ids.set(false);
+        let mut b = self.chain.blocks(from, count)?;
+        for e in &mut b.blocks {
+            if e.height >= self.from {
+                e.first_output += self.k;
+            }
+        }
+        Ok(b)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        let mut r = self.chain.headers(from, count)?;
+        if self.lie_ids.get() && count == 1 && !r.headers.is_empty() {
+            let bytes = hex::decode(&r.headers).unwrap();
+            let mut h = BlockHeader::from_bytes(&bytes).unwrap();
+            h.nonce ^= 1;
+            r.headers = hex::encode(h.to_bytes());
+        }
+        Ok(r)
+    }
+    fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+        panic!("/distribution")
+    }
+    fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+        self.output_calls.set(self.output_calls.get() + 1);
+        let all = chain_outputs(self.chain);
+        let t = self.chain.first_output[self.from as usize];
+        Ok(rpc::Outputs {
+            outputs: indices
+                .iter()
+                .map(|&i| {
+                    let mut e = if i < t {
+                        all[i as usize].clone()
+                    } else if i < t + self.k {
+                        let mut e = all[1].clone();
+                        e.height = self.from - 1;
+                        e.coinbase = false;
+                        e
+                    } else {
+                        all[(i - self.k) as usize].clone()
+                    };
+                    e.index = i;
+                    e
+                })
+                .collect(),
+        })
+    }
+    fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+        Err("no".into())
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        self.chain.px_commitments(from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        self.chain.px_contracts(from)
+    }
+}
+
+fn evil(chain: &MockChain, from: u64, k: u64, lie_ids: bool) -> Evil<'_> {
+    Evil {
+        chain,
+        from,
+        k,
+        lie_ids: std::cell::Cell::new(lie_ids),
+        output_calls: Default::default(),
+    }
+}
+
+fn rt_restored(r: u64) -> Wallet {
+    let mut w = Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), r).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_allow_stale_tip(true);
+    w
+}
+
+fn own_indices(w: &Wallet) -> Vec<u64> {
+    w.outputs.iter().map(|o| o.global_index).collect()
+}
+
+/// RT-D1b N1 (the red team's P5 probe): a node lies in the reorganization
+/// probe to walk a restored wallet back to its restore point, then shifts
+/// every global index from there on. The restore point is pinned: the same
+/// block there must start at the same position, so the shift is refused,
+/// and a forced rescan without a shift keeps the backfill (no `/outputs`).
+#[test]
+fn a_forced_rescan_cannot_shift_the_restore_point() {
+    let chain = rich_chain(83);
+    let mut w = rt_restored(40);
+    let honest = Spy::new(&chain, vec![]);
+    w.sync(&honest).unwrap();
+    assert_eq!(w.index.start(), 0);
+    let before = own_indices(&w);
+    let index = w.index.clone();
+
+    // The probe's phase 1: the lying reorganization probe walks the wallet
+    // back to its restore point, and the same sync rescans from there
+    // (header-checked from the genesis since RT-D1c M1). Without a shift
+    // the backfill is kept: nothing is fetched with `/outputs`.
+    let node = evil(&chain, 40, 0, true);
+    assert_eq!(w.sync(&node).unwrap(), 120);
+    assert_eq!(node.output_calls.get(), 0, "the backfill is kept");
+    assert_eq!(w.index, index);
+    assert_eq!(own_indices(&w), before);
+
+    // The walk-back with the shift: refused at the restore point.
+    let node = evil(&chain, 40, 5, true);
+    let e = w.sync(&node).unwrap_err().to_string();
+    assert!(e.contains("restore again from a trusted node"), "{e}");
+    assert_eq!(node.output_calls.get(), 0);
+    assert!(
+        own_indices(&w).iter().all(|i| before.contains(i)),
+        "no shifted index"
+    );
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+
+    // The pin itself, from the state a forced walk-back leaves (the wallet
+    // at the block below its restore point, the backfill kept): the shifted
+    // restore point is refused with the restore warning...
+    w.rewind(39);
+    assert_eq!(w.index.start(), 0);
+    let node = evil(&chain, 40, 5, false);
+    let e = w.sync(&node).unwrap_err().to_string();
+    assert!(e.contains("restore again from a trusted node"), "{e}");
+    assert_eq!(node.output_calls.get(), 0);
+    assert_eq!(w.synced_height(), 39, "block 40 is not applied");
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
+    // ...and the same block at the same position keeps the backfill.
+    let node = evil(&chain, 40, 0, false);
+    assert_eq!(w.sync(&node).unwrap(), 120);
+    assert_eq!(node.output_calls.get(), 0);
+    // The honest node brings everything back, unshifted.
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+    assert_eq!(w.index, index);
+    assert_eq!(
+        w.index.cumulative(120).unwrap(),
+        honest_distribution(&chain)
+    );
+}
+
+/// RT-D1b N2 (the red team's P3 probe): the node used for a restore is
+/// trusted for output positions at the restore point, and can shift them
+/// (residual, under research). A later honest node contradicts the stored
+/// positions, and the wallet says what that means.
+#[test]
+fn a_shift_at_restore_is_reported_by_a_later_honest_node() {
+    let chain = rich_chain(81);
+    let mut w = rt_restored(40);
+    let node = evil(&chain, 40, 5, false);
+    assert_eq!(w.sync(&node).unwrap(), 120);
+    // The shift is not detectable from that node alone.
+    assert_eq!(w.index.start(), 0);
+    let mut later = rich_chain(81);
+    later.mine(&wallet().primary(), 0);
+    let e = w.sync(&later).unwrap_err().to_string();
+    assert!(
+        e.contains("The node used for restore may have lied about output positions"),
+        "{e}"
+    );
+    assert!(e.contains("restore again from a trusted node"), "{e}");
+}
+
+/// RT-D1b N3: a real reorganization below the restore point (another
+/// chain, the same output counts) replaces the backfill instead of keeping
+/// it stale.
+#[test]
+fn a_reorganization_below_the_restore_point_replaces_the_backfill() {
+    let mut a = rich_chain(84);
+    let mut b = rich_chain(85);
+    let mut w = rt_restored(40);
+    w.sync(&Spy::new(&a, vec![])).unwrap();
+    assert_eq!(w.index.start(), 0);
+    let first_a = w.index.get(0).unwrap().one_time_key;
+    // Two more blocks scanned without the restore's header check (a
+    // reorganization below the checked headers is refused otherwise).
+    for c in [&mut a, &mut b] {
+        c.mine(&wallet().primary(), 0);
+        c.mine(&wallet().primary(), 0);
+    }
+    assert_eq!(honest_distribution(&a), honest_distribution(&b));
+    w.sync(&Spy::new(&a, vec![])).unwrap();
+    let node = Spy::new(&b, vec![]);
+    assert_eq!(w.sync(&node).unwrap(), 122);
+    assert!(node.output_calls.get() > 0, "a new backfill");
+    let all_b = chain_outputs(&b);
+    assert_eq!(
+        hex::encode(w.index.get(0).unwrap().one_time_key),
+        all_b[0].one_time_key
+    );
+    assert_ne!(w.index.get(0).unwrap().one_time_key, first_a);
+    assert_eq!(w.index.cumulative(122).unwrap(), honest_distribution(&b));
+    // The restore point is pinned to chain b's block 40.
+    assert_eq!(w.restore_point.unwrap().id, Some(b.id(40)));
+}
+
+/// The red team's relinking node (RT-D1c): the real transactions from block
+/// `from` on, in blocks with the nonce flipped and `prev_id` rechained (new
+/// ids, no new proof of work), first outputs shifted by `k`, the backfill
+/// fabricated as `Evil`'s.
+struct Relink<'a> {
+    inner: Evil<'a>,
+    blocks: Vec<(u64, blacksilk_chain::block::Block)>,
+}
+
+fn relink(chain: &MockChain, from: u64, k: u64, lie_ids: bool) -> Relink<'_> {
+    let nid = chain.params.network_id;
+    let mut prev = chain.id(from - 1);
+    let mut blocks = Vec::new();
+    for h in from..=chain.height() {
+        let mut b = chain.blocks[h as usize].clone();
+        b.header.nonce ^= 1;
+        b.header.prev_id = prev;
+        prev = b.id(nid);
+        blocks.push((h, b));
+    }
+    Relink {
+        inner: evil(chain, from, k, lie_ids),
+        blocks,
+    }
+}
+
+impl NodeApi for Relink<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        self.inner.info()
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        let mut r = self.inner.blocks(from, count)?;
+        let nid = self.inner.chain.params.network_id;
+        for e in &mut r.blocks {
+            if let Some((_, b)) = self.blocks.iter().find(|(h, _)| *h == e.height) {
+                e.id = hex::encode(b.id(nid));
+                e.hex = hex::encode(b.encode());
+            }
+        }
+        Ok(r)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        let mut r = self.inner.headers(from, count)?;
+        let bytes: Vec<u8> = (from..from + count)
+            .flat_map(|h| match self.blocks.iter().find(|(bh, _)| *bh == h) {
+                Some((_, b)) => b.header.to_bytes().to_vec(),
+                None => self
+                    .inner
+                    .chain
+                    .blocks
+                    .get(h as usize)
+                    .map(|b| b.header.to_bytes().to_vec())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        if !self.inner.lie_ids.get() {
+            r.headers = hex::encode(bytes);
+        }
+        Ok(r)
+    }
+    fn distribution(&self, t: u64) -> Result<rpc::Distribution, String> {
+        self.inner.distribution(t)
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        self.inner.outputs(i)
+    }
+    fn submit_tx(&self, t: &[u8]) -> Result<rpc::SubmitResult, String> {
+        self.inner.submit_tx(t)
+    }
+    fn px_commitments(&self, f: u64) -> Result<rpc::PxCommitments, String> {
+        self.inner.px_commitments(f)
+    }
+    fn px_contracts(&self, f: u64) -> Result<rpc::PxContracts, String> {
+        self.inner.px_contracts(f)
+    }
+}
+
+/// Proof of work that only the given headers meet: the real chain's, not a
+/// relinked copy's (the regtest `ZeroPow` accepts every header).
+struct KnownPow(std::collections::HashSet<Vec<u8>>);
+
+impl PowFunction for KnownPow {
+    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+        if self.0.contains(header) {
+            [0; 32]
+        } else {
+            [0xff; 32]
+        }
+    }
+}
+
+fn known_pow(chain: &MockChain) -> Arc<dyn PowFunction> {
+    Arc::new(KnownPow(
+        chain
+            .blocks
+            .iter()
+            .map(|b| b.header.to_bytes().to_vec())
+            .collect(),
+    ))
+}
+
+/// RT-D1c M1 (the red team's P6 probe): after a forced walk-back, a node
+/// serves the real blocks relinked under new ids (no new proof of work)
+/// with a shift, hoping the pin takes them for a reorganization below the
+/// restore point. The walk-back turns the header check on, so the relinked
+/// headers fail it; and without the header check another block at the
+/// restore point is refused outright.
+#[test]
+fn a_relinked_chain_after_a_forced_rescan_needs_real_work() {
+    // Blocks faster than the target: the difficulty exceeds 1, so a header
+    // without work fails the check.
+    let mut chain = MockChain::new(91);
+    chain.spacing = 1;
+    chain.reward = 1_000_000_000_000;
+    for _ in 0..120 {
+        chain.mine(&wallet().primary(), 0);
+    }
+    assert!(chain.blocks[40].header.difficulty > 1);
+    let mut w = rt_restored(40);
+    w.set_header_pow(known_pow(&chain));
+    let honest = Spy::new(&chain, vec![]);
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert!(!w.verifies_headers(), "caught up: the restore check is off");
+    let before = own_indices(&w);
+    let pin = w.restore_point;
+    // One sync: the lying probe walks the wallet back, and the relinked
+    // blocks with the shift are served.
+    let node = relink(&chain, 40, 5, true);
+    assert!(w.sync(&node).is_err());
+    assert!(w.verifies_headers(), "the rescan is header-checked");
+    assert_eq!(node.inner.output_calls.get(), 0);
+    assert!(w.synced_height() < 40);
+    assert_eq!(w.restore_point, pin);
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+
+    // The reset branch itself, without the header check: refused.
+    w.rewind(39);
+    w.restore_check = false;
+    assert!(!w.verifies_headers());
+    let node = relink(&chain, 40, 0, false);
+    let e = w.sync(&node).unwrap_err().to_string();
+    assert!(e.contains("without a header check"), "{e}");
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
+    assert_eq!(w.restore_point, pin);
+}
+
+/// RT-D1c P9 (and N3 under M1): another block at the restore point, under
+/// the header check (`ZeroPow` accepts the relinked copy, standing for a
+/// real reorganization at the restore point), replaces the backfill.
+#[test]
+fn another_block_at_the_restore_point_under_the_header_check_resets() {
+    let mut a = rich_chain(94);
+    let mut w = rt_restored(40);
+    w.sync(&Spy::new(&a, vec![])).unwrap();
+    a.mine(&wallet().primary(), 0);
+    let node = relink(&a, 40, 0, true);
+    assert_eq!(w.sync(&node).unwrap(), 121);
+    assert!(
+        node.inner.output_calls.get() > 0,
+        "the backfill is fetched again"
+    );
+    assert_ne!(w.restore_point.unwrap().id, Some(a.id(40)));
+    assert!(w.index.cumulative(121).is_ok());
+}
+
+/// RT-D1c M2 (the red team's P7 probe) and P8: a wallet file written
+/// before the pin is pinned when loaded (with the block id while it is
+/// kept, else by position only), and a forced rescan cannot shift it; the
+/// pin survives a save and load.
+#[test]
+fn a_file_without_a_pin_is_pinned_on_load() {
+    let chain = rich_chain(92);
+    let mut w = rt_restored(40);
+    w.sync(&Spy::new(&chain, vec![])).unwrap();
+    let before = own_indices(&w);
+    let pin = w.restore_point.unwrap();
+    assert_eq!(pin.id, Some(chain.id(40)));
+    let reload = |w: &Wallet| {
+        let mut w = Wallet::from_json(&w.to_json()).unwrap();
+        w.set_header_pow(Arc::new(ZeroPow));
+        w.set_allow_stale_tip(true);
+        w
+    };
+    // P8: persisted.
+    assert_eq!(reload(&w).restore_point, Some(pin));
+    // M2: derived on load, with the id while it is kept...
+    w.restore_point = None;
+    assert_eq!(reload(&w).restore_point, Some(pin));
+    // ...and by position only once it is not.
+    w.block_ids.remove(&40);
+    let mut w = reload(&w);
+    assert_eq!(w.restore_point, Some(RestorePoint { id: None, ..pin }));
+    let e = w.sync(&evil(&chain, 40, 5, true)).unwrap_err().to_string();
+    assert!(e.contains("restore again from a trusted node"), "{e}");
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+    // The honest block at the same position passes, and the pin gets its id.
+    assert_eq!(w.sync(&Spy::new(&chain, vec![])).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+    assert_eq!(w.restore_point, Some(pin));
+
+    // At the first rewind below the restore point, for a pinless wallet.
+    w.restore_point = None;
+    w.rewind(39);
+    assert_eq!(
+        w.restore_point.map(|p| p.first_output),
+        Some(pin.first_output)
+    );
+}
+
+/// The red team's node behind the wallet (RT-D1d P10): it reports block
+/// `cap` as its tip, serves nothing above it, and, with `fake_base`, a
+/// header of block `cap` without its work.
+struct Behind<'a> {
+    chain: &'a MockChain,
+    cap: u64,
+    fake_base: bool,
+}
+
+impl NodeApi for Behind<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        let mut i = self.chain.info()?;
+        i.height = self.cap;
+        i.header_height = self.cap;
+        Ok(i)
+    }
+    fn blocks(&self, f: u64, c: u64) -> Result<rpc::Blocks, String> {
+        let mut r = self.chain.blocks(f, c)?;
+        r.blocks.retain(|b| b.height <= self.cap);
+        Ok(r)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        let mut r = self.chain.headers(from, count)?;
+        let size = blacksilk_rpc::HEADER_BYTES;
+        if self.fake_base && from + count > self.cap && from <= self.cap && !r.headers.is_empty() {
+            let mut bytes = hex::decode(&r.headers).unwrap();
+            let off = ((self.cap - from) as usize) * size;
+            if off + size <= bytes.len() {
+                let mut h = BlockHeader::from_bytes(&bytes[off..off + size]).unwrap();
+                h.nonce ^= 1;
+                bytes[off..off + size].copy_from_slice(&h.to_bytes());
+                r.headers = hex::encode(bytes);
+            }
+        }
+        Ok(r)
+    }
+    fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+        panic!("/distribution")
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        Spy::new(self.chain, vec![]).outputs(i)
+    }
+    fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+        Err("no".into())
+    }
+    fn px_commitments(&self, f: u64) -> Result<rpc::PxCommitments, String> {
+        self.chain.px_commitments(f)
+    }
+    fn px_contracts(&self, f: u64) -> Result<rpc::PxContracts, String> {
+        self.chain.px_contracts(f)
+    }
+}
+
+/// RT-D1d R1 (P10): a node behind the wallet's restore point walks it back
+/// (its missing blocks count as a mismatch) and would then have the PX
+/// backfill take its base id from an unverified single header, which the
+/// next header check refused at every sync. The backfill now waits for a
+/// node past the restore point, and an honest node then recovers the
+/// wallet, unchanged, without a restore.
+#[test]
+fn a_node_behind_the_restore_point_cannot_poison_the_px_base() {
+    let chain = rich_chain(95);
+    let mut w = rt_restored(40);
+    w.set_header_pow(known_pow(&chain));
+    let honest = Spy::new(&chain, vec![]);
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    let before = own_indices(&w);
+    let index = w.index.clone();
+    let behind = Behind {
+        chain: &chain,
+        cap: 39,
+        fake_base: true,
+    };
+    let e = w.sync(&behind).unwrap_err().to_string();
+    assert!(e.contains("not past the wallet's restore point"), "{e}");
+    assert!(w.block_ids.get(&39).is_none_or(|id| *id == chain.id(39)));
+    assert!(w.verifies_headers());
+    let later = Spy::new(&chain, vec![]);
+    for _ in 0..2 {
+        assert_eq!(w.sync(&later).unwrap(), 120, "recovered without a restore");
+    }
+    assert_eq!(own_indices(&w), before);
+    assert_eq!(w.index, index);
+    assert_eq!(later.output_calls.get(), 0, "the output backfill is kept");
+}
+
+/// RT-D1d R1 (b): a PX base id already poisoned (the state 663160c could
+/// reach: taken from an unverified header, the PX tree built on it, the
+/// header check due) is replaced by the checked id and the PX backfill
+/// rebuilt, instead of failing every sync.
+#[test]
+fn a_poisoned_px_base_heals_under_the_header_check() {
+    let chain = rich_chain(97);
+    let mut w = rt_restored(40);
+    w.set_header_pow(known_pow(&chain));
+    let honest = Spy::new(&chain, vec![]);
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    let before = own_indices(&w);
+    // Poison it: no header check, a node behind the restore point with a
+    // fake header for block 39.
+    w.rewind(39);
+    w.restore_check = false;
+    let behind = Behind {
+        chain: &chain,
+        cap: 39,
+        fake_base: true,
+    };
+    let _ = w.sync(&behind);
+    assert_ne!(w.block_ids.get(&39), Some(&chain.id(39)), "poisoned");
+    assert!(w.px.tree.is_some());
+    w.restore_check = true;
+    assert_eq!(w.sync(&honest).unwrap(), 120, "healed");
+    assert_eq!(w.block_ids.get(&39), Some(&chain.id(39)));
+    assert_eq!(own_indices(&w), before);
+}
+
+/// RT-D1d Q12 and P11: at a difficulty above 1 it is the proof of work that
+/// refuses a relinked chain after a forced walk-back; a relinked suffix
+/// above the restore point with a shift is refused by the index's
+/// continuity; and no case moves an output position.
+#[test]
+fn proof_of_work_refuses_a_relinked_chain() {
+    let mut chain = MockChain::new(98);
+    chain.spacing = 1;
+    chain.reward = 1_000_000_000_000;
+    for _ in 0..120 {
+        chain.mine(&wallet().primary(), 0);
+    }
+    assert!(chain.blocks[40].header.difficulty > 1);
+    let restored = || {
+        let mut w = rt_restored(40);
+        w.set_header_pow(known_pow(&chain));
+        w.sync(&Spy::new(&chain, vec![])).unwrap();
+        w
+    };
+    let mut w = restored();
+    let before = own_indices(&w);
+    assert_eq!(w.sync(&evil(&chain, 40, 0, true)).unwrap(), 120);
+    let e = w
+        .sync(&relink(&chain, 40, 5, true))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("proof of work") || e.contains("header"), "{e}");
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+
+    // Relinked from 41 with a shift: the index does not continue.
+    let mut w = restored();
+    assert!(w.sync(&relink(&chain, 41, 5, false)).is_err());
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+    // Relinked from 41 without a shift, on a routine sync (no header
+    // check unless `set_verify_headers`): positions are unchanged.
+    let mut w = restored();
+    let _ = w.sync(&relink(&chain, 41, 0, false));
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
 }
