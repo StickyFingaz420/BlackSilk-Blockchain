@@ -5,8 +5,9 @@
 
 use super::blocks::schedule_downloads;
 use super::fatal;
+use super::header_budget::{HeaderLane, HeaderScheduler};
 use super::state::{
-    unix_now, upgrade_reporter_key, HeaderBatch, Inner, State, UNKNOWN_UPGRADE_DISCONNECT,
+    unix_now, upgrade_reporter_key, HeaderBatch, Inner, Peer, State, UNKNOWN_UPGRADE_DISCONNECT,
 };
 use crate::addr::NetAddr;
 use crate::clock::{Accepted, ClockLevel};
@@ -15,8 +16,12 @@ use crate::limits::score;
 use crate::message::{Message, MAX_HEADERS};
 use blacksilk_chain::actor::Lane;
 use blacksilk_chain::manager::{CachedPow, ChainManager, PowJob};
-use blacksilk_chain::sync_policy::{anti_dos_threshold, pow_chunk, seed_is_live, worth_verifying};
+use blacksilk_chain::sync_policy::{
+    anti_dos_threshold, max_tip_age, pow_chunk, seed_is_live, worth_verifying,
+};
 use blacksilk_consensus::{seed_height, BlockHeader, Hash, HeaderChain, HeaderError};
+use rand_chacha::rand_core::{RngCore, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Range;
@@ -42,13 +47,31 @@ fn queue_key(addr: &NetAddr, proxied: bool) -> NetAddr {
 }
 
 impl Inner {
-    /// Whether a header batch from `addr` may be queued now: at most
+    /// Whether a header batch from `p` may be queued now: at most
     /// `max_per_ip` batches per origin (not enforced for loopback-style
-    /// `allow_private` setups, like the connection limit) and
-    /// `2 × (max_inbound + max_outbound)` in total.
-    pub(super) fn header_queue_room(&self, st: &State, addr: &NetAddr, proxied: bool) -> bool {
-        let total = 2 * (self.cfg.max_inbound + self.cfg.max_outbound).max(1);
-        if st.header_queue_len >= total {
+    /// `allow_private` setups, like the connection limit); for an untrusted
+    /// sender (`HeaderLane::Inbound`) at most `max_inbound` untrusted batches,
+    /// for a trusted one at most `2 × (max_inbound + max_outbound)` trusted
+    /// ones. Untrusted batches wait for the budget, so they have their own
+    /// bound and never take a trusted batch's room.
+    pub(super) fn header_queue_room(&self, st: &State, p: &Peer) -> bool {
+        self.header_queue_room_for(st, &p.addr, p.proxied, HeaderLane::of(p).untrusted())
+    }
+
+    pub(super) fn header_queue_room_for(
+        &self,
+        st: &State,
+        addr: &NetAddr,
+        proxied: bool,
+        untrusted: bool,
+    ) -> bool {
+        let full = if untrusted {
+            st.header_queue_untrusted >= self.cfg.max_inbound.max(1)
+        } else {
+            let total = 2 * (self.cfg.max_inbound + self.cfg.max_outbound).max(1);
+            st.header_queue_len - st.header_queue_untrusted >= total
+        };
+        if full {
             return false;
         }
         self.cfg.allow_private
@@ -198,7 +221,7 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
         let room = st
             .peers
             .get(&peer)
-            .is_some_and(|p| inner.header_queue_room(&st, &p.addr, p.proxied));
+            .is_some_and(|p| inner.header_queue_room(&st, p));
         let Some(p) = st.peers.get_mut(&peer) else {
             return;
         };
@@ -243,11 +266,16 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
             None
         } else {
             p.headers_busy = true;
+            // Outbound peers first, then proven inbound ones, then the
+            // untrusted ones, budgeted (`header_budget`).
+            let lane = HeaderLane::of(p);
             let batch = HeaderBatch {
                 peer,
                 addr: p.addr.clone(),
                 proxied: p.proxied,
                 solicited,
+                lane,
+                received: unix_now(),
                 headers,
             };
             let key = queue_key(&batch.addr, batch.proxied);
@@ -256,6 +284,9 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
                 log::error!("header worker stopped: header batch dropped");
             } else {
                 st.header_queue_len += 1;
+                if lane.untrusted() {
+                    st.header_queue_untrusted += 1;
+                }
                 *st.header_queue_origin.entry(key).or_default() += 1;
             }
             None
@@ -282,7 +313,15 @@ enum HeaderOutcome {
         new_tip: bool,
         /// The cumulative work of the last header (`Peer::known_work`).
         work: u128,
+        /// The batch delivered a live new tip (`Peer::pow_proven`).
+        live_tip: bool,
     },
+    /// The sender is an untrusted inbound peer and its class's header
+    /// proof-of-work budget ran out between two chunks (`header_budget`):
+    /// the rest is not hashed now, without penalty. Headers of chunks
+    /// verified before are kept, and the peer is asked again (its reply
+    /// waits for a token).
+    Throttled,
     /// The batch's cumulative work would not exceed our best header chain's
     /// (and it cannot be the start of a heavier branch, `low_work`): dropped
     /// without proof of work, without penalty and without re-requesting.
@@ -350,7 +389,9 @@ fn batch_seed(hc: &HeaderChain, headers: &[BlockHeader], i: usize) -> Hash {
     }
 }
 
-/// Verifies header batches one at a time (docs/p2p.md §6):
+/// Verifies header batches one at a time (docs/p2p.md §6), trusted senders'
+/// first, then untrusted inbound ones by network class in turn
+/// (`header_budget::HeaderScheduler`):
 /// 1. every rule except proof of work, for the whole batch, before any RandomX
 ///    hash (`ChainManager::precheck_headers`); a violation the sender is
 ///    penalized for rejects the batch without any hash;
@@ -367,7 +408,51 @@ fn batch_seed(hc: &HeaderChain, headers: &[BlockHeader], i: usize) -> Hash {
 /// bounded per origin and in total (`Inner::header_queue_room`); batches of
 /// senders that left or were banned are only pre-checked.
 pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<HeaderBatch>) {
-    while let Some(mut batch) = rx.recv().await {
+    let mut queue = HeaderScheduler::default();
+    let mut rng = {
+        let mut seed = [0u8; 32];
+        inner.state().rng.fill_bytes(&mut seed);
+        ChaCha20Rng::from_seed(seed)
+    };
+    loop {
+        let (next, wait) = {
+            let mut st = inner.state();
+            let now = Instant::now();
+            while let Ok(b) = rx.try_recv() {
+                queue.push(b, &mut st.header_pow, now);
+            }
+            // Untrusted batches wait for the budget; those of senders that
+            // left meanwhile are released at once: they are only pre-checked
+            // (no hash), so a rule-breaking sender is still banned.
+            let peers = &st.peers;
+            queue.release_departed(|b| !peers.contains_key(&b.peer));
+            match queue.pop(&mut st.header_pow, now, &mut rng) {
+                Some(b) => (Some(b), None),
+                None => (None, queue.next_ready(&mut st.header_pow, now)),
+            }
+        };
+        let Some(mut batch) = next else {
+            let received = match wait {
+                Some(d) => tokio::select! {
+                    b = rx.recv() => Some(b),
+                    _ = tokio::time::sleep(d) => None,
+                    _ = inner.header_wake.notified() => None,
+                },
+                None => tokio::select! {
+                    b = rx.recv() => Some(b),
+                    _ = inner.header_wake.notified() => None,
+                },
+            };
+            match received {
+                Some(Some(b)) => {
+                    let mut st = inner.state();
+                    queue.push(b, &mut st.header_pow, Instant::now());
+                }
+                Some(None) => return,
+                None => {}
+            }
+            continue;
+        };
         let peer = batch.peer;
         let headers = std::mem::take(&mut batch.headers);
         let full = headers.len() as u64 == MAX_HEADERS;
@@ -375,6 +460,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         let last_height = headers.last().map_or(0, |h| h.height);
         let inner2 = inner.clone();
         let addr = batch.addr.clone();
+        let (lane, received) = (batch.lane, batch.received);
         // Our header height after the batch is read before the peer's
         // claimed height is corrected below under the same state lock that
         // ends `headers_busy`, so the maintenance loop never sees the peer
@@ -382,7 +468,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         // (R8-15 request loops). The snapshot is published before the
         // actor answers the batch's last command, so it includes the batch.
         let result = tokio::task::spawn_blocking(move || {
-            let outcome = verify_headers(&inner2, peer, &addr, &headers);
+            let outcome = verify_headers(&inner2, peer, &addr, lane, received, &headers);
             let ours = inner2.summary.load().header_height;
             (outcome, ours)
         })
@@ -393,14 +479,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         };
         let pending = {
             let mut st = inner.state();
-            st.header_queue_len = st.header_queue_len.saturating_sub(1);
-            let key = queue_key(&batch.addr, batch.proxied);
-            if let Some(n) = st.header_queue_origin.get_mut(&key) {
-                *n -= 1;
-                if *n == 0 {
-                    st.header_queue_origin.remove(&key);
-                }
-            }
+            dequeued(&mut st, &batch);
             match st.peers.get_mut(&peer) {
                 Some(p) => {
                     p.headers_busy = false;
@@ -411,10 +490,14 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                             advanced,
                             new_tip,
                             work,
+                            live_tip,
                         }) => {
                             // The sender has this header (announcements,
                             // `Peer::wants_tip`).
                             p.has_header(*last_id, *work);
+                            if *live_tip {
+                                p.pow_proven = true;
+                            }
                             if *new_tip {
                                 p.last_new_tip = Some(Instant::now());
                             }
@@ -484,6 +567,15 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
             Ok(HeaderOutcome::Failed(e)) => {
                 on_header_error(&inner, &batch, e, last_height, pending).await
             }
+            Ok(HeaderOutcome::Throttled) => {
+                log::debug!(
+                    "peer {peer}: {count} headers up to height {last_height} cut off: \
+                     header proof-of-work budget exhausted; asking again"
+                );
+                // Its claimed height is kept: a better chain is not hidden.
+                // The reply waits in its class's queue for a token.
+                inner.request_headers(peer).await;
+            }
             Ok(HeaderOutcome::Abandoned) => {}
             // A panic outside the actor (the PoW jobs): stop as for one in it.
             Err(e) if e.is_panic() => fatal(&format!("header task failed: {e}")),
@@ -520,6 +612,9 @@ struct Prechecked {
     jobs: Jobs,
     /// The future time limit (for the clock monitor).
     ftl: u64,
+    /// The catch-up tip-age bound (`sync_policy::max_tip_age`): a tip older
+    /// than this is not live.
+    tip_age: Option<u64>,
 }
 
 /// The first command of a batch (one former lock hold, plus the first
@@ -586,7 +681,35 @@ fn precheck(
         chunk,
         jobs,
         ftl: c.params().future_time_limit,
+        tip_age: max_tip_age(c.params()),
     })
+}
+
+/// The bookkeeping of a batch leaving the header queue.
+fn dequeued(st: &mut State, batch: &HeaderBatch) {
+    st.header_queue_len = st.header_queue_len.saturating_sub(1);
+    if batch.lane.untrusted() {
+        st.header_queue_untrusted = st.header_queue_untrusted.saturating_sub(1);
+    }
+    let key = queue_key(&batch.addr, batch.proxied);
+    if let Some(n) = st.header_queue_origin.get_mut(&key) {
+        *n -= 1;
+        if *n == 0 {
+            st.header_queue_origin.remove(&key);
+        }
+    }
+}
+
+/// Charges `n` hashes for `lane` to the header PoW budget (`header_budget`):
+/// `false` if the batch is to be dropped unhashed.
+fn charge(inner: &Inner, lane: HeaderLane, n: usize) -> bool {
+    inner.state().header_pow.charge(lane, n, Instant::now())
+}
+
+/// Refunds `n` hashes charged for `lane` whose result was not a proof-of-work
+/// failure the sender is penalized for.
+fn refund(inner: &Inner, lane: HeaderLane, n: usize) {
+    inner.state().header_pow.refund(lane, n, Instant::now());
 }
 
 /// Pre-check, then chunked proof of work and acceptance. Runs on a blocking
@@ -595,11 +718,15 @@ fn precheck(
 /// pre-check with the first chunk's jobs, then each chunk's acceptance with
 /// the next chunk's jobs (adjacent former lock holds merged: a schedule the
 /// lock allowed). Each command waits for at most one drain step
-/// (docs/p2p.md §10, test L7).
+/// (docs/p2p.md §10, test L7). Every chunk hashed for an untrusted `lane` is
+/// charged to the header PoW budget first and refunded unless it fails for a
+/// reason the sender is penalized for (`header_budget`).
 fn verify_headers(
     inner: &Inner,
     peer: PeerId,
     addr: &NetAddr,
+    lane: HeaderLane,
+    received: u64,
     headers: &[BlockHeader],
 ) -> HeaderOutcome {
     let now = unix_now();
@@ -632,6 +759,7 @@ fn verify_headers(
         chunk,
         mut jobs,
         ftl,
+        tip_age,
     }) = pre
     else {
         return HeaderOutcome::Unconnected;
@@ -671,6 +799,10 @@ fn verify_headers(
         let Some((pow, j)) = jobs.take() else {
             return HeaderOutcome::Unconnected;
         };
+        let hashes = j.len();
+        if !charge(inner, lane, hashes) {
+            return HeaderOutcome::Throttled;
+        }
         pow.compute_parallel(&j, chunk);
         let (b, part, next) = (batch.clone(), part.clone(), parts.get(k + 1).cloned());
         let Some((accepted, next_jobs, main)) = inner.chain_blocking(Lane::Headers, move |c| {
@@ -684,8 +816,16 @@ fn verify_headers(
             return HeaderOutcome::Abandoned;
         };
         match accepted {
-            Ok(n) => new += n,
-            Err((_, e)) => return HeaderOutcome::Failed(e),
+            Ok(n) => {
+                refund(inner, lane, hashes);
+                new += n;
+            }
+            Err((_, e)) => {
+                if !penalized(&e) {
+                    refund(inner, lane, hashes);
+                }
+                return HeaderOutcome::Failed(e);
+            }
         }
         note_clock(inner, peer, &batch[parts[k].clone()], false, now, ftl);
         jobs = next_jobs;
@@ -703,6 +843,10 @@ fn verify_headers(
         let Some((pow, jobs)) = jobs else {
             return HeaderOutcome::Unconnected;
         };
+        let hashes = jobs.len();
+        if !charge(inner, lane, hashes) {
+            return HeaderOutcome::Throttled;
+        }
         pow.compute_parallel(&jobs, 1);
         let b = batch.clone();
         let Some((accepted, work)) = inner.chain_blocking(Lane::Headers, move |c| {
@@ -717,6 +861,9 @@ fn verify_headers(
         }) else {
             return HeaderOutcome::Abandoned;
         };
+        if accepted.as_ref().err().is_none_or(|(_, e)| !penalized(e)) {
+            refund(inner, lane, hashes);
+        }
         match accepted {
             Err((_, e)) => {
                 if let (HeaderError::UnknownUpgrade { version }, Some(work)) = (&e, work) {
@@ -744,16 +891,34 @@ fn verify_headers(
     };
     // A live arrival: the batch extended the best header chain outside bulk
     // sync. Its last header is a sample of the clock monitor.
-    if new > 0 && on_main && !full && last.height > ours_before {
+    let live = new > 0 && on_main && !full && last.height > ours_before;
+    if live {
         note_clock(inner, peer, std::slice::from_ref(last), true, now, ftl);
     }
+    // A live new tip that is also recent proves its sender (`pow_proven`):
+    // during initial sync tips are old, so identities cannot collect it in
+    // bulk by relaying the next header each.
+    // Judged at arrival: under a flood an untrusted batch may wait about as
+    // long as the tip-age bound for its token (RT-HDRDOS2 R2-1).
+    let live_tip = proves_sender(live, last.timestamp, received.min(now), tip_age);
     HeaderOutcome::Accepted {
         last: last.height,
         last_id,
         advanced: new > 0 || !on_main,
         new_tip: new > 0 && on_main,
         work,
+        live_tip,
     }
+}
+
+/// Whether a batch proves its sender (`Peer::pow_proven`): a live arrival
+/// (`live`: new headers ending on our best chain above our previous best,
+/// not a full batch) whose tip, stamped `timestamp`, is at most `tip_age`
+/// seconds old at `now` (`sync_policy::max_tip_age`; no bound on regtest).
+/// During initial sync or catch-up the tips are old, so identities cannot
+/// each relay the next header and collect the status in bulk (RT-HDRDOS F1).
+fn proves_sender(live: bool, timestamp: u64, now: u64, tip_age: Option<u64>) -> bool {
+    live && tip_age.is_none_or(|age| timestamp.saturating_add(age) >= now)
 }
 
 /// Whether the stored header `id` is on our best header chain, and its
@@ -920,20 +1085,38 @@ mod tests {
         {
             let mut st = inner.state();
             st.header_queue_len = 143;
-            assert!(inner.header_queue_room(&st, &a, false), "143 of 144");
+            assert!(
+                inner.header_queue_room_for(&st, &a, false, false),
+                "143 of 144"
+            );
             st.header_queue_len = 144;
-            assert!(!inner.header_queue_room(&st, &a, false), "144 of 144");
+            assert!(
+                !inner.header_queue_room_for(&st, &a, false, false),
+                "144 of 144"
+            );
             st.header_queue_len = 1;
             st.header_queue_origin.insert(queue_key(&a, false), 1);
-            assert!(inner.header_queue_room(&st, &a, false), "1 of 2 for the IP");
+            assert!(
+                inner.header_queue_room_for(&st, &a, false, false),
+                "1 of 2 for the IP"
+            );
             st.header_queue_origin.insert(queue_key(&a, false), 2);
             assert!(
-                !inner.header_queue_room(&st, &a, false),
+                !inner.header_queue_room_for(&st, &a, false, false),
                 "2 of 2 for the IP"
             );
-            assert!(!inner.header_queue_room(&st, &a2, false), "the same IP");
-            assert!(inner.header_queue_room(&st, &b, false), "another IP");
-            assert!(inner.header_queue_room(&st, &a2, true), "a proxied origin");
+            assert!(
+                !inner.header_queue_room_for(&st, &a2, false, false),
+                "the same IP"
+            );
+            assert!(
+                inner.header_queue_room_for(&st, &b, false, false),
+                "another IP"
+            );
+            assert!(
+                inner.header_queue_room_for(&st, &a2, true, false),
+                "a proxied origin"
+            );
         }
         // `allow_private`: no limit per origin, the total still holds.
         let net = idle_network(|c| c.allow_private = true).await;
@@ -942,9 +1125,9 @@ mod tests {
             let mut st = inner.state();
             st.header_queue_origin.insert(queue_key(&a, false), 50);
             st.header_queue_len = 143;
-            assert!(inner.header_queue_room(&st, &a, false));
+            assert!(inner.header_queue_room_for(&st, &a, false, false));
             st.header_queue_len = 144;
-            assert!(!inner.header_queue_room(&st, &a, false));
+            assert!(!inner.header_queue_room_for(&st, &a, false, false));
         }
         // Zero limits count as one: one batch per origin, two in total.
         let net = idle_network(|c| {
@@ -955,16 +1138,53 @@ mod tests {
         .await;
         let inner = &net.inner;
         let mut st = inner.state();
-        assert!(inner.header_queue_room(&st, &a, false));
+        assert!(inner.header_queue_room_for(&st, &a, false, false));
         st.header_queue_origin.insert(queue_key(&a, false), 1);
         st.header_queue_len = 1;
         assert!(
-            !inner.header_queue_room(&st, &a, false),
+            !inner.header_queue_room_for(&st, &a, false, false),
             "1 of 1 for the IP"
         );
-        assert!(inner.header_queue_room(&st, &b, false), "1 of 2 in total");
+        assert!(
+            inner.header_queue_room_for(&st, &b, false, false),
+            "1 of 2 in total"
+        );
         st.header_queue_len = 2;
-        assert!(!inner.header_queue_room(&st, &b, false), "2 of 2 in total");
+        assert!(
+            !inner.header_queue_room_for(&st, &b, false, false),
+            "2 of 2 in total"
+        );
+    }
+
+    /// Untrusted batches (they wait for the budget) have their own bound,
+    /// `max_inbound`, and never take a trusted batch's room (RT-HDRDOS F2).
+    #[tokio::test]
+    async fn untrusted_batches_have_their_own_queue_bound() {
+        let a = NetAddr::parse("1.2.3.4:5").unwrap();
+        let net = idle_network(|c| c.allow_private = true).await;
+        let inner = &net.inner;
+        let mut st = inner.state();
+        st.header_queue_len = 63;
+        st.header_queue_untrusted = 63;
+        assert!(
+            inner.header_queue_room_for(&st, &a, false, true),
+            "63 of 64"
+        );
+        st.header_queue_len = 64;
+        st.header_queue_untrusted = 64;
+        assert!(
+            !inner.header_queue_room_for(&st, &a, false, true),
+            "64 of 64"
+        );
+        assert!(
+            inner.header_queue_room_for(&st, &a, false, false),
+            "trusted room is untouched"
+        );
+        st.header_queue_len = 64 + 144;
+        assert!(
+            !inner.header_queue_room_for(&st, &a, false, false),
+            "144 trusted"
+        );
     }
 
     /// At most one `GetHeaders` is outstanding per peer (mutation run E: the
@@ -1264,7 +1484,9 @@ mod tests {
         let addr = NetAddr::parse("1.2.3.4:5").unwrap();
         let verify = |inner: Arc<Inner>| {
             let addr = addr.clone();
-            tokio::task::spawn_blocking(move || verify_headers(&inner, 999, &addr, &[bad]))
+            tokio::task::spawn_blocking(move || {
+                verify_headers(&inner, 999, &addr, HeaderLane::Outbound, unix_now(), &[bad])
+            })
         };
         // Departed (no peer 999), not banned: pre-checked, refused.
         match verify(inner.clone()).await.unwrap() {
@@ -1420,6 +1642,20 @@ mod tests {
         );
         deliver!(tip, 3);
         assert!(!marked(&inner), "our tip again: nothing new");
+    }
+
+    /// RT-HDRDOS F1: only a recent live tip proves its sender; a header of
+    /// initial sync or catch-up (old, or not live) does not.
+    #[test]
+    fn only_a_recent_live_tip_proves_its_sender() {
+        let age = max_tip_age(&blacksilk_consensus::ChainParams::testnet());
+        assert_eq!(age, Some(2880));
+        let now = 1_000_000;
+        assert!(proves_sender(true, now, now, age));
+        assert!(proves_sender(true, now - 2880, now, age), "at the bound");
+        assert!(!proves_sender(true, now - 2881, now, age), "catch-up");
+        assert!(!proves_sender(false, now, now, age), "not live");
+        assert!(proves_sender(true, 0, now, None), "regtest: no bound");
     }
 
     /// A header from a newer release (a version no epoch of the schedule

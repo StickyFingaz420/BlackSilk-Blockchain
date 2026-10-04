@@ -482,6 +482,123 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
      nothing, lowers the peer's claimed height to ours, so it is not asked again
      every tick (it is asked again when it announces a new tip). Before 2026-09-27 a
      peer claiming a higher chain and replaying known headers caused a request loop.
+   - **Header proof-of-work budget (R8-8, 2026-10-04; `p2p/src/net/header_budget.rs`).**
+     Node policy, not consensus.
+     - **The problem.** A plausible header passes every check above for free: the
+       right difficulty, a known parent, valid timestamps, and work above the gate,
+       for example any child of our tip. Only its RandomX hash shows the proof of work
+       is junk. That hash costs us about 0.5 s in light mode and costs the sender
+       nothing. A ban covers one IP (an IPv6 /64), and onion inbound peers cannot be
+       banned at all, so a sender with many identities could keep the single header
+       worker hashing junk. Honest headers would then wait behind the junk in a FIFO
+       queue.
+     - **Three tiers (RT-HDRDOS F1).** Every batch is queued in a lane, chosen when it
+       arrives (`HeaderLane`):
+       1. **Outbound** peers, which we chose. Always verified first.
+       2. **Proven** inbound peers (`Peer::pow_proven`). A peer is proven once it
+          delivers a *live* new tip with valid proof of work. Live means the batch
+          stored new headers ending on our best chain, above our previous best
+          header, was not a full batch, and its tip was at most `max_tip_age` old
+          when the batch **arrived** (48 minutes on testnet; no bound on regtest).
+          The age is judged at arrival, not at verification: under a flood an
+          untrusted batch can wait about as long as that bound for its token, and
+          would otherwise never prove its sender (RT-HDRDOS2 R2-1). The future-time
+          limit is still judged at verification.
+          - During initial sync and catch-up the tips are old, so identities cannot
+            each relay the next header to collect the status in bulk. That is at most
+            one new proven identity per new tip of the network.
+          - A proven peer's later junk header still disconnects it, but is not
+            budgeted.
+          - Proven batches go after outbound ones, so a stockpile of proven
+            identities cannot delay an outbound peer's header beyond the batch
+            already being hashed.
+       3. **Untrusted** inbound peers, waiting per network class (IPv4, IPv6, onion,
+          as for the trickle timers, §7). The classes take turns, and within a class
+          the next batch is drawn **at random** among the waiting ones. A FIFO that
+          the attacker keeps refilling would put an honest batch last every time.
+     - **A budget per class, no node-wide bucket (RT-HDRDOS F2).**
+       - **When an untrusted batch runs.** Only while its class's bucket holds a
+         token. Each header hashed for it is charged one token, so one chunk can
+         overdraw the bucket.
+       - **Refunds.** The tokens come back once the chunk's proof of work is valid.
+         Failures that are not the sender's fault, such as a future timestamp, are
+         refunded too. Only junk stays charged, so honest peers spend nothing.
+       - **Defaults** (`HeaderPowBudget`): 3 hashes per class, plus one every 45 s.
+       - **Bound.** Over any period `t`, each class can cause at most `3 + t/45 s`
+         failed hashes (plus one chunk), however many identities it uses. All three
+         classes together: `9 + t/15 s`, about 3.5 % of one core at ~0.5 s per hash.
+       - **Why no node-wide bucket.** The first version had one, refilling at
+         exactly two classes' worth. Free onion identities plus rotating IPv6 /64s
+         could drain it and starve honest IPv4 peers whose own class had tokens.
+     - **Waiting, not dropping (RT-HDRDOS F3).**
+       - An untrusted batch without a token stays queued (counted in
+         `NetStats::header_pow_throttled`) and is taken up when a token frees. The
+         peer's claimed height is not lowered, so a better chain is not hidden.
+       - A batch whose class runs dry between two chunks keeps its verified prefix,
+         and the peer is asked again at once. Its reply then waits in the queue.
+       - Waiting batches of senders that left are released at once without a
+         token: they are only pre-checked (no hash), so a rule-breaking sender is
+         still banned. A disconnect wakes the header worker, so a departed batch
+         never holds queue room while the worker sleeps until the next token
+         (RT-HDRDOS2 R2-3).
+       - Untrusted batches have their own queue bound (`max_inbound`), so they
+         never take a trusted batch's room.
+     - **The untrusted floor.** With `k` junk batches waiting in its class, each
+       token is a draw with chance `1/(k + 1)`, so an honest untrusted batch waits a
+       geometric number of tokens: `(k + 1) / class_rate` on average, with a long
+       tail. Every flooding identity keeps one batch waiting: it reconnects at once
+       after its junk is hashed and announces again.
+       - **Test value.** Measured in
+         `an_honest_untrusted_peer_progresses_under_a_two_class_flood`: 8 onion and 8
+         IPv4 flooding identities, 1 token/s, so `k = 8` and a model mean of 9 s
+         (median about 6 s).
+         - The sampled queue held 16.8 batches on average across both classes,
+           against 17 in the model, which confirms `k`.
+         - Honest IPv4 identities' headers were stored after a median of 8.4 s
+           and 6.1 s, and a mean of 9.9 s and 7.4 s, in two runs of 9 rounds
+           (single waits 1.0–29.5 s). Earlier runs of 5 rounds had means of 9.9,
+           6.3 and 15.8 s.
+         - The test fails only on a collapse: a median above 30 s, or any single
+           wait above 90 s (probability about 2.5e-5 per round under the model).
+       - **Defaults, `k` up to 63.** The model gives about 48 minutes on average per
+         untrusted batch, while the flood lasts.
+       - **What this means for sync.** It does not touch sync from outbound peers.
+         An honest inbound peer pays it once: its first live tip proves it, and its
+         later batches are no longer budgeted.
+       - **Eclipsed outbound slots.** If an attacker holds all our outbound slots,
+         the way out is one honest inbound header, after that wait. A catch-up that
+         needs several full batches from an unproven peer pays it per batch, since a
+         full batch does not prove its sender.
+     - **Measured** (`p2p/tests/sync_policy.rs`; 30 ms per hash; flooding identities
+       are loopback connections that are never banned and reconnect when
+       disconnected):
+
+       | Test | Result |
+       | --- | --- |
+       | 16 IPv4 flooders, outbound peer mining every 250 ms; budget 3 + 1/s | 9 junk hashes in 6.8 s (bound 11.8); outbound header lag ≤ 0.06 s |
+       | The same, no budget (priority alone) | 189 junk hashes in 6.8 s; lag ≤ 0.07 s |
+       | The former FIFO without budget (emulated, before RT-HDRDOS) | ~390 junk hashes in 18–24 s; lag 0.96–1.49 s |
+       | 16 proven identities each queue junk (100 ms per hash), then the outbound peer mines | its header is stored after 0.20 s (a shared FIFO: ~1.6 s) |
+       | A batch behind spent junk, refill every 2 s | verified 2.0 s after arrival, without a new announcement |
+
+       With 0.5 s hashes, the FIFO lag scales to tens of seconds per honest header.
+     - **Cheap checks already come first.** Every rule except proof of work runs
+       before any hash: the difficulty must be exactly the required one, so a claimed
+       difficulty cannot be inflated or deflated; the parent must be known; the
+       timestamps must be valid; and the claimed work must reach the work gate.
+       Nothing cheaper separates a junk child of our tip from a real one. A minimum
+       claimed difficulty would add nothing, since the difficulty is already pinned.
+     - **Prior art.**
+       - Bitcoin Core checks proof of work first (`CheckHeadersPoW`) because its PoW
+         is one SHA-256d. Its anti-DoS work threshold (`GetAntiDoSWorkThreshold`; PR
+         #25717) and headers presync protect memory, not CPU.
+       - Monero verifies announced blocks on receipt with no rate limit
+         (`handle_notify_new_fluffy_block`) and blocks hosts after bad PoW
+         (`P2P_IP_FAILS_BEFORE_BLOCK`). That block does not reach anonymous peers, and
+         Monero does not sync over Tor or I2P at all. Its light-mode verification is
+         10–15 ms per hash, not 0.5 s.
+       - Tor's onion-service PoW (proposal 327) uses a priority queue with shedding
+         instead of FIFO, as here.
 4. **Bodies.** The node requests `GetBlocks` for best-chain blocks whose body it lacks,
    starting just above the connected tip.
    - An **unrequested** block costs its sender 10 points and is stored only if its
@@ -1940,8 +2057,10 @@ the 30 s pong timeout, so the link was cut
   order: a peer's large valid blocks delay other peers' blocks, not their pings.
   Block-download timeouts still use a fixed 60 s (no per-size or head-of-queue
   timer, R8-9); they are not penalized.
-- **Header worker head-of-line blocking** (R8-15): a single-header tip announcement
-  waits behind a full 2000-header batch; no priority lane yet.
+- **Header worker head-of-line blocking** (R8-15): outbound, then proven, peers' batches go
+  before untrusted inbound ones (§6, "Header proof-of-work budget"). Within a
+  lane, a single-header tip announcement still waits behind a full 2000-header
+  batch, and a batch being hashed is not preempted.
 - **Per-hop block latency** (RT-LAB F2). A node announces a block only after it has
   connected it: it verifies the header's RandomX proof of work in light mode (about
   0.45 s per header, above), then downloads and connects the body. Relaying the
@@ -1978,10 +2097,24 @@ the 30 s pong timeout, so the link was cut
   disconnected or demoted (the decided staller detection, decisions "Agent 31", is
   not implemented). A peer that announced a high `Version` height stays a download
   candidate.
-- **Header PoW per identity.** A peer can send headers with junk proof of work; the
-  first chunk of a batch (`pow_threads` headers) is hashed before the first failure
-  is scored. Peers reached through a proxy and onion inbound peers are never banned,
-  so over Tor this costs the attacker nothing per identity.
+- **Header PoW per identity, bounded node-wide (R8-8).** A peer can send headers
+  with junk proof of work; the first chunk of a batch (`pow_threads` headers) is
+  hashed before the first failure is scored. Peers reached through a proxy and onion
+  inbound peers are never banned, so over Tor this costs the attacker nothing per
+  identity.
+  - Since 2026-10-04 the total is bounded: each network class of untrusted inbound
+    senders has its own budget of failed hashes, and outbound, then proven, peers'
+    headers go first (§6, "Header proof-of-work budget").
+  - Still open:
+    - while a class is flooded, an honest *untrusted* peer of that class waits
+      `(k + 1) / class_rate` on average (the untrusted floor, §6). That is about
+      48 minutes with the defaults and 63 junk batches waiting. It matters only
+      for a node without honest outbound peers (an eclipse), and it is paid once
+      per honest identity;
+    - an attacker holding outbound slots, or proven identities (one per new live
+      tip of the network), is not budgeted; each such identity costs one junk
+      chunk before it is disconnected;
+    - the budget has not run against a live adversary.
 - **Send buffers are bounded in messages, not bytes** (64 control frames, 32 blocks
   per peer), so a slow-reading peer can pin hundreds of megabytes; and a `GetTx` for
   more than 64 transactions may overflow the 64-slot control outbox and disconnect

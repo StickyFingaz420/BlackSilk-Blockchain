@@ -1,6 +1,6 @@
 //! Rate limits and misbehavior scores (docs/p2p.md §10).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Misbehavior score at which a peer is disconnected and banned.
 pub const BAN_THRESHOLD: u32 = 100;
@@ -50,6 +50,35 @@ impl TokenBucket {
     pub fn has(&mut self, cost: f64, now: Instant) -> bool {
         self.refill(now);
         self.tokens >= cost
+    }
+
+    /// Takes `cost` tokens unconditionally: the balance may go negative,
+    /// and the debt is repaid by the refill before [`Self::has`] holds
+    /// again. For work whose cost is known only in steps (a header chunk):
+    /// the caller checks `has(1.0)` first.
+    pub fn debit(&mut self, cost: f64, now: Instant) {
+        self.refill(now);
+        self.tokens -= cost;
+    }
+
+    /// How long until [`Self::has`]`(cost)` holds (zero if it does now;
+    /// `None` if it never will: no refill and too few tokens).
+    pub fn wait_for(&mut self, cost: f64, now: Instant) -> Option<Duration> {
+        self.refill(now);
+        if self.tokens >= cost {
+            return Some(Duration::ZERO);
+        }
+        if self.rate <= 0.0 || cost > self.burst {
+            return None;
+        }
+        Duration::try_from_secs_f64((cost - self.tokens) / self.rate).ok()
+    }
+
+    /// Returns `cost` tokens (work that turned out to be paid for, such as
+    /// a header whose proof of work was valid), never above `burst`.
+    pub fn credit(&mut self, cost: f64, now: Instant) {
+        self.refill(now);
+        self.tokens = (self.tokens + cost).min(self.burst);
     }
 
     /// Takes `cost` tokens if available.

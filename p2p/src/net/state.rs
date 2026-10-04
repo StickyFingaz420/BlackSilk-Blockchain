@@ -143,6 +143,16 @@ pub(super) struct Peer {
     /// the snapshot our `Version` came from, so a tip that changed during
     /// the handshake is announced once the peer is registered (RT-SYNC F-B).
     pub(super) announced: Hash,
+    /// The peer delivered a *live* new tip with valid proof of work: a
+    /// batch that stored new headers ending on our best header chain, not a
+    /// full batch, above our previous best header, with a recent timestamp
+    /// (the clock monitor's live-arrival condition plus the catch-up tip-age
+    /// bound, so identities cannot collect it in bulk during initial sync:
+    /// at most one per new tip of the network). Its later batches are
+    /// verified after outbound peers' and before untrusted ones, and are
+    /// not budgeted (`header_budget`, docs/p2p.md §6). A failed proof of work
+    /// still disconnects it.
+    pub(super) pow_proven: bool,
 }
 
 impl Peer {
@@ -313,6 +323,12 @@ pub(super) struct State {
     /// sender origin (`queue_key`). Bounded (docs/p2p.md §6).
     pub(super) header_queue_len: usize,
     pub(super) header_queue_origin: HashMap<NetAddr, usize>,
+    /// Of `header_queue_len`, the batches of untrusted inbound senders
+    /// (`header_budget::HeaderLane::Inbound`): at most `max_inbound`.
+    pub(super) header_queue_untrusted: usize,
+    /// The proof-of-work budget of untrusted header senders
+    /// (`header_budget`, docs/p2p.md §6).
+    pub(super) header_pow: super::header_budget::PowBudget,
     /// Transactions that failed a contextual rule at tip `ctx_rejects_tip`
     /// (not verified again until the tip changes; bounded).
     pub(super) ctx_rejects: HashSet<Hash>,
@@ -442,6 +458,13 @@ pub(super) struct HeaderBatch {
     pub(super) proxied: bool,
     /// An answer to our `GetHeaders` (not a tip announcement).
     pub(super) solicited: bool,
+    /// Its queue and budget (`header_budget::HeaderLane`), fixed when it
+    /// was queued.
+    pub(super) lane: super::header_budget::HeaderLane,
+    /// When it arrived (unix seconds): the live-tip age of
+    /// `Peer::pow_proven` is judged at arrival, not after the batch waited
+    /// for the budget (RT-HDRDOS2 R2-1).
+    pub(super) received: u64,
     pub(super) headers: Vec<BlockHeader>,
 }
 
@@ -460,6 +483,11 @@ pub(super) struct Inner {
     /// To the header worker (`header_worker`): batches are verified there, one
     /// at a time, never on a peer's read loop.
     pub(super) header_queue: mpsc::UnboundedSender<HeaderBatch>,
+    /// Wakes the header worker when a peer disconnects: its waiting
+    /// untrusted batch is released (pre-check only) at once, so it does not
+    /// hold queue room while the worker sleeps until the next token
+    /// (RT-HDRDOS2 R2-3).
+    pub(super) header_wake: Notify,
     /// To the block worker (`block_worker`): bodies are validated and
     /// connected there, never on a peer's read loop. Bounded by the peers'
     /// request windows plus `UNREQUESTED_QUEUE`.

@@ -245,7 +245,7 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                         && (p.height > header_height || p.headers_pending)
                         && p.headers_requested.is_none()
                         && !p.headers_busy
-                        && inner.header_queue_room(&st, &p.addr, p.proxied)
+                        && inner.header_queue_room(&st, p)
                 })
                 .map(|(id, _)| *id)
                 .collect()

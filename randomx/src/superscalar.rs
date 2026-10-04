@@ -115,7 +115,120 @@ pub(crate) struct SsProgram {
     pub(crate) address_register: usize,
 }
 
+/// The execution form of one SuperscalarHash instruction, decoded once per
+/// cache ([`SsProgram::compile`]): registers already reduced to `0..8`
+/// (indexed with `& 7`, so no bounds check survives), immediates already
+/// sign-extended, the shift of `IADD_RS` and the rotation of `IROR_C` already
+/// extracted, the three `C7/C8/C9` encodings of each constant op merged, and
+/// `IMUL_RCP` turned into a multiplication by its precomputed reciprocal.
+/// Executes exactly as [`SsProgram::execute`] (the reference semantics), as
+/// the `compiled_programs_execute_like_the_reference` test and the official
+/// vectors check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SsOp {
+    Sub { d: u8, s: u8 },
+    Xor { d: u8, s: u8 },
+    AddShift { d: u8, s: u8, shift: u8 },
+    Mul { d: u8, s: u8 },
+    Ror { d: u8, rot: u8 },
+    AddImm { d: u8, imm: u64 },
+    XorImm { d: u8, imm: u64 },
+    Mulh { d: u8, s: u8 },
+    Smulh { d: u8, s: u8 },
+    MulImm { d: u8, imm: u64 },
+}
+
+/// Runs compiled SuperscalarHash instructions on `r`.
+#[inline(always)]
+pub(crate) fn run(ops: &[SsOp], r: &mut [u64; 8]) {
+    for op in ops {
+        match *op {
+            SsOp::Mul { d, s } => {
+                let v = r[s as usize & 7];
+                let d = &mut r[d as usize & 7];
+                *d = d.wrapping_mul(v);
+            }
+            SsOp::AddShift { d, s, shift } => {
+                let v = r[s as usize & 7] << shift;
+                let d = &mut r[d as usize & 7];
+                *d = d.wrapping_add(v);
+            }
+            SsOp::Sub { d, s } => {
+                let v = r[s as usize & 7];
+                let d = &mut r[d as usize & 7];
+                *d = d.wrapping_sub(v);
+            }
+            SsOp::Xor { d, s } => {
+                let v = r[s as usize & 7];
+                r[d as usize & 7] ^= v;
+            }
+            SsOp::Ror { d, rot } => {
+                let d = &mut r[d as usize & 7];
+                *d = d.rotate_right(rot as u32);
+            }
+            SsOp::AddImm { d, imm } => {
+                let d = &mut r[d as usize & 7];
+                *d = d.wrapping_add(imm);
+            }
+            SsOp::XorImm { d, imm } => r[d as usize & 7] ^= imm,
+            SsOp::Mulh { d, s } => {
+                let v = r[s as usize & 7];
+                let d = &mut r[d as usize & 7];
+                *d = ((*d as u128 * v as u128) >> 64) as u64;
+            }
+            SsOp::Smulh { d, s } => {
+                let v = r[s as usize & 7];
+                let d = &mut r[d as usize & 7];
+                *d = ((*d as i64 as i128 * v as i64 as i128) >> 64) as u64;
+            }
+            SsOp::MulImm { d, imm } => {
+                let d = &mut r[d as usize & 7];
+                *d = d.wrapping_mul(imm);
+            }
+        }
+    }
+}
+
 impl SsProgram {
+    /// The program in execution form ([`SsOp`]). Generated registers are in
+    /// `0..8` (the generator draws them so), so the `& 7` of [`run`] never
+    /// changes one; this asserts it.
+    pub(crate) fn compile(&self) -> Vec<SsOp> {
+        self.instrs
+            .iter()
+            .map(|ins| {
+                assert!(
+                    ins.dst < 8 && ins.src < 8,
+                    "superscalar register out of range"
+                );
+                let (d, s) = (ins.dst, ins.src);
+                let imm = ins.imm32 as i32 as i64 as u64;
+                match ins.opcode {
+                    SsType::IsubR => SsOp::Sub { d, s },
+                    SsType::IxorR => SsOp::Xor { d, s },
+                    SsType::IaddRs => SsOp::AddShift {
+                        d,
+                        s,
+                        shift: (ins.mod_ >> 2) & 3,
+                    },
+                    SsType::ImulR => SsOp::Mul { d, s },
+                    SsType::IrorC => SsOp::Ror {
+                        d,
+                        rot: (ins.imm32 & 63) as u8,
+                    },
+                    SsType::IaddC7 | SsType::IaddC8 | SsType::IaddC9 => SsOp::AddImm { d, imm },
+                    SsType::IxorC7 | SsType::IxorC8 | SsType::IxorC9 => SsOp::XorImm { d, imm },
+                    SsType::ImulhR => SsOp::Mulh { d, s },
+                    SsType::IsmulhR => SsOp::Smulh { d, s },
+                    SsType::ImulRcp => SsOp::MulImm { d, imm: ins.rcp },
+                }
+            })
+            .collect()
+    }
+
+    /// The reference semantics of the program (spec 6.1), instruction by
+    /// instruction; the compiled form ([`run`]) is tested against it.
+    #[cfg(test)]
     pub(crate) fn execute(&self, r: &mut [u64; 8]) {
         for ins in &self.instrs {
             let d = ins.dst as usize;

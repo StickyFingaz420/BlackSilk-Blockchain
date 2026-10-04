@@ -68,6 +68,12 @@ impl TrickleKey {
         let local = local.map(|l| SocketAddr::new(l.ip().to_canonical(), l.port()));
         Self { class, local }
     }
+
+    /// The network the peer reached us through (the header proof-of-work
+    /// budget is kept per class, `header_budget`).
+    pub(super) fn class(&self) -> NetClass {
+        self.class
+    }
 }
 
 /// The shared inbound timers, one per [`TrickleKey`] in use, and the
