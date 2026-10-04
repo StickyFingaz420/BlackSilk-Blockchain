@@ -1487,3 +1487,28 @@ Every external citation was verified against its primary source (res-freeze.md �
   distribution from the wallet's own index (D1) removes node skew only for the scanned
   range; a restored wallet still takes older heights from the node unverified.
 - Docs drift found: STATUS.md still lists the TM2-P1 origin fix as open; it is merged.
+
+## RT5 F1 and F2 fixed (A-RT5, 2026-10-04)
+
+- **F1:** a request ended early (another announcer's answer, or the deadline) keeps its
+  peer's slot until that peer's answer, its `NotFound`, or the request's expiry. One late
+  copy is accepted per request (`take_late`), and the window counts from the expiry.
+  - The per-peer late memory, 192 = 16 × (300 + 30) / 30 + 16, is now a proven bound.
+    The tracker invariant asserts that nothing is ever pushed out.
+  - It also removes a reception-timing signal: the old instant slot refill showed a peer
+    a new `GetTx` the moment this node got the transaction elsewhere.
+  - Rejected: a memory sized to `PEER_TRACKED` (not a bound) and accepting any announced
+    `Tx` (drops the asked-only rule and gains nothing).
+- **F2:** RT-ART5 reproduced a 67.9 s outbound-honest delay under the first 8-place cap.
+  - **Decision: variant B.** Inbound candidates get 8 places; outbound (preferred)
+    announcers get a 9th reserved place. Copies of one id are capped at 9 (12 before).
+  - An outbound honest announcer is asked within 32 s whatever inbound attackers do
+    (29.9 s measured in the worst shape).
+  - Accepted fallback: inflated attackers among our own outbound peers can hold the
+    reserved place. The bound is 70 s once they have been asked (proven); 67.5 s is the
+    worst measured with 1, 2 or 4 of them.
+  - The inbound bound is unchanged for T ≤ 60 s. With attackers inflated to the largest
+    answer it is 2 s + max(30 s(1 + ⌈k/4⌉), T⌈k/8⌉): 786 s at k = 64 (tight). The
+    20-minute deadline holds it up to k = 96.
+- Rejected variant A (outbound exempt from the cap): copies grow with the number of
+  outbound announcers, about 17 at worst.

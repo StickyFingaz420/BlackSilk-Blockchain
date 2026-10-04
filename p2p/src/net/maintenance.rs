@@ -233,7 +233,7 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             // relay is best effort: a slow answer is asked of other
             // announcers but not penalized (peers answer `NotFound` when
             // they no longer have the transaction). The late answer is
-            // still accepted from the peer asked (`TxTracker::is_late`).
+            // still accepted from the peer asked (`TxTracker::take_late`).
             let mut out = Actions::default();
             st.tx_tracker.poll(now, &mut out);
             inner.apply_tx_actions(&mut st, out, now);
