@@ -1,8 +1,8 @@
 //! `blacksilk-tpgate`: the dependency-identity part of the third-party patch gate
-//! (`.github/scripts/third-party-gate.sh`, RT-TPGATE2).
+//! (`.github/scripts/third-party-gate.sh`, RT-TPGATE2, RT-TPGATE3).
 //!
 //! ```text
-//! blacksilk-tpgate <repo root> <workspace root>... [--standalone <crate dir>...]
+//! blacksilk-tpgate <repo root> <workspace root>... [--standalone <crate dir>...] [--config <file>...]
 //! ```
 //!
 //! For each workspace root (a directory with a tracked `Cargo.lock`) it reads
@@ -25,8 +25,22 @@
 //!    keys cargo writes (`version`, `package`; per package `name`, `version`,
 //!    `source`, `checksum`, `dependencies`).
 //!
+//! 6. (RT-TPGATE3) `[patch]` only in a workspace root manifest, only as
+//!    `[patch.crates-io]`, each entry exactly `{ path = ... }` resolving to
+//!    `third_party/<entry name>`; `[replace]` nowhere (every root and member
+//!    manifest, parsed as TOML);
+//! 7. (RT-TPGATE3) every `--config` file (`.cargo/config[.toml]`) holds only
+//!    `build.target` and `target.<triple>.rustflags`: no runner, linker,
+//!    rustc, wrappers, target-dir, env, alias, patch, paths, source or
+//!    registries. Their exact bytes are pinned by the gate script.
+//!
 //! Standalone path crates outside every workspace (`--standalone`, e.g.
 //! `zkvm/sdk`) count as members; each must have no dependency tables at all.
+//!
+//! `cargo metadata` runs with its working directory outside the repository
+//! (the system temporary directory), so no repository `.cargo/config` or
+//! `rust-toolchain` file is read. Configuration under `CARGO_HOME` still is;
+//! on CI that is the runner's clean one.
 //!
 //! Anything it cannot parse is an error (fail closed). Exit 0 when every rule
 //! holds, 1 with one line per violation, 2 on a usage or input error.
@@ -204,6 +218,22 @@ fn parse_standalone(text: &str) -> Result<(String, String), String> {
             ));
         }
     }
+    // No source or build code from elsewhere: [lib] may only name the crate,
+    // and the package may not declare a build script or native links.
+    if let Some(lib) = t.get("lib").and_then(|l| l.as_table()) {
+        if let Some(k) = lib.keys().find(|k| k.as_str() != "name") {
+            return Err(format!(
+                "standalone crate: lib.{k} is not allowed (only lib.name)"
+            ));
+        }
+    }
+    if let Some(pkg) = t.get("package").and_then(|p| p.as_table()) {
+        for k in ["build", "links", "workspace"] {
+            if pkg.contains_key(k) {
+                return Err(format!("standalone crate: package.{k} is not allowed"));
+            }
+        }
+    }
     parse_third_party(text)
 }
 
@@ -295,9 +325,167 @@ fn canonical(p: &Path) -> Result<PathBuf, String> {
     std::fs::canonicalize(p).map_err(|e| format!("{}: {e}", p.display()))
 }
 
-fn run(repo: &Path, roots: &[PathBuf], standalone: &[PathBuf]) -> Result<Vec<String>, String> {
+/// Rule 6: the `[patch]` and `[replace]` tables of a manifest. In a
+/// workspace root manifest (`is_root`) the only allowed form is
+/// `[patch.crates-io]` with entries `<name> = { path = "<...>" }` whose path
+/// (resolved by `resolve` from the manifest's directory) is
+/// `third_party/<name>`; any other manifest may have neither table.
+fn check_manifest_patch(
+    what: &str,
+    text: &str,
+    is_root: bool,
+    tp: &[ThirdParty],
+    resolve: &dyn Fn(&str) -> Result<PathBuf, String>,
+) -> Vec<String> {
+    let t: toml::Table = match text.parse() {
+        Ok(t) => t,
+        Err(e) => {
+            let e: toml::de::Error = e;
+            return vec![format!("{what}: not TOML: {e}")];
+        }
+    };
+    let mut errs = Vec::new();
+    if t.contains_key("replace") {
+        errs.push(format!("{what}: [replace] is not allowed"));
+    }
+    let Some(patch) = t.get("patch") else {
+        return errs;
+    };
+    if !is_root {
+        errs.push(format!("{what}: [patch] outside a workspace root manifest"));
+        return errs;
+    }
+    let Some(patch) = patch.as_table() else {
+        errs.push(format!("{what}: `patch` is not a table"));
+        return errs;
+    };
+    for (registry, entries) in patch {
+        if registry != "crates-io" {
+            errs.push(format!(
+                "{what}: [patch.{registry}]: only [patch.crates-io] is allowed"
+            ));
+            continue;
+        }
+        let Some(entries) = entries.as_table() else {
+            errs.push(format!("{what}: [patch.crates-io] is not a table"));
+            continue;
+        };
+        for (name, entry) in entries {
+            let at = format!("{what}: [patch.crates-io] {name}");
+            let path = entry
+                .as_table()
+                .filter(|e| e.len() == 1)
+                .and_then(|e| e.get("path"))
+                .and_then(|p| p.as_str());
+            let Some(path) = path else {
+                errs.push(format!(
+                    "{at}: must be exactly {{ path = \"<to root>third_party/{name}\" }}"
+                ));
+                continue;
+            };
+            let ok = match resolve(path) {
+                Ok(dir) => tp.iter().any(|t| &t.name == name && t.dir == dir),
+                Err(_) => false,
+            };
+            if !ok {
+                errs.push(format!("{at}: path {path} is not third_party/{name}"));
+            }
+        }
+    }
+    errs
+}
+
+/// Rule 7: a `.cargo/config[.toml]` may hold only `build.target` and
+/// `target.<triple>.rustflags`, nothing else (no patch, paths, source,
+/// registries, env, alias, runner, linker, rustc or wrapper, target-dir, ...).
+/// The exact contents are pinned separately (.github/cargo-config.sha256).
+fn check_config(what: &str, text: &str) -> Vec<String> {
+    let t: toml::Table = match text.parse() {
+        Ok(t) => t,
+        Err(e) => {
+            let e: toml::de::Error = e;
+            return vec![format!("{what}: not TOML: {e}")];
+        }
+    };
+    let mut errs = Vec::new();
+    for (k, v) in &t {
+        match (k.as_str(), v.as_table()) {
+            ("build", Some(b)) => {
+                for bk in b.keys() {
+                    if bk != "target" {
+                        errs.push(format!(
+                            "{what}: build.{bk} is not allowed (only build.target)"
+                        ));
+                    }
+                }
+            }
+            ("target", Some(targets)) => {
+                for (triple, tv) in targets {
+                    match tv.as_table() {
+                        Some(tt) => {
+                            for tk in tt.keys() {
+                                if tk != "rustflags" {
+                                    errs.push(format!(
+                                        "{what}: target.{triple}.{tk} is not allowed (only rustflags)"
+                                    ));
+                                }
+                            }
+                        }
+                        None => errs.push(format!("{what}: target.{triple} is not a table")),
+                    }
+                }
+            }
+            _ => errs.push(format!(
+                "{what}: `{k}` is not allowed (only build.target and target.<triple>.rustflags)"
+            )),
+        }
+    }
+    errs
+}
+
+/// The arguments: `<repo> <root>... [--standalone <dir>...] [--config <file>...]`.
+struct Args {
+    repo: PathBuf,
+    roots: Vec<PathBuf>,
+    standalone: Vec<PathBuf>,
+    configs: Vec<PathBuf>,
+}
+
+fn parse_args(args: &[String]) -> Result<Args, String> {
+    let (repo, rest) = args.split_first().ok_or("no repository root")?;
+    let repo = PathBuf::from(repo);
+    let (mut roots, mut standalone, mut configs) = (Vec::new(), Vec::new(), Vec::new());
+    let mut mode = 0;
+    for a in rest {
+        match a.as_str() {
+            "--standalone" => mode = 1,
+            "--config" => mode = 2,
+            s if s.starts_with("--") => return Err(format!("unknown option {s}")),
+            s => match mode {
+                0 => roots.push(repo.join(s)),
+                1 => standalone.push(repo.join(s)),
+                _ => configs.push(repo.join(s)),
+            },
+        }
+    }
+    if roots.is_empty() {
+        return Err("no workspace root".into());
+    }
+    Ok(Args {
+        repo,
+        roots,
+        standalone,
+        configs,
+    })
+}
+
+fn read(p: &Path) -> Result<String, String> {
+    std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+fn run(a: &Args) -> Result<Vec<String>, String> {
     let mut tp = Vec::new();
-    let third = repo.join("third_party");
+    let third = a.repo.join("third_party");
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&third)
         .map_err(|e| format!("{}: {e}", third.display()))?
         .map(|e| e.map(|e| e.path()).map_err(|e| e.to_string()))
@@ -308,21 +496,27 @@ fn run(repo: &Path, roots: &[PathBuf], standalone: &[PathBuf]) -> Result<Vec<Str
         if !manifest.is_file() {
             continue;
         }
-        let text = std::fs::read_to_string(&manifest)
+        let (name, version) = parse_third_party(&read(&manifest)?)
             .map_err(|e| format!("{}: {e}", manifest.display()))?;
-        let (name, version) =
-            parse_third_party(&text).map_err(|e| format!("{}: {e}", manifest.display()))?;
         tp.push(ThirdParty {
             name,
             version,
             dir: canonical(&dir)?,
         });
     }
+    // cargo runs outside the repository, so no repository .cargo/config or
+    // rust-toolchain file is read (RT-TPGATE3); --manifest-path names the
+    // workspace.
+    let cwd = std::env::temp_dir();
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let (mut members, mut deps, mut locks) = (Vec::new(), Vec::new(), Vec::new());
-    for root in roots {
+    let (mut members, mut deps, mut locks, mut errs) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut root_manifests = BTreeSet::new();
+    for root in &a.roots {
         let manifest = root.join("Cargo.toml");
+        root_manifests.insert(canonical(&manifest)?);
         let out = Command::new(&cargo)
+            .current_dir(&cwd)
             .args([
                 "metadata",
                 "--no-deps",
@@ -347,47 +541,58 @@ fn run(repo: &Path, roots: &[PathBuf], standalone: &[PathBuf]) -> Result<Vec<Str
         members.extend(m);
         deps.extend(d);
         let lock = root.join("Cargo.lock");
-        let text =
-            std::fs::read_to_string(&lock).map_err(|e| format!("{}: {e}", lock.display()))?;
-        locks.push((lock.display().to_string(), parse_lock(&text)?));
+        locks.push((lock.display().to_string(), parse_lock(&read(&lock)?)?));
     }
-    for dir in standalone {
+    for dir in &a.standalone {
         let manifest = dir.join("Cargo.toml");
-        let text = std::fs::read_to_string(&manifest)
+        let (name, version) = parse_standalone(&read(&manifest)?)
             .map_err(|e| format!("{}: {e}", manifest.display()))?;
-        let (name, version) =
-            parse_standalone(&text).map_err(|e| format!("{}: {e}", manifest.display()))?;
         members.push(Member {
             name,
             version,
             dir: canonical(dir)?,
         });
     }
-    Ok(check(&tp, &members, &deps, &locks))
+    // [patch] and [replace] in every root and member manifest.
+    let mut manifests: BTreeSet<PathBuf> = root_manifests.clone();
+    for m in &members {
+        manifests.insert(canonical(&m.dir.join("Cargo.toml"))?);
+    }
+    for manifest in &manifests {
+        let dir = manifest.parent().unwrap_or(Path::new("/")).to_path_buf();
+        let resolve = |p: &str| canonical(&dir.join(p));
+        errs.extend(check_manifest_patch(
+            &manifest.display().to_string(),
+            &read(manifest)?,
+            root_manifests.contains(manifest),
+            &tp,
+            &resolve,
+        ));
+    }
+    for config in &a.configs {
+        errs.extend(check_config(&config.display().to_string(), &read(config)?));
+    }
+    errs.extend(check(&tp, &members, &deps, &locks));
+    Ok(errs)
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() < 2 {
-        eprintln!(
-            "usage: blacksilk-tpgate <repo root> <workspace root>... [--standalone <crate dir>...]"
-        );
-        return ExitCode::from(2);
-    }
-    let repo = PathBuf::from(&args[0]);
-    let split = args
-        .iter()
-        .position(|a| a == "--standalone")
-        .unwrap_or(args.len());
-    let roots: Vec<PathBuf> = args[1..split].iter().map(|r| repo.join(r)).collect();
-    let standalone: Vec<PathBuf> = args[split..].iter().skip(1).map(|r| repo.join(r)).collect();
-    if roots.is_empty() {
-        eprintln!("blacksilk-tpgate: no workspace root");
-        return ExitCode::from(2);
-    }
-    match run(&repo, &roots, &standalone) {
+    let a = match parse_args(&args) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("blacksilk-tpgate: {e}");
+            eprintln!("usage: blacksilk-tpgate <repo root> <workspace root>... [--standalone <crate dir>...] [--config <file>...]");
+            return ExitCode::from(2);
+        }
+    };
+    match run(&a) {
         Ok(errs) if errs.is_empty() => {
-            println!("blacksilk-tpgate: {} workspaces, every crate is a member, third_party/ or crates.io", roots.len());
+            println!(
+                "blacksilk-tpgate: {} workspaces, {} cargo configs: every crate is a member, third_party/ or crates.io",
+                a.roots.len(),
+                a.configs.len()
+            );
             ExitCode::SUCCESS
         }
         Ok(errs) => {
@@ -593,6 +798,13 @@ version = \"0.1.0\"
 name = \"x\"
 ";
         assert!(parse_standalone(ok).is_ok());
+        let lib_path = ok.replace("[lib]\n", "[lib]\npath = \"../../evil.rs\"\n");
+        assert!(parse_standalone(&lib_path).is_err());
+        let build = ok.replace(
+            "version = \"0.1.0\"\n",
+            "version = \"0.1.0\"\nbuild = \"b.rs\"\n",
+        );
+        assert!(parse_standalone(&build).is_err());
         assert!(parse_standalone(&format!(
             "{ok}[dependencies]
 evil = {{ path = \"../e\" }}
@@ -621,5 +833,74 @@ evil = \"1\"
             "p3-fri"
         );
         assert!(parse_third_party("[lib]\nname = \"x\"\n").is_err());
+    }
+
+    fn resolver(p: &str) -> Result<PathBuf, String> {
+        match p {
+            "third_party/p3-fri" | "../third_party/p3-fri" => Ok("/r/third_party/p3-fri".into()),
+            "vendor/p3-fri" => Ok("/r/vendor/p3-fri".into()),
+            _ => Err("missing".into()),
+        }
+    }
+
+    #[test]
+    fn root_patch_tables_must_be_canonical() {
+        let ok = "[workspace]\n[patch.crates-io]\np3-fri = { path = \"third_party/p3-fri\" }\n";
+        assert!(check_manifest_patch("m", ok, true, &tp(), &resolver).is_empty());
+        // Spacing and quoting do not matter to a TOML parser.
+        let spaced = "[workspace]\n[ patch . \"crates-io\" ]\n\"p3-fri\" = { path = \"third_party/p3-fri\" }\n";
+        assert!(check_manifest_patch("m", spaced, true, &tp(), &resolver).is_empty());
+        for bad in [
+            "[patch.crates-io]\np3-fri = { path = \"vendor/p3-fri\" }\n",
+            "[patch.crates-io]\np3-fri = { git = \"https://x\" }\n",
+            "[patch.crates-io]\np3-fri = { path = \"third_party/p3-fri\", package = \"x\" }\n",
+            "[patch.crates-io]\np3-dft = { path = \"third_party/p3-fri\" }\n",
+            "[patch.\"https://github.com/x/y\"]\np3-fri = { path = \"third_party/p3-fri\" }\n",
+            "patch.crates-io.p3-fri.path = \"vendor/p3-fri\"\n",
+            "\"\\u0070atch\".crates-io.p3-fri.path = \"vendor/p3-fri\"\n",
+            "[replace]\n\"p3-fri:0.7.0\" = { path = \"vendor/p3-fri\" }\n",
+            "[patch\n",
+        ] {
+            assert!(
+                !check_manifest_patch("m", bad, true, &tp(), &resolver).is_empty(),
+                "{bad}"
+            );
+        }
+        assert!(!check_manifest_patch("m", ok, false, &tp(), &resolver).is_empty());
+    }
+
+    #[test]
+    fn cargo_configs_hold_only_target_and_rustflags() {
+        let ok = "[build]\ntarget = \"riscv32i-unknown-none-elf\"\n[target.x]\nrustflags = [\"-C\", \"a\"]\n";
+        assert!(check_config("c", ok).is_empty());
+        for bad in [
+            "[build]\nrustc-wrapper = \"evil\"\n",
+            "[build]\nrustc = \"evil\"\n",
+            "[build]\ntarget-dir = \"x\"\n",
+            "[target.x]\nrunner = \"evil\"\n",
+            "[target.x]\nlinker = \"evil\"\n",
+            "[env]\nX = \"1\"\n",
+            "[alias]\nb = \"run\"\n",
+            "paths = [\"x\"]\n",
+            "[source.crates-io]\nreplace-with = \"v\"\n",
+            "[patch.crates-io]\np3-fri = { path = \"third_party/p3-fri\" }\n",
+            "[registries.x]\nindex = \"y\"\n",
+            "build.rustc-workspace-wrapper = \"evil\"\n",
+            "not toml [",
+        ] {
+            assert!(!check_config("c", bad).is_empty(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn arguments() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let a = parse_args(&s(&["/r", ".", "--standalone", "s", "--config", "c"])).unwrap();
+        assert_eq!(
+            (a.roots.len(), a.standalone.len(), a.configs.len()),
+            (1, 1, 1)
+        );
+        assert!(parse_args(&s(&["/r"])).is_err());
+        assert!(parse_args(&s(&["/r", ".", "--x"])).is_err());
     }
 }

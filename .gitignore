@@ -68,6 +68,9 @@ Icon?
 # workspaces (decision D22 "D-freeze"; contracts/README.md).
 !/contracts/Cargo.lock
 !/contracts/fuzz/Cargo.lock
+# The third-party gate's checker, built from a trusted revision (RT-TPGATE3).
+!/tools/tpgate/Cargo.lock
+/tools/tpgate/target/
 
 # Claude Code local state and agent worktrees
 .claude/

@@ -4,7 +4,7 @@ These are copies of published crates with a minimal, reviewed change, used throu
 `[patch.crates-io]` in the workspace `Cargo.toml`. Each entry records what changed, why,
 and when to remove it.
 
-## CI check: published crate + allow-listed diff (RT-PXDET finding 1, RT-TPGATE, RT-TPGATE2)
+## CI check: published crate + allow-listed diff (RT-PXDET finding 1, RT-TPGATE, RT-TPGATE2, RT-TPGATE3)
 
 `.github/scripts/third-party-gate.sh` (CI job `gates`) checks every crate directory
 here (a directory with a `Cargo.toml`) against what it claims to be:
@@ -33,52 +33,89 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
     `concat!` of path pieces, for example). Review is what catches those.
   - No current patch trips the lint.
 - Control bytes: every tracked file under `third_party/` (patches and pins included)
-  must be free of NUL and the other control bytes (DEL too) except TAB, LF and CR. With a NUL
-  in its first 8,000 bytes, git and GitHub show a file and its patch only as "Bin".
+  must be free of NUL and the other control bytes (DEL too) except TAB, LF and CR.
+  With a NUL in its first 8,000 bytes, git and GitHub show a file and its patch only
+  as "Bin".
   - The exceptions are the files named in `BINARY-ALLOWLIST`, each with its reason;
     adding one is a reviewed change.
-  - An allow-listed file must be unchanged from the published crate, or its bytes
-    reach the patch file, which may not contain them.
-  - `.gitattributes` sets `third_party/** diff`, so every change shows as text.
+  - An allow-listed file must lie in a crate directory (not `patches/`, `upstream/`
+    or the top level), and its sha256 must equal the copy in the published crate.
+    The allow-list admits only upstream's own, unchanged binary files.
+- Attributes: `git check-attr diff` must be `set` for every tracked file here except
+  `BINARY-ALLOWLIST` entries. The root `.gitattributes` sets `third_party/** diff`,
+  so every change shows as text. No `.gitattributes` may lie inside `third_party/`,
+  and every `.gitattributes` is a consensus path.
 - Stale entries fail: a patch, manifest, pin or binary entry without its file.
-- Dependency identity, by `tools/tpgate` (Rust, built from this checkout; it uses
-  only crates already in `Cargo.lock` and fails closed on anything it cannot parse):
+- Dependency identity, by `tools/tpgate` (Rust; its own workspace and `Cargo.lock`,
+  using only crates the root lockfile already has; it fails closed on anything it
+  cannot parse):
   - It runs `cargo metadata --no-deps --offline` for every tracked `Cargo.lock`'s
-    workspace (root, `fuzz/`, `contracts/`, `contracts/fuzz/`, `zkvm/guests/`). That
-    gives cargo's own list of members and their declared dependencies, with renames
-    and paths. It also parses each `Cargo.lock` as TOML.
+    workspace (root, `fuzz/`, `contracts/`, `contracts/fuzz/`, `zkvm/guests/`,
+    `tools/tpgate/`). That gives cargo's own list of members and their declared
+    dependencies, with renames and paths. It also parses each `Cargo.lock` as TOML.
   - No member is named like a crate here.
   - Every path dependency is one of: a member (of any workspace), a standalone crate
-    in the gate's `STANDALONE` list (today `zkvm/sdk`, which may have no
-    dependencies), or `third_party/<its own name>`.
+    in the gate's `STANDALONE` list (today `zkvm/sdk`; it may have no dependencies,
+    build script or `[lib]` path), or `third_party/<its own name>`.
   - No crate here is aliased by a rename.
   - Every source is crates.io.
   - Every sourceless `Cargo.lock` entry is a member or a crate here.
   - No workspace locks a patched version from the registry.
-  - The gate sets `RUSTUP_TOOLCHAIN` (default `stable`; CI uses 1.98.1), so
-    `zkvm/guests`' pinned toolchain is never installed for this.
-- Cargo files: in every tracked `Cargo.toml` and `.cargo/config[.toml]`, no table or
-  key starting with `patch`, `replace`, `paths` or `source` (configs also
-  `registries`, `registry`), however quoted, spaced or dotted. The only exception is
-  a workspace root's exact `[patch.crates-io]`, whose entries must each be
+  - `[patch]` and `[replace]`, parsed as TOML in every root and member manifest:
+    `[patch.crates-io]` only in a workspace root manifest, with each entry exactly
+    `{ path = ... }` resolving to `third_party/<entry name>`. `[replace]` is not
+    allowed anywhere.
+  - Every tracked `.cargo/config[.toml]`, parsed as TOML, may hold only
+    `build.target` and `target.<triple>.rustflags`. That rules out runner, linker,
+    rustc and its wrappers, target-dir, env, alias, patch, paths, source and
+    registries. The exact bytes of each config are pinned in
+    `.github/cargo-config.sha256` (a consensus path), so any change fails until the
+    pin is updated.
+  - The checker is built and run, and runs `cargo metadata`, with its working
+    directory outside the repository and `--manifest-path`. So no repository
+    `.cargo/config` or `rust-toolchain` file is read. `RUSTUP_TOOLCHAIN` defaults to
+    `stable`; CI uses 1.98.1. Configuration under `CARGO_HOME` is still read; on CI
+    that is the runner's clean one, on a developer machine it is the developer's.
+- Cargo files, a second textual layer: in every tracked `Cargo.toml` and
+  `.cargo/config[.toml]`, no table or key starting with `patch`, `replace`, `paths`
+  or `source`, however quoted, spaced or dotted. Configs also may not start with
+  `registries`, `registry`, `env` or `alias`, nor end in `runner`, `linker`,
+  `target-dir`, `rustc*` or `rustdoc*`. The only exception is a workspace root's
+  exact `[patch.crates-io]`, whose entries must each be
   `<name> = { path = "<to root>third_party/<name>" }`.
+- Trust: in CI, the gate scripts, `tools/tpgate` and the waiver files come from a
+  trusted revision. That is the pull request's base, or the push's previous head
+  (for a new branch, its merge base with rebuild/core). They are extracted outside
+  the checkout and run against it (`.github/workflows/ci.yml`, job `gates`).
+  - A commit that changes a gate is judged by the old gate. The new gate applies
+    from the next commit.
+  - Bootstrap: if the trusted revision has no third-party gate or standalone
+    `tools/tpgate` yet, the commit's own copies run, with a warning.
+  - The allow-lists, pins and patches are read from the commit under test. They are
+    reviewed data, not gate code.
+  - The workflow file itself comes from the commit under test. It is a consensus
+    path, so a change to it needs a `Consensus-Change:` trailer and review.
 - `--selftest` runs tampered fixtures and expects each to fail. It also expects
-  clean fixtures to pass, and an allow-listed binary file to pass the byte check.
-  The tampered fixtures:
+  clean fixtures to pass, and allow-listed files that are binary, or unchanged from
+  the published crate, to pass. The tampered fixtures:
   - edits: an edit, a CRLF conversion, a mode change, an allow-listed NUL file
     edited again;
   - files: added, removed, untracked or unstaged files, a re-added packaging file;
   - allow-list: a wrong pin, a missing or stale patch or manifest, a stale binary
-    entry;
+    entry, a binary entry that differs from the published crate or lies in
+    `patches/` or `upstream/`;
+  - attributes: a `.gitattributes` inside `third_party/`, a root `-diff` line;
   - control bytes in a source file, a patch file or the README;
   - lint: `include_str!` and `include_str !`, a `cfg_attr` path, a `".."`, an added
     `build.rs`, a `build =` key;
   - identity: a git source, another registry, an unknown path crate, a registry copy
     of a patched crate, a member named like a patched crate (written without
     spaces), a renamed path copy, a path dependency outside every workspace;
-  - cargo files: the `[patch]`, `[replace]`, `paths` and `[source]` spellings above.
-  - `tools/tpgate` has its own unit tests
-    (`cargo test -p blacksilk-tpgate`).
+  - cargo files: the `[patch]`, `[replace]`, `paths` and `[source]` spellings above,
+    and configs with a runner, rustc-wrapper, linker, env or target-dir;
+  - config pins: a changed and an unpinned config.
+  - `tools/tpgate` has its own unit tests:
+    `cargo test --manifest-path tools/tpgate/Cargo.toml`.
 
 The patch files apply with `patch -p1` inside an unpacked published crate. To
 change a patched crate: make the change and stage it (`git add`), then run

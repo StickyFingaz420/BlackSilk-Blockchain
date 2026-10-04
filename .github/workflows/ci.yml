@@ -337,7 +337,7 @@ jobs:
   # Commit gates (F48-3, decisions "Agent 48"), over the commits this event
   # adds after the cut-over commit in .github/scripts/gate-range.sh:
   # - commits touching consensus paths carry a Consensus-Change: trailer;
-  # - commits changing Cargo.lock or fuzz/Cargo.lock name the crates they add,
+  # - commits changing any Cargo.lock name the crates they add,
   #   re-version or re-source (a registry crate swapped for a path or git copy);
   # - every third_party/ crate is the published crate plus its allow-listed
   #   patch and file manifest (third_party/patches/, pins in
@@ -348,7 +348,7 @@ jobs:
   gates:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       GATE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       GATE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -358,30 +358,68 @@ jobs:
           persist-credentials: false
           # The gates walk the history back to the cut-over commit.
           fetch-depth: 0
-      - name: Consensus-path trailer gate (self-test first)
+      # RT-TPGATE3: the verdicts come from the gate code of a TRUSTED revision,
+      # not from the commit under test: the pull request's base, or the
+      # push's previous head (for a new branch, its merge base with
+      # rebuild/core). The trusted copy of .github/scripts/, the waiver files
+      # and tools/tpgate is extracted outside the checkout and run against it.
+      # A commit that changes a gate is judged by the old gate; the new one
+      # applies from the next commit. Bootstrap: when the trusted revision has
+      # no third-party gate or standalone tools/tpgate yet, this commit's own
+      # copies run, with a warning. (This workflow file itself comes from the
+      # commit under test; it is a consensus path, so its changes need review.)
+      - name: Trusted gate copy
         run: |
-          bash .github/scripts/consensus-gate.sh --selftest
-          bash .github/scripts/consensus-gate.sh "$GATE_BASE" "$GATE_HEAD"
-      - name: Lockfile-diff gate
-        if: success() || failure()
-        run: |
-          bash .github/scripts/lockfile-gate.sh --selftest
-          bash .github/scripts/lockfile-gate.sh "$GATE_BASE" "$GATE_HEAD"
-      # RT-PXDET finding 1, RT-TPGATE/2: third_party/ = published crate +
-      # reviewed diff, and every crate resolves to a member, third_party/ or
-      # crates.io. Downloads the pristine crates from static.crates.io and
-      # builds tools/tpgate (cargo metadata runs --no-deps --offline).
+          t="$RUNNER_TEMP/trusted-gates"
+          mkdir -p "$t"
+          ref=""
+          if [ -n "$GATE_BASE" ] && [ -n "${GATE_BASE//0/}" ] && git cat-file -e "$GATE_BASE^{commit}" 2>/dev/null; then
+            ref="$GATE_BASE"
+          else
+            ref="$(git merge-base "$GATE_HEAD" origin/rebuild/core 2>/dev/null || true)"
+            if [ "$ref" = "$(git rev-parse "$GATE_HEAD")" ]; then ref="$(git rev-parse -q --verify "$GATE_HEAD^" || true)"; fi
+          fi
+          paths=(.github/scripts .github/consensus-gate-waivers.txt .github/lockfile-gate-waivers.txt tools/tpgate)
+          if [ -n "$ref" ] && git cat-file -e "$ref:.github/scripts/third-party-gate.sh" 2>/dev/null &&
+            git cat-file -e "$ref:tools/tpgate/Cargo.lock" 2>/dev/null; then
+            src="$ref"
+            echo "Trusted gate copy from $ref"
+          else
+            src="$GATE_HEAD"
+            echo "::warning title=Gate bootstrap::the trusted revision ${ref:-(none)} has no third-party gate or standalone tools/tpgate; this commit's own gate copies run (they are trusted from the next commit on)"
+          fi
+          for p in "${paths[@]}"; do
+            if git cat-file -e "$src:$p" 2>/dev/null; then git archive "$src" -- "$p" | tar -x -C "$t"; fi
+          done
+          echo "TRUSTED=$t" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        if: success() || failure()
         with:
           toolchain: "1.98.1"
-      - name: Third-party patch gate (self-test first)
-        if: success() || failure()
+      # Self-tests run this commit's copies (they test the code under
+      # review); the verdicts below run the trusted copies.
+      - name: Gate self-tests (this commit's code)
         env:
           RUSTUP_TOOLCHAIN: "1.98.1"
         run: |
+          bash .github/scripts/consensus-gate.sh --selftest
+          bash .github/scripts/lockfile-gate.sh --selftest
           bash .github/scripts/third-party-gate.sh --selftest
-          bash .github/scripts/third-party-gate.sh
+          cd "$RUNNER_TEMP" && cargo test --locked --manifest-path "$GITHUB_WORKSPACE/tools/tpgate/Cargo.toml"
+      - name: Consensus-path trailer gate (trusted)
+        if: success() || failure()
+        run: bash "$TRUSTED/.github/scripts/consensus-gate.sh" "$GATE_BASE" "$GATE_HEAD"
+      - name: Lockfile-diff gate (trusted)
+        if: success() || failure()
+        run: bash "$TRUSTED/.github/scripts/lockfile-gate.sh" "$GATE_BASE" "$GATE_HEAD"
+      # RT-PXDET finding 1, RT-TPGATE/2/3: third_party/ = published crate +
+      # reviewed diff, and every crate resolves to a member, third_party/ or
+      # crates.io. Downloads the pristine crates from static.crates.io and
+      # builds the trusted tools/tpgate outside the checkout.
+      - name: Third-party patch gate (trusted)
+        if: success() || failure()
+        env:
+          RUSTUP_TOOLCHAIN: "1.98.1"
+        run: bash "$TRUSTED/.github/scripts/third-party-gate.sh"
       - name: Invisible and bidirectional Unicode scan
         if: success() || failure()
         run: bash .github/scripts/unicode-scan.sh

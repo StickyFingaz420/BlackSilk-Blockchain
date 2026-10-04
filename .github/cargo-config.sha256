@@ -1,0 +1,5 @@
+# sha256 of every tracked cargo configuration file (committed bytes), checked by
+# .github/scripts/third-party-gate.sh: a changed or new .cargo/config fails
+# until this pin is updated (a reviewed change; a consensus path).
+8614f82c3ee7c1498c55ce6a01b3a00d1859860ee1488c58ce634ae99f424c2a  .cargo/config.toml
+af803fe127249b67a18b045576eade7f00563ed1df852c05ae848f87367066bc  zkvm/guests/.cargo/config.toml

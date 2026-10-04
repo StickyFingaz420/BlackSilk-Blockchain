@@ -37,7 +37,9 @@ source "$here/gate-range.sh"
 # that touch them are in the waiver file too. RT-TPGATE2 added the CI
 # workflows, the release and guest build scripts, the Dockerfile, the
 # lockfile waiver file and tools/tpgate (waived likewise, and only within the
-# waiver horizon, gate-range.sh).
+# waiver horizon, gate-range.sh). RT-TPGATE3 added every .gitattributes (it
+# decides how git and GitHub show third_party/ changes) and the cargo
+# configuration pins.
 is_consensus_path() {
   case "$1" in
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
@@ -53,6 +55,7 @@ is_consensus_path() {
     .github/scripts/lockfile-gate.sh | .github/scripts/third-party-gate.sh) return 0 ;;
     .github/consensus-gate-waivers.txt | .github/lockfile-gate-waivers.txt) return 0 ;;
     .cargo/* | */.cargo/* | tools/tpgate/*) return 0 ;;
+    .gitattributes | */.gitattributes | .github/cargo-config.sha256) return 0 ;;
     .github/workflows/* | tools/release-build.sh | deploy/docker/Dockerfile) return 0 ;;
     zkvm/guests/build.sh | zkvm/guests/reproduce.sh | .github/scripts/guests-reproduce.sh) return 0 ;;
   esac

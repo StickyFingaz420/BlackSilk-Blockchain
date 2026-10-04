@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Third-party patch gate (RT-PXDET finding 1, hardened after RT-TPGATE).
+# Third-party patch gate (RT-PXDET finding 1; hardened after RT-TPGATE, RT-TPGATE2, RT-TPGATE3).
 #
 # Every crate directory under third_party/ (a directory with a Cargo.toml) is a
 # patched copy of a published crate, used through [patch.crates-io]. This gate
@@ -30,9 +30,14 @@
 #      attribute or `path =` key, a `..` path segment or a build/proc-macro/
 #      links key. The lint is a reviewer aid, not a guarantee;
 #   8. every tracked file under third_party/ (patches and pins included) has
-#      no NUL or other control byte (DEL too) except TAB, LF and CR, so git and GitHub
-#      always show its changes as text; except the files
-#      third_party/BINARY-ALLOWLIST names with a reason.
+#      no NUL or other control byte (DEL too) except TAB, LF and CR, so git
+#      and GitHub always show its changes as text; except the files
+#      third_party/BINARY-ALLOWLIST names with a reason, which must lie in a
+#      crate directory (not patches/, upstream/ or the top level) and have
+#      the same sha256 as in the published crate (RT-TPGATE3);
+#   9. `git check-attr diff` is `set` for every tracked file under
+#      third_party/ except BINARY-ALLOWLIST entries, and no .gitattributes
+#      lies inside third_party/ (RT-TPGATE3).
 #   Stale allow-list entries (a patch, manifest, pin or binary entry without
 #   its file) fail.
 #
@@ -44,21 +49,36 @@
 #    STANDALONE below (no dependencies allowed) or third_party/<its name>; no
 #    third_party/ crate is aliased by a rename; every source is crates.io;
 #    every sourceless Cargo.lock entry is a member or third_party/ crate; no
-#    workspace locks a patched version from the registry.
+#    workspace locks a patched version from the registry. It also parses the
+#    [patch] and [replace] tables of every root and member manifest (only a
+#    root's [patch.crates-io] with `{ path = third_party/<name> }` entries)
+#    and every tracked .cargo/config (only build.target and
+#    target.<triple>.rustflags). The exact bytes of every tracked
+#    .cargo/config are pinned in .github/cargo-config.sha256.
 #
-# C. Cargo files (every tracked Cargo.toml and .cargo/config[.toml]), with
-#    comments and multi-line strings skipped and quotes and spaces removed from
-#    table headers and keys:
+# C. A second, textual layer over every tracked Cargo.toml and
+#    .cargo/config[.toml], with comments and multi-line strings skipped and
+#    quotes and spaces removed from table headers and keys:
 #   - no table header or key starting with patch, replace, paths or source
-#     (configs also: registries, registry), except, in a workspace root
-#     manifest (a Cargo.toml next to a tracked Cargo.lock), the exact header
-#     `[patch.crates-io]` whose every entry is
+#     (configs also: registries, registry, env, alias, and no key ending in
+#     runner, linker, target-dir, rustc* or rustdoc*), except, in a workspace
+#     root manifest (a Cargo.toml next to a tracked Cargo.lock), the exact
+#     header `[patch.crates-io]` whose every entry is
 #     `<name> = { path = "<to repo root>third_party/<name>" }`;
 #   - no escape sequence (backslash) in a header or key.
-#   Cargo honours [patch] and [paths]/[source] only in these places, so a
-#   crate cannot be redirected anywhere else from the repository. (Cargo
-#   configuration outside the checkout, environment variables and --config
-#   flags are outside this gate: CI's workflow is reviewed on its own.)
+#   Within the repository these are the places where cargo reads [patch],
+#   [replace], [paths] and [source]. Cargo configuration outside the
+#   checkout (CARGO_HOME, parent directories), environment variables and
+#   --config flags are outside this gate.
+#
+# Trust (RT-TPGATE3): in CI this script, tools/tpgate and the waiver files
+# run from a trusted revision (the base of the pull request, or the push's
+# previous head), extracted outside the checkout and run against it
+# (.github/workflows/ci.yml, job gates). A commit that changes the gate is
+# judged by the old gate; the new gate applies from the next commit. When
+# the trusted revision has no gate yet (bootstrap), the commit's own copy
+# runs with a warning. The allow-lists, pins and patches are read from the
+# commit under test: they are reviewed data, not gate code.
 #
 # The allow-list certifies itself: a commit may change a third_party/ crate
 # and regenerate its patch and manifest together. The gate makes every such
@@ -93,6 +113,7 @@ annotate() {
   printf '%s\n%s\n' "$1" "$2" >&2
 }
 
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -236,10 +257,16 @@ check_bytes() {
       annotate "third-party gate: stale BINARY-ALLOWLIST entry" "third_party/BINARY-ALLOWLIST names $path, which is not a tracked file."
       bad=1
     }
-    case "$path" in third_party/*/*) ;; *)
-      annotate "third-party gate: BINARY-ALLOWLIST outside a crate" "$path: only files inside a third_party/<crate>/ directory may be binary."
-      bad=1 ;;
+    local c="${path#third_party/}"; c="${c%%/*}"
+    case "$path" in
+      third_party/patches/* | third_party/upstream/*) c="" ;;
+      third_party/*/*) [ -f "$root/third_party/$c/Cargo.toml" ] || c="" ;;
+      *) c="" ;;
     esac
+    if [ -z "$c" ]; then
+      annotate "third-party gate: BINARY-ALLOWLIST outside a crate" "$path: only files inside a third_party/<crate>/ directory (not patches/, upstream/ or top-level files) may be binary."
+      bad=1
+    fi
   done < "$WORK/binary-allow"
   while IFS=$'\t' read -r meta path; do
     read -r _ sha _ <<< "$meta"
@@ -253,11 +280,35 @@ check_bytes() {
   return "$bad"
 }
 
+# binary_pristine ROOT CRATE: every BINARY-ALLOWLIST file of CRATE has the
+# same bytes as in the published crate (unpacked by crate_diff), so the
+# allow-list can only admit upstream's own binary files.
+binary_pristine() {
+  local root="$1" crate="$2" path rel want got bad=0
+  while IFS= read -r path; do
+    case "$path" in "third_party/$crate/"*) ;; *) continue ;; esac
+    rel="${path#third_party/"$crate"/}"
+    got="$(git -C "$root" cat-file blob ":$path" | sha256sum | cut -d' ' -f1)"
+    if [ -f "$WORK/diff-$crate/a/$rel" ]; then
+      want="$(sha256sum < "$WORK/diff-$crate/a/$rel" | cut -d' ' -f1)"
+    else
+      want="(not in the published crate)"
+    fi
+    if [ "$got" != "$want" ]; then
+      annotate "third-party gate: allow-listed binary differs from the published crate" \
+        "$path has sha256 $got; the published crate's copy: $want. BINARY-ALLOWLIST admits only upstream's unchanged files."
+      bad=1
+    fi
+  done < "$WORK/binary-allow"
+  return "$bad"
+}
+
 # check_tree ROOT: section A. 0 when every crate matches its allow-list.
 check_tree() {
   local root="$1" tp="$1/third_party" bad=0 crate exp act first n p line dirty
   [ -f "$tp/PRISTINE.sha256" ] || { annotate "third-party gate: no PRISTINE.sha256" "third_party/PRISTINE.sha256 is missing."; return 1; }
   check_bytes "$root" || bad=1
+  check_attributes "$root" || bad=1
   n=0
   for crate in $(crates "$root"); do
     n=$((n + 1))
@@ -287,6 +338,7 @@ check_tree() {
     fi
     act="$WORK/$crate.actual"
     crate_diff "$root" "$crate" "$act" || { bad=1; continue; }
+    binary_pristine "$root" "$crate" || { bad=1; continue; }
     tr -d '\r' < "$exp" > "$WORK/$crate.expected"
     if ! cmp -s "$WORK/$crate.expected" "$act"; then
       line="$(diff -a "$WORK/$crate.expected" "$act" | head -1 || true)"
@@ -333,26 +385,47 @@ check_tree() {
 # list is a reviewed change of the gate.
 STANDALONE=(zkvm/sdk)
 
-# check_identity ROOT: section B, by tools/tpgate (cargo metadata + Cargo.lock,
-# parsed as TOML and JSON, fail closed). Built from this checkout; cargo
-# metadata runs --no-deps --offline. RUSTUP_TOOLCHAIN defaults to the
-# installed stable so zkvm/guests' pinned toolchain is never installed.
+# The checker: tools/tpgate next to this script (in CI, the trusted copy, not
+# the checkout under test). Built and run with the working directory outside
+# any repository, so no repository .cargo/config or rust-toolchain file is
+# read; RUSTUP_TOOLCHAIN defaults to the installed stable.
+TPGATE_DIR="${TPGATE_DIR:-$(cd "$here/../.." && pwd)/tools/tpgate}"
+TPGATE_BIN=""
+
+tpgate_build() {
+  [ -z "$TPGATE_BIN" ] || return 0
+  [ -f "$TPGATE_DIR/Cargo.toml" ] && [ -f "$TPGATE_DIR/Cargo.lock" ] ||
+    { annotate "third-party gate: no checker" "$TPGATE_DIR has no standalone tools/tpgate (Cargo.toml and Cargo.lock)."; return 1; }
+  local td="${TPGATE_TARGET_DIR:-$(dirname "$WORK")/blacksilk-tpgate-target}" out
+  out="$(cd "$WORK" && RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}" \
+    cargo build -q --locked --manifest-path "$TPGATE_DIR/Cargo.toml" --target-dir "$td" 2>&1)" ||
+    { annotate "third-party gate: building tools/tpgate failed" "$out"; return 1; }
+  TPGATE_BIN="$td/debug/blacksilk-tpgate"
+  [ -f "$TPGATE_BIN" ] || TPGATE_BIN="$TPGATE_BIN.exe"
+}
+
+# cargo_configs ROOT: the tracked cargo configuration files.
+cargo_configs() {
+  git -C "$1" -c core.quotepath=false ls-files -- '.cargo/config' '.cargo/config.toml' \
+    '*/.cargo/config' '*/.cargo/config.toml'
+}
+
+# check_identity ROOT: section B, by tools/tpgate.
 check_identity() {
-  local root="$1" here_root out rc lock
-  local -a roots=()
-  here_root="$(git rev-parse --show-toplevel)"
+  local root="$1" out rc lock s
+  local -a roots=() sa=() cfg=()
   while IFS= read -r lock; do
     roots+=("$(dirname "$lock")")
   done < <(git -C "$root" ls-files -- Cargo.lock '*/Cargo.lock')
   [ "${#roots[@]}" -gt 0 ] || { annotate "third-party gate: no Cargo.lock" "No tracked Cargo.lock under $root."; return 1; }
-  local -a sa=()
-  local s
   for s in "${STANDALONE[@]}"; do
     [ -f "$root/$s/Cargo.toml" ] && sa+=("$s")
   done
+  while IFS= read -r s; do cfg+=("$s"); done < <(cargo_configs "$root")
+  tpgate_build || return 1
   rc=0
-  out="$(cd "$here_root" && RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}" \
-    cargo run -q --locked -p blacksilk-tpgate -- "$root" "${roots[@]}" ${sa[@]+--standalone "${sa[@]}"} 2>&1)" || rc=$?
+  out="$(cd "$WORK" && RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}" \
+    "$TPGATE_BIN" "$root" "${roots[@]}" ${sa[@]+--standalone "${sa[@]}"} ${cfg[@]+--config "${cfg[@]}"} 2>&1)" || rc=$?
   if [ "$rc" = 0 ]; then
     printf '%s\n' "$out"
     return 0
@@ -361,16 +434,60 @@ check_identity() {
   return 1
 }
 
+# check_config_pins ROOT: every tracked cargo configuration file is pinned by
+# sha256 (committed bytes) in .github/cargo-config.sha256, and nothing else is
+# listed there: a changed or new config fails until the pin is updated (a
+# consensus path).
+check_config_pins() {
+  local root="$1" pins="$1/.github/cargo-config.sha256" f h
+  [ -f "$pins" ] || { annotate "third-party gate: no config pins" ".github/cargo-config.sha256 is missing."; return 1; }
+  while IFS= read -r f; do
+    h="$(git -C "$root" cat-file blob ":$f" | sha256sum | cut -d' ' -f1)"
+    printf '%s  %s\n' "$h" "$f"
+  done < <(cargo_configs "$root") | sort > "$WORK/config-pins.actual"
+  tr -d '\r' < "$pins" | grep -v '^#' | sed '/^$/d' | sort > "$WORK/config-pins.expected"
+  if ! cmp -s "$WORK/config-pins.expected" "$WORK/config-pins.actual"; then
+    annotate "third-party gate: cargo configuration changed" \
+      "The tracked .cargo/config files do not match .github/cargo-config.sha256:
+$(diff "$WORK/config-pins.expected" "$WORK/config-pins.actual" | grep '^[<>]' | head -4)
+Review the change, then update the pin (a consensus path)."
+    return 1
+  fi
+}
+
+# check_attributes ROOT: git shows every third_party/ file as text (diff set),
+# except BINARY-ALLOWLIST entries; no .gitattributes inside third_party/.
+check_attributes() {
+  local root="$1" bad=0 p
+  p="$(git -C "$root" ls-files -- 'third_party/.gitattributes' 'third_party/*/.gitattributes' | head -1)"
+  if [ -n "$p" ]; then
+    annotate "third-party gate: .gitattributes inside third_party/" "$p: attributes for third_party/ live only in the root .gitattributes."
+    bad=1
+  fi
+  [ -f "$WORK/binary-allow" ] || : > "$WORK/binary-allow"
+  p="$(git -C "$root" -c core.quotepath=false ls-files -- third_party |
+    git -C "$root" check-attr --stdin diff | awk -F': ' '$3 != "set" { print $1 }' |
+    grep -Fvx -f "$WORK/binary-allow" | head -3 || true)"
+  if [ -n "$p" ]; then
+    annotate "third-party gate: third_party/ file not diffed as text" \
+      "git check-attr diff is not 'set' for: $p (the root .gitattributes must keep 'third_party/** diff')."
+    bad=1
+  fi
+  return "$bad"
+}
+
 # toml_events KIND PREFIX: a TOML file on stdin; prints one line per problem.
 # KIND is "manifest" (PREFIX set: a workspace root, whose canonical
 # [patch.crates-io] is allowed with paths "<PREFIX>third_party/<name>") or
 # "config". Comments, strings and multi-line strings are skipped.
 toml_events() {
   tr -d '\r' | awk -v kind="$1" -v prefix="$2" -v root="$3" '
-    function forbidden(s,   f) {
+    function forbidden(s,   f, l) {
       f = s; sub(/\..*/, "", f)
       if (f == "patch" || f == "replace" || f == "paths" || f == "source") return 1
-      if (kind == "config" && (f == "registries" || f == "registry")) return 1
+      if (kind == "config" && (f == "registries" || f == "registry" || f == "env" || f == "alias")) return 1
+      l = s; sub(/.*[.]/, "", l)
+      if (kind == "config" && (l == "runner" || l == "linker" || l == "target-dir" || l ~ /^rustc/ || l ~ /^rustdoc/)) return 1
       return 0
     }
     {
@@ -475,7 +592,7 @@ selftest() {
   run_case() { # NAME EXPECT(0|1) [nostage]
     t="$WORK/st-$1"
     fixture_repo "$t"
-    git -C "$root" ls-files -z -- third_party |
+    git -C "$root" ls-files -z -- third_party .gitattributes |
       (cd "$root" && xargs -0 git -c core.autocrlf=false checkout-index --prefix="$t/" --)
     git -C "$t" add -A
     "tamper_$1" "$t"
@@ -524,6 +641,18 @@ selftest() {
   tamper_dotdot() { printf 'const P: &str = "..";\n' >> "$(src1 "$1")"; regen "$1"; }
   tamper_build_rs() { printf 'fn main() {}\n' > "$1/third_party/$crate/build.rs"; regen "$1"; }
   tamper_build_key() { sed -i.bak 's/^build = false/build = "b.rs"/' "$1/third_party/$crate/Cargo.toml"; rm -f "$1/third_party/$crate/Cargo.toml.bak"; regen "$1"; }
+  tamper_attr_nested() { printf '* -diff\n' > "$1/third_party/.gitattributes"; }
+  tamper_attr_root() { printf 'third_party/%s/** -diff\n' "$crate" >> "$1/.gitattributes"; }
+  allow() { printf '%s  selftest\n' "$2" >> "$1/third_party/BINARY-ALLOWLIST"; }
+  # The patched source file differs from the published crate.
+  tamper_binary_changed() {
+    allow "$1" "third_party/$crate/$(sed -n 's#^+++ b/##p' "$1/third_party/patches/$crate.patch" | sed -n 1p)"
+  }
+  tamper_binary_unchanged() { allow "$1" "third_party/$crate/README.md"; }
+  tamper_binary_patchdir() { allow "$1" "third_party/patches/$crate.patch"; }
+  tamper_binary_upstream() {
+    allow "$1" "$(git -C "$1" ls-files -- third_party/upstream | sed -n 1p)"
+  }
   run_case clean 0
   run_case edit 1
   run_case unstaged 1 nostage
@@ -548,6 +677,13 @@ selftest() {
   run_case build_key 1
   run_case nul_then_edit 1
   run_case include 1
+  # RT-TPGATE3: attributes and the binary allow-list.
+  run_case attr_nested 1
+  run_case attr_root 1
+  run_case binary_changed 1
+  run_case binary_unchanged 0
+  run_case binary_patchdir 1
+  run_case binary_upstream 1
 
   # An allow-listed binary file passes the byte check (it must also be
   # unchanged from the published crate, or its bytes reach the patch file).
@@ -555,6 +691,7 @@ selftest() {
   fixture_repo "$t"
   mkdir -p "$t/third_party/c/tests"
   printf 'x\000y' > "$t/third_party/c/tests/fixture.bin"
+  printf '[package]\nname = "c"\nversion = "1.0.0"\n' > "$t/third_party/c/Cargo.toml"
   printf '# path  reason\nthird_party/c/tests/fixture.bin  selftest fixture\n' > "$t/third_party/BINARY-ALLOWLIST"
   git -C "$t" add -A
   if check_bytes "$t" > "$WORK/st.log" 2>&1; then
@@ -633,7 +770,12 @@ selftest() {
   s_cfg_paths() { mkdir -p "$1/.cargo"; printf 'paths = ["vendor/p3-x"]\n' > "$1/.cargo/config.toml"; }
   s_cfg_source() { mkdir -p "$1/a/.cargo"; printf '[source.crates-io]\nreplace-with = "v"\n' > "$1/a/.cargo/config.toml"; }
   s_cfg_patch() { mkdir -p "$1/.cargo"; printf '[patch.crates-io]\np3-x = { path = "third_party/p3-x" }\n' > "$1/.cargo/config"; }
-  s_cfg_ok() { mkdir -p "$1/.cargo"; printf '[alias]\nxt = "test"\n[target.x]\nrustflags = ["-C", "a"]\n' > "$1/.cargo/config.toml"; }
+  s_cfg_ok() { mkdir -p "$1/.cargo"; printf '[build]\ntarget = "x"\n[target.x]\nrustflags = ["-C", "a"]\n' > "$1/.cargo/config.toml"; }
+  s_cfg_runner() { mkdir -p "$1/.cargo"; printf '[target.x]\nrunner = "evil"\n' > "$1/.cargo/config.toml"; }
+  s_cfg_wrapper() { mkdir -p "$1/.cargo"; printf '[build]\nrustc-wrapper = "evil"\n' > "$1/.cargo/config.toml"; }
+  s_cfg_linker() { mkdir -p "$1/a/.cargo"; printf '[target.x]\nlinker = "evil"\n' > "$1/a/.cargo/config.toml"; }
+  s_cfg_env() { mkdir -p "$1/.cargo"; printf '[env]\nRUSTC_BOOTSTRAP = "1"\n' > "$1/.cargo/config.toml"; }
+  s_cfg_targetdir() { mkdir -p "$1/.cargo"; printf '[build]\ntarget-dir = "x"\n' > "$1/.cargo/config"; }
   res_case "resolution clean" 0 s_clean
   res_case "lock: git source" 1 s_git
   res_case "lock: other registry" 1 s_altreg
@@ -660,6 +802,35 @@ selftest() {
   res_case "config: source replacement" 1 s_cfg_source
   res_case "config: patch" 1 s_cfg_patch
   res_case "config: build settings" 0 s_cfg_ok
+  res_case "config: runner" 1 s_cfg_runner
+  res_case "config: rustc-wrapper" 1 s_cfg_wrapper
+  res_case "config: linker" 1 s_cfg_linker
+  res_case "config: env" 1 s_cfg_env
+  res_case "config: target-dir" 1 s_cfg_targetdir
+
+  # Config pins: a pinned config passes; a changed or an unpinned one fails.
+  pin_case() { # NAME EXPECT(0|1) SETUP-FN
+    t="$WORK/pin-$1"
+    fixture_repo "$t"
+    mkdir -p "$t/.github" "$t/.cargo"
+    printf '[target.x]\nrustflags = ["-C", "a"]\n' > "$t/.cargo/config.toml"
+    git -C "$t" add -A
+    printf '%s  .cargo/config.toml\n' "$(git -C "$t" cat-file blob :.cargo/config.toml | sha256sum | cut -d' ' -f1)" > "$t/.github/cargo-config.sha256"
+    "$3" "$t"
+    git -C "$t" add -A
+    if check_config_pins "$t" > "$WORK/st.log" 2>&1; then r=0; else r=1; fi
+    if [ "$r" = "$2" ]; then
+      echo "selftest ok   pins: $1 (exit $r)"
+    else
+      echo "selftest FAIL pins: $1: expected exit $2, got $r"; sed 's/^/  /' "$WORK/st.log"; bad=1
+    fi
+  }
+  p_none() { :; }
+  p_changed() { printf '[target.x]\nrustflags = ["-C", "b"]\n' > "$1/.cargo/config.toml"; }
+  p_new() { mkdir -p "$1/sub/.cargo"; printf '[target.x]\nrustflags = []\n' > "$1/sub/.cargo/config"; }
+  pin_case pinned 0 p_none
+  pin_case changed 1 p_changed
+  pin_case unpinned 1 p_new
   echo "third-party-gate selftest: $([ "$bad" = 0 ] && echo pass || echo FAIL)"
   return "$bad"
 }
@@ -678,6 +849,7 @@ main() {
       local bad=0
       check_cargo_files "$root" || bad=1
       check_identity "$root" || bad=1
+      check_config_pins "$root" || bad=1
       [ "$bad" = 1 ] || echo "ok   lockfiles, manifests and .cargo/ configs: crates.io or third_party/ only"
       check_tree "$root" || bad=1
       exit "$bad"

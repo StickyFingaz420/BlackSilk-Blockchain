@@ -53,3 +53,8 @@ d519e96db46da34bfbd4aba9437d30a33446e4a6 none: predates RT-TPGATE2; ci: run the 
 d6ff63d70427674a8d3985ec8e45eefe144ba52f none: predates RT-TPGATE2; ci: run tools/check-test-features.sh in the gates job (W4-GUARD, RT-GUARD) (.github/workflows/ci.yml).
 f61596500335f55860730a33251fe810a3d0c8fe none: predates RT-TPGATE2; p2p: transaction request tracker, fair serving budget, fail-closed torn heights (RT2-TM2P2P) (.github/workflows/ci.yml).
 f7d07347fd56eb22617a970e397d1887808cad05 none: predates RT-TPGATE2; ci: all branches and testnet tags, concurrency, Node 24 checkout, deny/gates jobs, arm64 guests (.github/workflows/ci.yml).
+# RT-TPGATE3 (2026-10-04) made every .gitattributes a consensus path; the commits
+# below changed the root .gitattributes before that (CI/attribute lines only).
+5c0bfab71f09e7cb3dab67cf22264a8c7e8656db none: predates RT-TPGATE3; p2p tests: the rest of admission.rs after RT-MUTD (reject caches, the node-wide bucket, relayers) (.gitattributes).
+7c44051128a22bb4e6d7e58db6389f69093b2e5d none: predates RT-TPGATE3; labnet: RT-LAB follow-up (F3 logs, F4 checks, F5 metrics) (.gitattributes).
+d5c20f74ec2337cfd01f54af6b3dbf2a5226d517 none: predates RT-TPGATE3; node: golden PX fixture round-trip, more ciphertext probes, binary attribute, STATUS (.gitattributes).

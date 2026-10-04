@@ -67,7 +67,19 @@ The rules, checked by the CI job `deny` on every push and weekly:
   `third_party/`, `.cargo/`, the gate scripts, `tools/tpgate` and the CI workflow
   (CODEOWNERS plus branch protection)
   is a repository setting for the owner, and is not configured by this
-  repository;
+  repository. In CI the gate code comes from a trusted revision (the pull
+  request's base or the push's previous head), so a commit that changes a gate is
+  judged by the old one. The workflow file itself still comes from the commit under
+  test. What the identity check (`tools/tpgate`) cannot see:
+  - cargo makes any path crate under a workspace root a member automatically. A
+    verbatim copy of a published crate committed there under another name is
+    accepted, as visible first-party code. Only review notices that it is a copy.
+  - the standalone `zkvm/sdk` is read as TOML, not through cargo. It may have no
+    dependencies, no build script and no `[lib]` path, but `#[path]` attributes and
+    `include!` in its own source are not checked. Like every first-party file, they
+    are seen only in review.
+  - cargo configuration outside the repository (`CARGO_HOME`, parent directories),
+    environment variables and `--config` flags;
 - no known vulnerable, unsound, unmaintained (except the reviewed exceptions listed
   in `deny.toml`) or yanked crate (`deny.toml`, `fuzz/deny.toml`);
 - no C toolchain or C-library binding crate, no build script that compiles native
