@@ -10,7 +10,6 @@ use blacksilk_crypto::bulletproofs_plus::{self as bpp, BppProof};
 use blacksilk_crypto::clsag::{Clsag, RING_SIZE};
 use blacksilk_crypto::commitment::commit;
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
-use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_px_core::call::MAX_FN;
 use blacksilk_px_core::Digest;
 use blacksilk_tx::builder::Payment;
@@ -135,7 +134,7 @@ fn px_of_size(tag: u32, size: usize) -> PxTx {
         anchor: [7; 8],
         nullifiers: [[tag; 8], [tag + 1_000_000; 8]],
         commitments: [[tag + 2; 8], [tag + 3; 8]],
-        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,

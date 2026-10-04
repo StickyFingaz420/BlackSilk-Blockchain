@@ -23,7 +23,6 @@ use blacksilk_crypto::bulletproofs_plus as bpp;
 use blacksilk_crypto::clsag::{self, RingMember};
 use blacksilk_crypto::commitment::commit;
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
-use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_tx::builder::{standard_fee, Decoy, Payment};
 use blacksilk_tx::params::{PX_STANDARD_FEE, RING_SIZE};
 use blacksilk_tx::px::{check_px_structure, PxTx, Registration};
@@ -215,7 +214,7 @@ fn px_with_payouts(net: &mut TestNet, payouts: &[Point]) -> PxTx {
         anchor: [7; 8],
         nullifiers: [[1; 8], [2; 8]],
         commitments: [[3; 8], [4; 8]],
-        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,

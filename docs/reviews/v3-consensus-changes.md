@@ -35,6 +35,7 @@ they are never renamed. Index:
 - kernel-budget-shapes (px; FX-RTW1C); Follow-ups (RT-W1c) in px6-validity-window and vault-v3
 - fingerprint-v3 (node, px, zkvm, consensus network id, tools/genesis; W4-40); Follow-up (RT-FP3) (FX-RTFP3)
 - px-proof-decode-bounds (zk, px, tx, p2p admission; W4-PXDOS)
+- px-ciphertext-r (tx; PX-R)
 
 New sections are appended at the end.
 
@@ -3041,3 +3042,121 @@ scan and doc-lint pass. Release: zk lib, `decode_bounds`, `rt_pxdos_differential
 `px_transactions_travel_the_stem_and_confirm_everywhere` passed. `blacksilk-node
 --print-manifest` built from the clean commit `f02dc1c` is identical to the base
 `64d89d4` build apart from the build-commit header line.
+
+<a id="px-ciphertext-r"></a>
+
+## px-ciphertext-r: the PX ciphertext R is a canonical, non-identity ristretto255 point
+
+Revision: none (pending phase 2, which adds PX-R:ciphertext-r-canonical-not-identity)
+
+Owner: PX-R (phase 1). Decisions: "RES-FREEZE verified (Lead, 2026-10-04): DECISIONS",
+item 2 (PX R: IN v3); the research is `phase2-2026-09-27/research/res-freeze.md` §2.
+Phase 2 (the golden PX fixtures, the verdict samples, the `REVISIONS` entry and the
+one fingerprint re-pin) follows after a red-team pass of this change.
+
+1. **Problem.** A PX record ciphertext is `R (32) ‖ view tag (1) ‖ ct_kem (1088) ‖ body
+   (120)` (docs/px.md §6). Consensus fixed only its length: the decoder reads two
+   opaque 1,241-byte strings (`tx/src/px.rs`, `PxTx::decode_body`), and no rule looked
+   at `R`. `R` was therefore 32 free bytes:
+   - a **wallet fingerprint and covert channel**: about 1 in 16 random 32-byte
+     strings is a valid ristretto255 encoding (res-freeze.md M-B: 12,467 of 200,000),
+     so a non-reference wallet that fills `R` with random bytes (for example in a
+     dummy output) is identified with probability about 15/16 per ciphertext by
+     anyone running a decoder;
+   - a **silent burn**: an undecodable `R` makes a record undeliverable on chain;
+   - an **identity `R`** makes the classical shared secret the identity for every
+     recipient, so confidentiality rests on ML-KEM alone.
+
+   v1 already refuses the analogous cases: every point decodes canonically at the
+   codec, and T6 refuses an identity ephemeral (`EphemeralIdentity`).
+2. **Demonstrated failure.** Before this change `check_px_structure` accepted a PX
+   transaction whose ciphertext `R` is `[0; 32]` (the identity), `p` (a non-canonical
+   zero), or any RFC 9496 invalid encoding. The test corpus itself used all-zero
+   ciphertexts (an identity `R`) in about fifteen places that validated as `Ok`.
+3. **Prior art.** RFC 9496 §4.3.1: decoding MUST reject non-canonical encodings; the
+   group has prime order, so a canonical decoding is a complete membership check; the
+   identity is a valid element and is excluded separately. Zcash ZIP 216 and Orchard
+   (`ephemeralKey` must be a valid encoding): consensus accepts exactly one encoding.
+   Bitcoin BIP 66 (strict DER). The CryptoNote key-image torsion bug (2017) is the
+   cofactor-curve failure that Ristretto avoids by construction.
+4. **Rule.** For each of the two record ciphertexts: its length is exactly
+   `CIPHERTEXT_BYTES`, and its first 32 bytes decode canonically as ristretto255
+   (`blacksilk_crypto::Point::decode`, that is curve25519-dalek 4.1.3
+   `CompressedRistretto::decompress`, the decoder of every v1 point) to a point other
+   than the identity. Two stateless errors:
+   - `TxError::PxCiphertextRNonCanonical { ciphertext }`, also for a wrong length
+     (which `decode` never produces);
+   - `TxError::PxCiphertextRIdentity { ciphertext }`.
+
+   The non-canonical check comes first, so `p` (a non-canonical zero) is
+   non-canonical, not the identity. Nothing else in the ciphertext is checkable: the
+   view tag is a hash byte, every 1,088-byte string is a well-formed ML-KEM-768
+   ciphertext (FIPS 203), and the body is pseudorandom.
+5. **Alternatives.**
+   - A `DecodeError` at the codec, as for v1 points: rejected, because transactions
+     built in memory would bypass it and the verdict would carry no ciphertext index.
+   - Distinct `R` across the two ciphertexts: no security gain (Monero shares one `R`
+     across outputs); it would only catch broken RNGs, which the hedged derivation
+     already covers.
+   - A view-tag rule: impossible without the secret.
+   - No rule: the privacy and burn costs above.
+6. **Affected components.** `tx/src/px.rs` (`check_ciphertext_r`, called from
+   `check_px_structure` after the nullifier-repeat check, before the counts and the
+   fee) and `tx/src/validate.rs` (the two variants, `is_stateless` and its table). The
+   rule runs on every path through `check_px_structure`:
+   - mempool admission, RPC submission, readmission and revalidation (`validate_px`,
+     `validate_px_without_proof`);
+   - P2P admission off the chain actor (`p2p/src/net/admission.rs`, `px_stateless`);
+   - block validation (`validate_block_transactions`);
+   - the builder's self-check.
+
+   It runs before the proof is decoded, at the cost of two point decompressions.
+7. **Proof statement.** `R` is not in the kernel statement (`PxTx::public`). It is
+   bound only through `h_tx`: the ciphertexts are in the prefix, and the binding is a
+   public input of the proof. A prover can prove any `R`; this rule, not the proof,
+   enforces it. No kernel, circuit, ELF or `CIRCUIT_ID` change.
+8. **Activation.** Part of the v3 genesis rule set; no activation height. The testnet
+   v3 has not launched (the testnet reset is authorized).
+9. **Compatibility.** A tightening: every transaction valid after it was valid before.
+   No transaction on any v3 chain is affected (none has launched). Regtest and
+   development data directories made before it may hold PX transactions with an
+   identity `R` (from test tools only); they are discarded with the fingerprint
+   change of phase 2.
+10. **Reorg.** Stateless: the verdict is the same on every branch and at every height.
+11. **Wallet.** No change is needed. `seal` draws `r` from `HedgedRng::scalar`, which
+    never returns zero, and publishes `R = r·G` compressed (canonical, never the
+    identity), for real and throwaway recipients alike; the builder's self-check now
+    enforces the rule. `open` also refuses an identity `R` as "not mine". Third-party
+    wallets must publish a real group element in every ciphertext, dummy outputs
+    included (docs/px.md §6).
+12. **Mining.** Templates are built from validated pool transactions; no change.
+13. **P2P.** Both errors are stateless, so a peer relaying such a transaction is
+    penalized like for any other intrinsic fault (docs/p2p.md §10).
+14. **Vectors and regression tests.** `tx/src/px.rs` unit tests:
+    - a valid `R` (`G`, `2·G`) in both ciphertexts;
+    - the identity at index 0 and at index 1, and the first failure reported;
+    - `p`, and zero with the top bit set (non-canonical, not the identity);
+    - the top bit set on a valid encoding;
+    - `s = 1` (negative);
+    - the Edwards `d` constant (negative; curve25519-dalek's
+      `decompress_negative_s_fails`);
+    - all 29 RFC 9496 Appendix A.2 invalid encodings, in either ciphertext (copied
+      from the RFC text);
+    - lengths 0, 1, 31, 32, 1,240 and 1,242;
+    - the bytes after `R` unchecked;
+    - the rule inside `check_px_structure`, with stateless errors;
+    - an identity `R` that survives encoding and decoding, then refused.
+
+    `px/src/delivery.rs`: every sealed `R` is canonical and not the identity, and
+    `open` refuses an identity or non-canonical `R`. `tx/tests/validation_order.rs`
+    and `fuzz/src/targets/px_admission.rs` classify the variants (stateless, "PX
+    ciphertext R"). Test fixtures that used all-zero ciphertexts now use a base-point
+    `R`.
+15. **Suite results and open review points.** The results are in the commit message.
+    Open:
+    - the red-team pass of this change;
+    - phase 2: golden PX fixtures with the `R` verdict cases, verdict samples, the
+      `REVISIONS` entry replacing the `Revision:` line above, and the one fingerprint
+      re-pin;
+    - the rule does not force `R` to be uniform: a structured valid point such as
+      `k·G` passes, and no consensus rule can check that.

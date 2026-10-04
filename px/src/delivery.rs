@@ -75,7 +75,12 @@
 //! are per address (unlinkable addresses), so scanning costs one scalar
 //! multiplication per output and wallet address.
 //!
-//! This is wallet-side code: consensus only fixes the ciphertext length.
+//! This is wallet-side code. Consensus fixes the ciphertext length and one
+//! property of `R`: it is a canonical ristretto255 encoding of a point other
+//! than the identity (`blacksilk_tx::px::check_ciphertext_r`;
+//! docs/reviews/v3-consensus-changes.md#px-ciphertext-r). `seal` always
+//! meets it (`r ≠ 0`, so `R = r·G` is never the identity), and `open`
+//! treats a ciphertext that does not as not addressed to it.
 
 use blacksilk_crypto::hash::{h32, h64, tags};
 use blacksilk_crypto::nonce::HedgedRng;
@@ -348,6 +353,11 @@ pub fn open(
     }
     let r_pub: [u8; 32] = c[..32].try_into().ok()?;
     let r = CompressedRistretto(r_pub).decompress()?;
+    // Consensus refuses an identity `R`; a recipient never accepts one
+    // either (its classical shared secret would be the identity).
+    if r.is_identity() {
+        return None;
+    }
     let ss_ec = zeroize::Zeroizing::new((keys.view * r).compress().to_bytes());
     if view_tag(&ss_ec, &r_pub) != c[32] {
         return None;
@@ -577,6 +587,34 @@ mod tests {
         assert!(body_opens(&v2, &c, &cm));
         assert!(!body_opens(&v1, &c, &cm));
         assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), Some(rec));
+    }
+
+    /// `open` refuses a ciphertext whose `R` is the identity or does not
+    /// decode, as not addressed to it; every sealed `R` is a canonical,
+    /// non-identity encoding (the consensus rule `px-ciphertext-r`).
+    #[test]
+    fn open_refuses_an_identity_or_undecodable_r_and_seal_never_makes_one() {
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(23);
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let keys = bob.delivery_keys(0);
+        for v in 0..32 {
+            let (rec, cm) = record(to.owner, v);
+            let c = seal(&mut rng, &SENDER, &to, &rec, &cm).unwrap();
+            let r: [u8; 32] = c[..32].try_into().unwrap();
+            let point = CompressedRistretto(r).decompress().expect("canonical");
+            assert!(!point.is_identity());
+            assert_eq!(point.compress().to_bytes(), r);
+            assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), Some(rec));
+
+            let mut bad = c.clone();
+            bad[..32].fill(0);
+            assert_eq!(open(&keys, &to.owner, &bad, &cm, &rec.rho), None);
+            let mut bad = c.clone();
+            bad[31] |= 0x80;
+            assert_eq!(open(&keys, &to.owner, &bad, &cm, &rec.rho), None);
+        }
     }
 
     /// An address whose view key is the identity is refused: its classical

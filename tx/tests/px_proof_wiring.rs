@@ -8,7 +8,6 @@
 
 mod common;
 
-use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_px::prove::{kernel_budget, kernel_program, public_words, PROOF_LIMITS};
 use blacksilk_px::state::State as PxState;
 use blacksilk_tx::params::PX_STANDARD_FEE;
@@ -44,7 +43,7 @@ fn px(net: &TestNet, proof: Vec<u8>) -> PxTx {
         anchor: net.chain.px().root(),
         nullifiers: [[1; 8], [2; 8]],
         commitments: [[3; 8], [4; 8]],
-        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,

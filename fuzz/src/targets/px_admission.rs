@@ -354,6 +354,9 @@ fn spec_class(e: &TxError) -> Class {
         | PxDuplicateProgram { .. } => Stateless("deploy structure"),
         PxWindowInverted => Stateless("PX6 (inverted)"),
         PxDuplicateOutputKey { .. } | PxNullifierRepeated => Stateless("PX repeat"),
+        PxCiphertextRNonCanonical { .. } | PxCiphertextRIdentity { .. } => {
+            Stateless("PX ciphertext R")
+        }
         PxUnknownAnchor => Contextual("PX1"),
         PxNullifierSpent { .. } => Contextual("PX2"),
         PxUnregistered { .. } => Contextual("PX3"),

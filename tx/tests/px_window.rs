@@ -11,7 +11,6 @@
 
 mod common;
 
-use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_px::state::State as PxState;
 use blacksilk_tx::builder::{BuildError, Payment};
 use blacksilk_tx::codec::DecodeError;
@@ -53,7 +52,7 @@ fn px(net: &TestNet, tag: u32, window: Window) -> PxTx {
         anchor: net.chain.px().root(),
         nullifiers: [[tag, 1, 0, 0, 0, 0, 0, 0], [tag, 2, 0, 0, 0, 0, 0, 0]],
         commitments: [[tag, 3, 0, 0, 0, 0, 0, 0], [tag, 4, 0, 0, 0, 0, 0, 0]],
-        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,

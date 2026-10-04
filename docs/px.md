@@ -352,6 +352,18 @@ key = H32("px/delivery-key/v2", r·V ‖ ss_kem ‖ R ‖ ct_kem ‖ V ‖ H(ek)
   (§13).
 - The plaintext has one length for both kinds, so the ciphertext does not reveal the
   kind.
+- **Consensus fixes** the length and one property of `R`: it must be a canonical
+  ristretto255 encoding (RFC 9496) of a point other than the identity
+  (`check_ciphertext_r` in `tx/src/px.rs`; `PxCiphertextRNonCanonical`,
+  `PxCiphertextRIdentity`, both stateless; testnet v3,
+  reviews/v3-consensus-changes.md#px-ciphertext-r). Nothing else is checkable: the
+  view tag is a hash byte, every 1,088-byte string is a well-formed ML-KEM-768
+  ciphertext, and the body is pseudorandom. The rule forces every wallet, dummy outputs
+  included, to publish a real group element: a random 32-byte `R` decodes with
+  probability about 1/16, so without the rule a wallet filling `R` with random bytes
+  would be recognizable. `seal` meets it by construction (`r ≠ 0`); `open` treats an
+  `R` that does not as not addressed to the wallet. `R` is not in the proof's
+  statement: it is bound through `h_tx` only, so the rule, not the proof, enforces it.
 
 **Address:** the owner tag, a Ristretto view key `V`, and an ML-KEM-768 encapsulation
 key (1,184 bytes). All three are derived per address from `sk`; addresses of one
@@ -683,7 +695,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 
 | Rule | Meaning |
 |---|---|
-| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = standard_fee(n, k) + DEPLOY_FEE_PER_BYTE × payload length`, where `standard_fee(n, k) = FEE_PER_WEIGHT × max_weight(n, k)` is the exact fee of a transfer of the shape (transactions.md T8, §8.4; `TxRules::standard_fee`, one function for both) (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
+| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: each record ciphertext's `R` is a canonical, non-identity ristretto255 point (§6; `PxCiphertextRNonCanonical`, `PxCiphertextRIdentity`; testnet v3, reviews/v3-consensus-changes.md#px-ciphertext-r), and the fee is **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = standard_fee(n, k) + DEPLOY_FEE_PER_BYTE × payload length`, where `standard_fee(n, k) = FEE_PER_WEIGHT × max_weight(n, k)` is the exact fee of a transfer of the shape (transactions.md T8, §8.4; `TxRules::standard_fee`, one function for both) (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
 | Balance | §11.1 (PX); the transfer rule for deploys |
 | C1–C3 | Rings and key images, as for transfers. One-time keys (hidden outputs and payouts together) are distinct within the transaction (stateless: the sort of each list, and `PxDuplicateOutputKey` between them) but may repeat across transactions and the chain (transactions.md §8.2) |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
