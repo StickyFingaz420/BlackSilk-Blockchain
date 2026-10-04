@@ -1,6 +1,12 @@
 //! Dandelion++ glue: stem keys, stem-or-fluff routing, held local
 //! transactions and fluffing; local origination through the originated set
 //! (docs/p2p.md §8.1).
+//!
+//! **Logging (privacy).** Lines about a *local* transaction (one this node
+//! originates) never carry its id, at any level: a shared or leaked debug
+//! log would otherwise name this node as the origin of that transaction,
+//! which Dandelion++ exists to hide. Relayed transactions keep their short
+//! id at debug.
 
 use super::lock_or_exit;
 use super::state::{short, Inner, State, StemEntry};
@@ -74,13 +80,17 @@ pub(super) async fn stem_or_fluff(
     };
     // Logged outside the state lock (RT2 F8).
     let Some(route) = route else {
-        log::debug!("local tx {} held until a stem peer exists", short(&id));
+        log::debug!("a local tx is held until a stem peer exists");
         return true;
     };
     match route {
         Route::Fluff => fluff(inner, id, None).await,
         Route::Stem(p) => {
-            log::debug!("stem tx {} -> peer {p}", short(&id));
+            if source == Source::Local {
+                log::debug!("local tx -> stem peer {p}");
+            } else {
+                log::debug!("stem tx {} -> peer {p}", short(&id));
+            }
             inner.send_now(p, Message::StemTx(tx.encode()));
         }
     }
@@ -109,7 +119,7 @@ pub(super) fn send_held_local_txs(inner: &Inner, st: &mut State) {
         };
         e.awaiting_stem = false;
         let msg = Message::StemTx(e.tx.encode());
-        log::debug!("held local tx {} -> stem peer {p}", short(&id));
+        log::debug!("held local tx -> stem peer {p}");
         inner.send(st, p, msg);
     }
 }
@@ -226,16 +236,14 @@ pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<
                 .await;
             if r.is_ok() {
                 log::debug!(
-                    "local tx {} was originated here before: accepted, not originated again",
-                    short(&id)
+                    "a local tx was originated here before: accepted, not originated again"
                 );
             }
             return r.map(|_| id).map_err(|e| format!("{e:?}"));
         }
         Verdict::Expired => {
             log::debug!(
-                "local tx {} was originated here and expired network-wide recently: refused",
-                short(&id)
+                "a local tx was originated here and expired network-wide recently: refused"
             );
             return Err(format!("{:?}", MempoolError::Expired));
         }

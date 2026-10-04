@@ -46,14 +46,14 @@ impl Inner {
         };
         p.score = p.score.saturating_add(points);
         log::debug!(
-            "peer {} misbehaved (+{points}, {}): {reason}",
+            "peer {peer} ({}) misbehaved (+{points}, {}): {reason}",
             p.addr,
             p.score
         );
         if p.score < BAN_THRESHOLD {
             return true;
         }
-        log::info!("disconnecting peer {} for misbehavior: {reason}", p.addr);
+        log::info!("disconnecting peer {peer} for misbehavior: {reason}");
         p.kill.notify_one();
         let (addr, proxied) = (p.addr.clone(), p.proxied);
         st.misbehaving_disconnects += 1;
@@ -92,7 +92,7 @@ impl Inner {
         }
         log::info!(
             "banning departed peer {} for misbehavior: {reason}",
-            batch.addr
+            batch.peer
         );
         st.misbehaving_disconnects += 1;
         self.ban_addr(&mut st, &batch.addr, batch.proxied);
@@ -613,7 +613,8 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
         // table an attacker may have filled.
         for a in anchors {
             if free_block_relay > 0 && !dialable.skip(&a, &to_connect, &groups) {
-                log::info!("dialing anchor {a}");
+                log::info!("dialing a block-relay-only anchor");
+                log::debug!("dialing anchor {a}");
                 groups.insert(a.group());
                 to_connect.push((a, ConnKind::BlockRelay));
                 free_block_relay -= 1;
@@ -709,8 +710,7 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
             if let Some(v) = select_outbound_to_evict(&candidates, now, cfg.min_connect_time) {
                 let p = st.peers.get_mut(&v).expect("candidate");
                 log::info!(
-                    "rotating out outbound peer {} (last new tip: {})",
-                    p.addr,
+                    "rotating out outbound peer {v} (last new tip: {})",
                     p.last_new_tip.map_or("never".into(), |t| format!(
                         "{} s ago",
                         now.saturating_duration_since(t).as_secs()

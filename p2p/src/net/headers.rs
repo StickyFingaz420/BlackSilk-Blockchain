@@ -90,7 +90,7 @@ impl Inner {
     /// `UpgradeWork::heavy`), counting only reports from outbound peers whose
     /// header passes the anti-DoS work threshold (RTW1-1, `UpgradeReports`).
     pub(super) fn note_unknown_upgrade(&self, peer: PeerId, version: u32, work: UpgradeWork) {
-        let (verdict, addr) = {
+        let verdict = {
             let mut st = self.state();
             let Some(p) = st.peers.get_mut(&peer) else {
                 return;
@@ -105,14 +105,14 @@ impl Inner {
                     p.kill.notify_one();
                 }
             }
-            (verdict, addr)
+            verdict
         };
         log::info!(
-            "peer {addr} sent a header of unknown version {version} with valid proof of work"
+            "peer {peer} sent a header of unknown version {version} with valid proof of work"
         );
         if verdict.disconnect {
             log::info!(
-                "disconnecting peer {addr} (not banned): {UNKNOWN_UPGRADE_DISCONNECT} headers \
+                "disconnecting peer {peer} (not banned): {UNKNOWN_UPGRADE_DISCONNECT} headers \
                  of an unknown consensus version"
             );
         }

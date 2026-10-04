@@ -400,8 +400,11 @@ pub(super) async fn run_connection<S>(
             },
         );
     }
+    // Peer addresses (IPs, onion names) only at debug (privacy: a shared
+    // info log would map this node's peer graph); info names the local id.
+    log::debug!("peer {id} is {addr}");
     log::info!(
-        "connected {} peer {addr} (height {})",
+        "connected {} peer {id} (height {})",
         match kind {
             ConnKind::Inbound => "inbound",
             ConnKind::OnionInbound => "onion inbound",
@@ -632,8 +635,8 @@ pub(super) async fn run_connection<S>(
     // Its waiting header batch, if any, is released now (`header_worker`).
     inner.header_wake.notify_one();
     // Logged outside the state lock (RT2 F8).
-    if let Some(addr) = gone {
-        log::info!("disconnected peer {addr}");
+    if gone.is_some() {
+        log::info!("disconnected peer {id}");
     }
 }
 
