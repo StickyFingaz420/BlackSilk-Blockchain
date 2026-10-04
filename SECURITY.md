@@ -51,7 +51,11 @@ node, miner, wallet or tools, and BlackSilk's own crates forbid `unsafe` code.
 Dependencies do contain `unsafe` internally (docs/reviews/unsafe-inventory.md).
 The rules, checked by the CI job `deny` on every push and weekly:
 - crates come from crates.io only, with the checksums in the committed `Cargo.lock`
-  files, and every CI build uses `--locked`;
+  files, and every CI build uses `--locked`; the one exception is the patched copies
+  in `third_party/` (`[patch.crates-io]`), and CI checks that each is the published
+  crate (sha256 pinned in `third_party/PRISTINE.sha256`) plus exactly its
+  allow-listed diff in `third_party/patches/` (`.github/scripts/third-party-gate.sh`,
+  third_party/README.md);
 - no known vulnerable, unsound, unmaintained (except the reviewed exceptions listed
   in `deny.toml`) or yanked crate (`deny.toml`, `fuzz/deny.toml`);
 - no C toolchain or C-library binding crate, no build script that compiles native
@@ -60,8 +64,9 @@ The rules, checked by the CI job `deny` on every push and weekly:
 - hazardous-material APIs (deterministic ML-KEM encapsulation, single-round AES)
   only in the crates reviewed for them (`.github/scripts/hazmat-policy.sh`);
 - a second version of a crate, a new licence or a new source fails until reviewed;
-- a commit that changes a lockfile names every crate it adds or re-versions
-  (`.github/scripts/lockfile-gate.sh`).
+- a commit that changes a lockfile names every crate it adds, re-versions or moves
+  to another source, such as a registry crate replaced by a path or git copy at the
+  same version (`.github/scripts/lockfile-gate.sh`).
 
 A new dependency needs a recorded decision before it is added; the verdicts, the
 reasons, and what was and was not reviewed are in docs/reviews/dependency-review.md.

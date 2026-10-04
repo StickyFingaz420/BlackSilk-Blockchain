@@ -4,6 +4,38 @@ These are copies of published crates with a minimal, reviewed change, used throu
 `[patch.crates-io]` in the workspace `Cargo.toml`. Each entry records what changed, why,
 and when to remove it.
 
+## CI check: published crate + allow-listed diff (RT-PXDET finding 1)
+
+`.github/scripts/third-party-gate.sh` (CI job `gates`) checks every crate directory
+here (a directory with a `Cargo.toml`) against what it claims to be:
+- `PRISTINE.sha256` pins the sha256 of each published `<name>-<version>.crate`. Each
+  value is the checksum `Cargo.lock` carried before the crate was patched (git history)
+  and was re-checked against the static.crates.io download on 2026-10-04.
+- The gate takes that `.crate` from the local cargo cache or static.crates.io, verifies
+  the pin, unpacks it and runs `diff -ruN --strip-trailing-cr` against the copy here.
+  The documented packaging differences are dropped first, at the top level only:
+  `Cargo.toml.orig`, `.cargo_vcs_info.json` and `Cargo.lock` on the published side,
+  and cargo's unpack marker `.cargo-ok` (`{"v":1}`) on ours. Any other added, removed
+  or changed file shows up in the diff.
+- That diff, with CRs stripped and timestamps removed, must equal
+  `patches/<crate>.patch` byte for byte (CRs stripped from it too). On a mismatch the
+  gate names the crate and the first differing file.
+- It also fails on a patch file or pin without a crate directory here (remove them
+  with the crate), and on a `[patch]` entry in `Cargo.toml` or `fuzz/Cargo.toml`
+  that is not `{ path = "third_party/<same name>" }` (a git fork or another path).
+- `--selftest` tampers temporary copies (an edit, an added file, a removed file, a
+  re-added packaging file, a wrong pin, a missing or stale patch file, bad `[patch]`
+  entries) and expects each to fail, and expects a clean copy and a CRLF copy to pass.
+
+The patch files apply with `patch -p1` inside an unpacked published crate. To
+change a patched crate: make the change, then run
+`bash .github/scripts/third-party-gate.sh --write <crate>` and review the diff of
+`patches/<crate>.patch` like any other code change. Adding a crate here needs, in
+the same commit, its `PRISTINE.sha256` line (taken from `Cargo.lock` before the
+switch, or the registry index) and its patch file. The lockfile gate
+(`.github/scripts/lockfile-gate.sh`) separately requires a commit that moves a crate
+from the registry to a path or git source to name that crate.
+
 ## `p3-fri`, `p3-merkle-tree` and `p3-dft` 0.7.0 (Plonky3): spin locks held across parallel work
 
 **Upstream bug (found here, AUDIT.md ZK-F11): the prover can hang forever.**
@@ -60,7 +92,9 @@ after the lock is released. A unit test (`widen_matches_with_random_cols`) shows
 result is identical to `with_random_cols` for the same RNG state. Every `lock()` in
 the three patched crates now does sequential work only.
 
-**Diff against the published crates** (re-checked 2026-09-27 with
+**Diff against the published crates** (since 2026-10-04 checked on every CI run;
+the exact diffs are `patches/p3-fri.patch`, `patches/p3-merkle-tree.patch` and
+`patches/p3-dft.patch`; first re-checked 2026-09-27 with
 `diff -r --strip-trailing-cr` against the registry's 0.7.0 copies; only these three
 source files differ, apart from upstream's `Cargo.lock`, `.cargo_vcs_info.json` and
 `Cargo.toml.orig`, which were removed):

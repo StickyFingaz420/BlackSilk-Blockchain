@@ -1,0 +1,161 @@
+diff -ruN --strip-trailing-cr a/src/radix_2_dit_parallel.rs b/src/radix_2_dit_parallel.rs
+--- a/src/radix_2_dit_parallel.rs
++++ b/src/radix_2_dit_parallel.rs
+@@ -56,24 +56,28 @@
+             return pair.clone();
+         }
+ 
+-        // Slow path: The value doesn't exist. Acquire a write lock.
+-        let mut w_lock = self.twiddles.write();
+-
+-        // Double-check and compute if necessary.
+-        w_lock
+-            .entry(log_h)
+-            .or_insert_with(|| {
+-                let half_h = (1 << log_h) >> 1;
+-                let root = F::two_adic_generator(log_h);
+-                let twiddles = root.powers().collect_n(half_h);
+-                let mut bitrev_twiddles = twiddles.clone();
+-                reverse_slice_index_bits(&mut bitrev_twiddles);
+-
+-                Arc::new(VectorPair {
+-                    twiddles,
+-                    bitrev_twiddles,
+-                })
++        // BlackSilk patch (third_party/README.md, AUDIT.md ZK-F21): compute the
++        // twiddles *before* taking the write lock. `collect_n` is parallel for
++        // large sizes, and running rayon work under this spin lock let a
++        // thread steal a DFT task that then spun on the lock held further up
++        // its own stack. Two threads may now compute the same (deterministic)
++        // table on a miss; the first insert wins.
++        let computed = {
++            let half_h = (1 << log_h) >> 1;
++            let root = F::two_adic_generator(log_h);
++            let twiddles = root.powers().collect_n(half_h);
++            let mut bitrev_twiddles = twiddles.clone();
++            reverse_slice_index_bits(&mut bitrev_twiddles);
++
++            Arc::new(VectorPair {
++                twiddles,
++                bitrev_twiddles,
+             })
++        };
++        self.twiddles
++            .write()
++            .entry(log_h)
++            .or_insert(computed)
+             .clone()
+     }
+ 
+@@ -83,34 +87,37 @@
+         if let Some(twiddles) = self.coset_twiddles.read().get(&key) {
+             return twiddles.clone();
+         }
+-        // Slow path: The value isn't there, so we need to compute it.
+-        // Acquire a write lock to ensure only one thread does the computation.
+-        let mut w_lock = self.coset_twiddles.write();
+-        // Double-check: Another thread might have inserted it while we waited for the lock.
+-        // The `entry` API handles this check and insertion atomically.
+-        w_lock
++        // BlackSilk patch (third_party/README.md, AUDIT.md ZK-F21): compute the
++        // twiddles *before* taking the write lock. `collect_n` is parallel for
++        // large sizes, and running rayon work under this spin lock let a
++        // thread steal a DFT task that then spun on the lock held further up
++        // its own stack. Two threads may now compute the same (deterministic)
++        // table on a miss; the first insert wins.
++        let computed: Arc<[Vec<F>]> = {
++            let mid = log_h.div_ceil(2);
++            let h = 1 << log_h;
++            let root = F::two_adic_generator(log_h);
++            (0..log_h)
++                .map(|layer| {
++                    let shift_power = shift.exp_power_of_2(layer);
++                    let powers = Powers {
++                        base: root.exp_power_of_2(layer),
++                        current: shift_power,
++                    };
++                    let mut twiddles = powers.collect_n(h >> (layer + 1));
++                    let layer_rev = log_h - 1 - layer;
++                    if layer_rev >= mid {
++                        reverse_slice_index_bits(&mut twiddles);
++                    }
++                    twiddles
++                })
++                .collect::<Vec<_>>()
++                .into()
++        };
++        self.coset_twiddles
++            .write()
+             .entry(key)
+-            .or_insert_with(|| {
+-                let mid = log_h.div_ceil(2);
+-                let h = 1 << log_h;
+-                let root = F::two_adic_generator(log_h);
+-                (0..log_h)
+-                    .map(|layer| {
+-                        let shift_power = shift.exp_power_of_2(layer);
+-                        let powers = Powers {
+-                            base: root.exp_power_of_2(layer),
+-                            current: shift_power,
+-                        };
+-                        let mut twiddles = powers.collect_n(h >> (layer + 1));
+-                        let layer_rev = log_h - 1 - layer;
+-                        if layer_rev >= mid {
+-                            reverse_slice_index_bits(&mut twiddles);
+-                        }
+-                        twiddles
+-                    })
+-                    .collect::<Vec<_>>()
+-                    .into()
+-            })
++            .or_insert(computed)
+             .clone()
+     }
+ 
+@@ -119,25 +126,28 @@
+         if let Some(pair) = self.inverse_twiddles.read().get(&log_h) {
+             return pair.clone();
+         }
+-        // Slow path: The value doesn't exist. Acquire a write lock.
+-        let mut w_lock = self.inverse_twiddles.write();
+-        // Double-check: Another thread might have created the entry while we waited.
+-        // The `entry` API handles this check and the insertion atomically.
+-        w_lock
+-            .entry(log_h)
+-            .or_insert_with(|| {
+-                // This computation only runs if the entry is truly vacant.
+-                let half_h = (1 << log_h) >> 1;
+-                let root_inv = F::two_adic_generator(log_h).inverse();
+-                let twiddles = root_inv.powers().collect_n(half_h);
+-                let mut bitrev_twiddles = twiddles.clone();
+-                reverse_slice_index_bits(&mut bitrev_twiddles);
+-
+-                Arc::new(VectorPair {
+-                    twiddles,
+-                    bitrev_twiddles,
+-                })
++        // BlackSilk patch (third_party/README.md, AUDIT.md ZK-F21): compute the
++        // twiddles *before* taking the write lock. `collect_n` is parallel for
++        // large sizes, and running rayon work under this spin lock let a
++        // thread steal a DFT task that then spun on the lock held further up
++        // its own stack. Two threads may now compute the same (deterministic)
++        // table on a miss; the first insert wins.
++        let computed = {
++            let half_h = (1 << log_h) >> 1;
++            let root_inv = F::two_adic_generator(log_h).inverse();
++            let twiddles = root_inv.powers().collect_n(half_h);
++            let mut bitrev_twiddles = twiddles.clone();
++            reverse_slice_index_bits(&mut bitrev_twiddles);
++
++            Arc::new(VectorPair {
++                twiddles,
++                bitrev_twiddles,
+             })
++        };
++        self.inverse_twiddles
++            .write()
++            .entry(log_h)
++            .or_insert(computed)
+             .clone()
+     }
+ }

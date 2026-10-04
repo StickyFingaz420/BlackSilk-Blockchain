@@ -15,3 +15,7 @@ docs/evidence/labnet-w4-*/runs/*/*.dat binary
 # lists (*.tests) feed scripts that read one name per line; a checkout with
 # CRLF endings made the names end in CR (RT-MUTD). Always LF.
 docs/evidence/mutation-*/** text eol=lf
+
+# Allow-listed third-party diffs (third-party-gate.sh): byte-compared, keep LF.
+third_party/patches/*.patch text eol=lf
+third_party/PRISTINE.sha256 text eol=lf

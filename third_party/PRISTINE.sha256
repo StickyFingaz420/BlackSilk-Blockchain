@@ -1,0 +1,7 @@
+# sha256 of the published crates that third_party/ patches (third-party-gate.sh).
+# Each value is the checksum Cargo.lock carried for the crate before it was
+# patched (git history), and matches the crates.io download.
+# Format: sha256sum's, so `sha256sum -c` works in a directory of .crate files.
+4344492a3a2981879411ef31b51b12fb364efeda59b9ac855d7d92559e7b46e8  p3-dft-0.7.0.crate
+52e1cb8b63f02a9e3e441b20c341856d9bce85ae3e3bee6d3ed0da9bea8779d1  p3-fri-0.7.0.crate
+1508ed6e0211a8375ffdcd08746d81841526fe36140d985acd81b4bfe4103649  p3-merkle-tree-0.7.0.crate
