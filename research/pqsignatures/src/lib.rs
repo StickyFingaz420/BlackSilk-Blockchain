@@ -1,4 +1,7 @@
-//! pqsignatures: Production-grade, secure, constant-time Rust post-quantum signature schemes
+//! pqsignatures: a parked research prototype (not built by the BlackSilk
+//! workspace, not reviewed, used by no BlackSilk crate; AUDIT.md S7) wrapping
+//! third-party post-quantum signature crates. No security property, constant
+//! time included, is claimed or verified.
 //!
 //! # Supported Algorithms
 //! - Dilithium2 (pure Rust, via crystals-dilithium)
@@ -42,7 +45,7 @@
 //!
 //! # Security Notes
 //! - All secret keys are zeroized on drop.
-//! - All operations are intended to be constant-time (pending upstream implementation).
+//! - No constant-time property is claimed or verified (upstream crates, not reviewed).
 
 pub mod error;
 pub mod traits;

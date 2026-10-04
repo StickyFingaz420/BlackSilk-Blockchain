@@ -1,8 +1,13 @@
 # pqsignatures
 
-Production-grade, secure, constant-time Rust post-quantum signature schemes:
-- Dilithium2 (pure Rust, via crystals-dilithium)
-- Falcon512 (pure Rust, via falcon-rust)
+**Status: parked research prototype.** It is excluded from the BlackSilk
+workspace (root `Cargo.toml` `exclude`), is not built or tested by CI, has not
+been reviewed, and no BlackSilk crate uses it (AUDIT.md S7). Do not use it to
+protect anything.
+
+Thin wrappers around third-party post-quantum signature crates:
+- Dilithium2 via `crystals-dilithium` (round-3 Dilithium, **not** FIPS 204 ML-DSA)
+- Falcon512 via `falcon-rust` 0.1.x (young, unaudited)
 
 ## Features
 - Secure key handling (zeroize)
@@ -41,5 +46,9 @@ assert!(Dilithium2::verify(&pk, tx_bytes, &sig));
 - Falcon512 fuzzing is limited for performance reasons.
 
 ## Security Notes
-- All secret keys are zeroized on drop.
-- All operations are intended to be constant-time (pending upstream implementation).
+- Secret keys are meant to be zeroized on drop; not verified.
+- No constant-time property is claimed or verified: it depends entirely on the
+  upstream crates, which have not been reviewed.
+- `.github/workflows/ci.yml` and `tests/kat_test.py` here are never run (the
+  workflow is not under the repository's root `.github/`; the KAT files it
+  expects do not exist).
