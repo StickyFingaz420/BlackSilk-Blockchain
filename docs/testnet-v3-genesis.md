@@ -188,7 +188,7 @@ the announcement; it is an input, not a constant of the tool. This is a genesis 
    machines it is not shown, so a hash difference there is a reason to compare
    the full id output, not by itself a failure.
    (A rehearsal uses `--rehearsal` and an id of `0x0001D6E0`–`0x0001D6EF`.)
-   It prints the nonce derivation, the header, its 100 bytes, the full id and the
+   It prints the nonce derivation, the header, its 172 bytes, the full id and the
    constants to paste. Both people compare the full id.
 5. **Commit** the final values only: the beacon (`TESTNET_BEACON`: Bitcoin height
    and hash; the nonce is derived from it, there is no nonce to paste), the pinned

@@ -420,7 +420,8 @@ Transactions from disconnected blocks return to the mempool if they are still va
 ## 8. Storage (node)
 
 Blocks are stored in an append-only log of typed records, `blocks.dat` in the node's
-data directory (format 2, `chain/src/store.rs`).
+data directory (format 3, `chain/src/store.rs`; formats 0 to 2 are refused with resync
+advice, format 2 since output-root).
 
 ```
 file    = file header ‖ record*

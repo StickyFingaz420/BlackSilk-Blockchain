@@ -3511,6 +3511,9 @@ salt, never sizes or frequencies"). Internal engineering work, not an audit.
   `8b96c3a3…`, `9eab5567…`; regtest `aebaf337…`, `1ad5f7f5…`; mainnet `67a1e4b9…`,
   `55353dc4…`. Identity unchanged (testnet `b333a99f…`, regtest `dfab90c6…`, mainnet
   `2dbb1c37…`).
+- These pins are superseded by the combined RX-SALT and output-root pins in
+  [#output-root](#output-root) ("Port onto the main line"): the 172-byte header moved
+  every network's identity and rules fingerprints after this record.
 
 <a id="output-root"></a>
 
@@ -3683,9 +3686,10 @@ restore height). Internal engineering work, not an audit.
       commitments of a block of the fixture coinbase on the genesis state, and a
       `root_after` on the empty tree.
 15. **Suite results and open review points.** Results are in the commit messages. Open:
-    - the RandomX hashes of the mining blob are not pinned as vectors here: the RandomX
-      salt change (`rxsalt`, `"BlackSilk/RandomX/v1"`) lands before this record, and
-      hashes computed on this branch's base would use the reference salt;
+    - (resolved in the port) a RandomX hash of the mining blob with BlackSilk's salt is
+      pinned by `consensus/tests/golden.rs::randomx_known_answer_on_a_mining_blob`
+      (`410e353c…`); it was computed by this implementation, since no independent
+      RandomX with this salt is available here;
     - the range is not served with inclusion proofs yet (`/outputs` could return them);
       wallets check whole lists against one header;
     - the decoy distribution (`/distribution`) stays the node's word above what the
@@ -3728,12 +3732,11 @@ make the proof-of-work input a fixed 47-byte mining blob, in this one revision.
    (header check), labnet `rx_verify`, node fingerprint (`consensus.POW_BLOB_SIZE`,
    `POW_NONCE_OFFSET`, `POW_BLOB_TAG`, `rules.sample.pow_blob`).
 7. **Compatibility.** Every stored PoW hash of an earlier build is for another input
-   (the header instead of the blob), and the store format version is unchanged: such
-   stores are refused by their genesis id, which differs on every network (the store
-   binds its network and genesis id, `StoreIdentity`). A data directory of the
-   intermediate build `650e5fe` (172-byte header, header as PoW input) has the same
-   genesis ids and must not be reused: delete it (labnet and development stores only;
-   none was published). A pool's stratum server must build the blob; a block template
+   (the header instead of the blob). Such stores are refused: by their genesis id,
+   which differs on every network (`StoreIdentity`), and, since RT-OMR3 L4b, by the
+   store format version (3; format 2 refused with resync advice), which also covers a
+   data directory of the intermediate build `650e5fe` (172-byte header, header as PoW
+   input, the same genesis ids). A pool's stratum server must build the blob; a block template
    (`/template`) is unchanged.
 8. **Typed input.** `PowFunction::pow_hash` takes a `&PowBlob` (`[u8; 47]`), so a call
    site that passes header bytes does not compile (RT-OMR2 hardening).
@@ -3771,3 +3774,8 @@ make the proof-of-work input a fixed 47-byte mining blob, in this one revision.
   which `golden.rs::header_vectors_match_the_independent_file` checks line by line.
 - **M1 (wallet):** the PX backfill is confirmed only under the header check (above,
   item 10 as amended in px.md §11.4).
+- **Stores and PoW cache (RT-OMR3 L4b, enforced):** the block-store format is 3 and
+  format 2 is refused with resync advice, so a store of the 100-byte header or of the
+  intermediate `650e5fe` build (header-input PoW hashes under the new genesis ids) is
+  never replayed (`damaged_torn_and_foreign_file_headers`); the PoW cache key tag is
+  `"BlackSilk/pow-cache/v3"`.

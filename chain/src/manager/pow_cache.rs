@@ -37,7 +37,7 @@ struct Hashes {
 impl Hashes {
     fn key(seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         H::new()
-            .chain(b"BlackSilk/pow-cache/v2")
+            .chain(b"BlackSilk/pow-cache/v3")
             .chain(seed)
             .chain(blob)
             .finish()

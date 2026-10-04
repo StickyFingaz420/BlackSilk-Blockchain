@@ -1487,6 +1487,58 @@ mod tests {
         Wallet::from_seed(Network::Regtest, [7; 32], 1)
     }
 
+    /// The pinned restore point (RT-D1b N1), driven directly with a
+    /// fabricated pin (RT-OMR3 L4a): the same block at the pinned position
+    /// passes; at another position it is the contradiction that tells the
+    /// user the restore node may have lied; another block there is refused
+    /// without a header check and is a reorganization (reset) with one; a
+    /// position-only pin accepts any block at the pinned position.
+    #[test]
+    fn the_restore_point_pin_holds_and_reports_a_contradiction() {
+        let mut w = Wallet::from_seed(Network::Regtest, [7; 32], 40);
+        let (pinned, other) = ([1u8; 32], [2u8; 32]);
+        w.restore_point = Some(RestorePoint {
+            height: 40,
+            id: Some(pinned),
+            first_output: 100,
+        });
+        assert!(!w.check_first_output(40, &pinned, 100).unwrap());
+        let e = w
+            .check_first_output(40, &pinned, 105)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("places its first output at 105"), "{e}");
+        assert!(e.contains("output index at 100"), "{e}");
+        assert!(e.contains("restore again from a trusted node"), "{e}");
+        // Another block at the restore point.
+        w.verify_headers = false;
+        w.restore_check = false;
+        let e = w
+            .check_first_output(40, &other, 100)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("another block at the wallet's restore point"),
+            "{e}"
+        );
+        w.verify_headers = true;
+        assert!(w.check_first_output(40, &other, 100).unwrap(), "a reset");
+        // A position-only pin: any block, at the pinned position only.
+        w.restore_point = Some(RestorePoint {
+            height: 40,
+            id: None,
+            first_output: 100,
+        });
+        assert!(!w.check_first_output(40, &other, 100).unwrap());
+        let e = w
+            .check_first_output(40, &other, 99)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("restore again from a trusted node"), "{e}");
+        // The shape bound below the pin: at least height - 1.
+        assert!(w.check_first_output(41, &other, 30).is_err());
+    }
+
     fn block(height: u64, txs: Vec<Transaction>) -> Block {
         Block {
             header: BlockHeader {

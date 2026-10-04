@@ -363,7 +363,7 @@ Each entry gives what the scheme commits to, its hardness argument, known attack
 1. **Code dependence:** none. The port is pure Rust, owned and frozen at v1, and verified against official vectors. Monero's governance cannot change BlackSilk's rules.
 2. **Merge mining:** impossible as designed. BlackSilk hashes its own 100 B (soon 140 B) header with its own seed. There is no aux-PoW commitment, so Monero work is never directly reusable [E, from code].
 3. **Hashpower fungibility (the real issue)** [E/H]:
-   - Every RandomX-capable machine can mine BlackSilk via a thin adapter: blob, nonce offset 92 and target format (R9 §5). That covers xmrig rigs, botnets, Qubic-style pools, and the X5/X9 ASICs if their firmware accepts arbitrary key and blob [U].
+   - Every RandomX-capable machine can mine BlackSilk via a thin adapter: blob, nonce offset 92 and target format (R9 §5). (Correction, output-root: the offset is compiled into xmrig, so v3 hashes a 47-byte mining blob with the nonce at byte 39, docs/consensus.md §3.) That covers xmrig rigs, botnets, Qubic-style pools, and the X5/X9 ASICs if their firmware accepts arbitrary key and blob [U].
    - At testnet or early-mainnet difficulty, a fraction of a percent of Monero's hashrate dominates BlackSilk.
 4. **Ecosystem reputation:** botnets favour RandomX because it runs on any CPU. Being on RandomX makes BlackSilk part of that target set.
 5. **Benefits of sharing:**
