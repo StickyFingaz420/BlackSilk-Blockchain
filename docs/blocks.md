@@ -809,9 +809,10 @@ anyone on the path:
   network does not learn the origin, but that node's operator does.
 
 Ring members come from the wallet's own output index; `/outputs` is used once, to fill
-the missing range of that index in fixed pages, not per ring. That backfill is not
-verified: below the restore height the node chooses the outputs, and their heights,
-which feed the decoy distribution (F38-2; 38 W11, P1). The PX commitment tree is
+the missing range of that index in fixed pages, not per ring. The filled index is
+checked against the synced block's header (`output_count`, `output_root`; B-OMR), and
+every scanned block's `first_output` against its header's `output_count`, so neither
+is the node's word (output-root; closes F38-2, 38 W11). The PX commitment tree is
 built from the scanned blocks; `/px/commitments` is fetched whole, once, for the part
 below the restore height, and never after it: an imported contract record is placed
 from the commitments of the recent blocks the wallet keeps, or at a rescan (px.md

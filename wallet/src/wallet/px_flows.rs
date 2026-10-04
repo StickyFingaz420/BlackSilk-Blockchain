@@ -139,8 +139,10 @@ impl Wallet {
     /// on the index's extent, never on which outputs the wallet spends, so
     /// they reveal nothing about rings (review I3 §3.9; F2 is thereby moot).
     /// The fetched range must pass the index's shape check (every block from
-    /// 1 to the synced one present, each with a coinbase output) before it is
-    /// added; it is not otherwise verified (F38-2, 38 W11).
+    /// 1 to the synced one present, each with a coinbase output) and, with
+    /// the indexed outputs after it, have the synced header's output range
+    /// (`output_count`, `output_root`; B-OMR) before it is added (closes
+    /// F38-2, 38 W11).
     pub(super) fn complete_index(&mut self, node: &dyn NodeApi) -> Result<Vec<u64>, WalletError> {
         // Nothing indexed (an older wallet file with no block synced since):
         // the synced block itself is indexed from the block feed, which
@@ -196,6 +198,29 @@ impl Wallet {
             }
             from = to;
         }
+        // B-OMR: the fetched outputs followed by the indexed ones are the
+        // chain's output list (keys, commitments, heights, coinbase flags,
+        // positions): their range is the one the synced block's header
+        // commits to (closes RT-D1b N2 and 38 W11). The range of a prefix
+        // is fixed by the range of the whole, so this also checks the
+        // backfill alone against the header before the restore point
+        // (`output_count` = `end`, its `output_root`). The scanned blocks
+        // are checked one by one (`first_output` against `output_count`).
+        let header = self.synced_header(node)?;
+        let mut range = blacksilk_tx::mmr::OutputFrontier::new();
+        for e in older.iter().chain(self.index.iter()) {
+            range.push(blacksilk_tx::mmr::leaf(
+                &e.one_time_key,
+                &e.commitment,
+                e.height,
+                e.coinbase,
+            ));
+        }
+        if range.count() != header.output_count || range.root() != header.output_root {
+            return Err(WalletError::BadNodeData(
+                "the node's outputs are not the ones the chain's header commits to".into(),
+            ));
+        }
         // Checked before it is added: a refused backfill leaves the index as
         // it was, so the next spend fetches it again (from this node or
         // another).
@@ -215,8 +240,8 @@ impl Wallet {
     /// draws from is derived from that index (`complete_index`), so nothing is
     /// requested at spend time but, once, a backfill of outputs older than the
     /// restore height. The node can no longer skew decoy ages for the scanned
-    /// range (F38-1, F38-6); below the restore height the heights are the
-    /// unverified backfill's (F38-2).
+    /// range (F38-1, F38-6), and below the restore height the backfill is
+    /// checked against the synced header's output range (F38-2 closed).
     ///
     /// Decoys follow the gamma picker with coinbase maturity applied inside the
     /// draw (`blacksilk_tx::decoy`, review R3-1). An output spent before in a

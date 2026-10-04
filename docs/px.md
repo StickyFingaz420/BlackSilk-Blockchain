@@ -754,6 +754,20 @@ undo. Tests check that a reorganization restores the root and pool exactly.
     after it, or, for commitments of later blocks labelled as older ones, by the first
     scanned commitment; the wallet then rebuilds the tree from a fresh list at the
     next sync.
+  - **The backfill is checked against the headers** (output-root, B-PXR). Every root
+    of the backfill's root window, computed from the list and its heights, must be the
+    `px_root` of that block's header (the last 100 headers up to the base block, which
+    must have the base block's id). A list that fails is refused and fetched again at
+    the next sync. The list is then the exact list of the chain those headers belong
+    to, heights included. When the base block's header is the one the wallet checked
+    from the genesis with proof of work (a restore's first sync, or `--verify-headers`),
+    that chain is the wallet's, and the tree is bound to it at once: no wait for an
+    anchor including a scanned commitment. Otherwise the base id is the node's word
+    (it could serve a consistent fake header chain with matching roots), so the tree
+    stays unconfirmed and the 100-block wait, the backfill-tail check and the rebuild on
+    a refused block apply as before (RT-OMR2 M1). Tested by
+    `a_relabelled_commitment_inside_the_window_is_refused_by_the_headers` and
+    `a_header_checked_restore_binds_the_px_backfill_at_once`.
   - **The backfill's end is checked against its block** (W3-39b). The wallet reads the
     block of the last listed commitment (bound to the header chain, which a restore
     checks from the genesis, blocks.md §10) and refuses the list unless the entries at

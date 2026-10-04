@@ -1003,8 +1003,11 @@ e2e ring tests count the requests too. The endpoint stays for tools.
   index of each scanned block's first output must continue the index exactly (RT-D1
   F1): a node that misstates it is refused, and can no longer make the wallet discard
   its scanned range and backfill it. The exception is the *first* scanned block, the
-  restore point. At the restore its `first_output` is the restoring node's word, checked
-  only to be at least its height − 1, and 0 for block 1 (RT-D1b N2). It is then pinned
+  restore point. Since output-root its `first_output`, like every block's, is fixed by
+  the block's own header: `first_output + outputs(block) == header.output_count` (rule
+  B-OMR), checked on every block the wallet indexes, so it is no longer the restoring
+  node's word (RT-D1b N2, closed); the older shape checks (at least height − 1, and 0
+  for block 1) stay. It is then pinned
   with the block id (`RestorePoint`, RT-D1b N1): a rescan that reaches the restore point
   again (a reorganization deeper than the kept window, or one forced by a node lying in
   the single-header reorganization probe) must find the same block at the same position,
@@ -1022,10 +1025,15 @@ e2e ring tests count the requests too. The endpoint stays for tools.
   may have lied; restore again from a trusted node. A wallet scanned from the genesis
   derives every position and every height itself.
 - *Backfill* (below the restore height). Fetched once with `/outputs`, as the whole
-  range `0 .. start`, and checked only for shape against consensus facts before it is
-  stored: no output at height 0 (the genesis body is empty), every height `1..=synced`
-  present with at least one coinbase output (every coinbase has at least one), heights
-  non-decreasing and none above the synced block. A backfill that fails is not stored.
+  range `0 .. start`, and verified before it is stored (38 W11, output-root): the
+  backfill followed by the indexed outputs must have the output range the synced
+  block's header commits to (`output_count`, `output_root`; rule B-OMR, consensus.md
+  §7.1), which fixes every key, commitment, height, coinbase flag and position, and
+  so the backfill alone is the chain's range before the restore point (a range's
+  prefix is fixed by the whole). The shape check against consensus facts stays: no
+  output at height 0 (the genesis body is empty), every height `1..=synced` present
+  with at least one coinbase output, heights non-decreasing and none above the synced
+  block. A backfill that fails either check is not stored.
 - *Old wallet files* (written before the index existed, no block synced since). The
   synced block is fetched again from `/blocks`, checked against the wallet's own block
   id and `tx_root`; its `first_output` must agree with the global indices of the
@@ -1037,14 +1045,12 @@ after a restore with no `sync` in between (the spend's own scan does not backfil
 spend then fetches the backfill just before `/tx`, and warns. Run `sync` after `restore`
 before spending; the CLI says so.
 
-**Residual (F38-2; 38 W11, P1).** Below the restore height the node chooses the output
-keys, commitments and heights. The shape check catches a gap, a stale tail or a block
-without a coinbase output, not a consistent fabrication, so that node still chooses the
-older part of the distribution and of the decoy pool. The restoring node also chooses
-where the restore point's outputs start, so it can shift every global index from there
-on consistently; only a later honest node detects it (RT-D1b N2; a header commitment is
-under research). Verifying the backfill (38 W11) is P1. Until then, restore from your
-own node, or restore from the genesis; the CLI warns at `restore`.
+**Closed by output-root (F38-2, 38 W11, RT-D1b N2).** Before the headers committed to
+the output set, the node chose the keys, commitments and heights below the restore
+height (checked only for shape) and where the restore point's outputs start. Both are
+now verified against the header chain (above): a node can withhold the backfill but
+not alter, reorder or shift it. What remains is the header chain's own trust: a
+restore checks it from the genesis (blocks.md §10), with sampled proof of work.
 
 **Forced rescans (RT-D1b N4, RT-D1c M3).** The reorganization probe reads one header per
 height without proof of work, so a node can force a rescan back to the restore point at

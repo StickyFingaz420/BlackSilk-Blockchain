@@ -24,7 +24,9 @@
 //! told the node that a spend was being built. The heights of the scanned
 //! range come from blocks the wallet checked; those of the backfilled range
 //! (below the restore height) are the node's `/outputs` answers, checked
-//! only for shape (see `cumulative_of`), not verified (F38-2; 38 W11).
+//! for shape (see `cumulative_of`) and, since output-root, against the
+//! synced header's output range (`Wallet::complete_index`; F38-2 and 38 W11
+//! closed).
 //!
 //! **Size.** 73 bytes per output in memory; 146 hex characters in the wallet
 //! file (about 150 MB per million outputs). Adequate for the testnet; a
@@ -187,7 +189,7 @@ impl OutputIndex {
 /// appears, with a coinbase output; heights never decrease and none exceeds
 /// `synced`. Anything else is refused. It catches a backfill with a gap, a
 /// stale tail or relabelled coinbase flags; it cannot catch a consistent
-/// fabrication (the backfill is not verified, F38-2).
+/// fabrication (the header check of `Wallet::complete_index` does).
 pub fn cumulative_of<'a>(
     outputs: impl IntoIterator<Item = &'a IndexedOutput>,
     synced: u64,
