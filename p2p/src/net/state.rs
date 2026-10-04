@@ -143,11 +143,15 @@ pub(super) struct Peer {
     /// the snapshot our `Version` came from, so a tip that changed during
     /// the handshake is announced once the peer is registered (RT-SYNC F-B).
     pub(super) announced: Hash,
-    /// The peer delivered headers new to us whose proof of work was valid
-    /// (each such delivery is real work, or the first copy of a header the
-    /// network mined): its later batches are trusted, verified first and not
-    /// budgeted (`header_budget`, docs/p2p.md §6). Never set for junk: a
-    /// failed proof of work disconnects the peer.
+    /// The peer delivered a *live* new tip with valid proof of work: a
+    /// batch that stored new headers ending on our best header chain, not a
+    /// full batch, above our previous best header, with a recent timestamp
+    /// (the clock monitor's live-arrival condition plus the catch-up tip-age
+    /// bound, so identities cannot collect it in bulk during initial sync:
+    /// at most one per new tip of the network). Its later batches are
+    /// verified after outbound peers' and before untrusted ones, and are
+    /// not budgeted (`header_budget`, docs/p2p.md §6). A failed proof of work
+    /// still disconnects it.
     pub(super) pow_proven: bool,
 }
 
@@ -319,6 +323,9 @@ pub(super) struct State {
     /// sender origin (`queue_key`). Bounded (docs/p2p.md §6).
     pub(super) header_queue_len: usize,
     pub(super) header_queue_origin: HashMap<NetAddr, usize>,
+    /// Of `header_queue_len`, the batches of untrusted inbound senders
+    /// (`header_budget::HeaderLane::Inbound`): at most `max_inbound`.
+    pub(super) header_queue_untrusted: usize,
     /// The proof-of-work budget of untrusted header senders
     /// (`header_budget`, docs/p2p.md §6).
     pub(super) header_pow: super::header_budget::PowBudget,

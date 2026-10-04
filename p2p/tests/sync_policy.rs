@@ -255,29 +255,12 @@ async fn pow_node(
     (chain, net)
 }
 
-/// What one flood run measured.
-struct FloodRun {
-    /// Seconds from the honest node's new block to the victim storing its
-    /// header, the largest over the run.
-    max_lag: f64,
-    junk_hashes: u64,
-    secs: f64,
-    throttled: u64,
-}
-
-/// R8-8: a victim V syncs from one outbound peer H, which mines a block
-/// every 250 ms, while `attackers` inbound connections (loopback with
-/// `allow_private`, so never banned: like onion peers or rotating
-/// addresses) flood plausible single headers with junk proof of work, one
-/// every 20 ms each, reconnecting whenever they are disconnected. Every hash
-/// costs 30 ms.
-async fn flood_run(budget: HeaderPowBudget, attackers: usize) -> FloodRun {
-    const BLOCKS: u64 = 24;
-    let honest = common::slow_node(0x51, fast_config(&[])).await;
-    // H's first blocks come 1 s apart, so the difficulty rises enough for
-    // junk proof of work to fail; the flood's junk extends that prefix.
+/// Mines H's first blocks 1 s apart until the difficulty is high enough for
+/// junk proof of work to fail; returns the junk prototype on H's tip and
+/// H's height.
+async fn steep_blocks(honest: &common::SlowNode) -> (BlockHeader, u64) {
     let c = honest.chain.clone();
-    let (proto, prefix) = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let mut c = c.lock().unwrap();
         let mut i = 0;
         while c.headers().template().difficulty < JUNK_DIFFICULTY {
@@ -293,7 +276,93 @@ async fn flood_run(budget: HeaderPowBudget, attackers: usize) -> FloodRun {
         (junk_prototype(c.headers()), c.height())
     })
     .await
-    .unwrap();
+    .unwrap()
+}
+
+/// Waits until `cond` holds, at most `secs`.
+async fn wait_for(what: &str, secs: u64, mut cond: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while !cond() {
+        assert!(Instant::now() < deadline, "{what}");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// Whether `chain` stores the header `id`.
+fn stored(chain: &SharedChain, id: &Hash) -> bool {
+    chain.lock().unwrap().headers().header(id).is_some()
+}
+
+/// The next valid header on `g`'s tip (tagged by `k`), accepted into `g`.
+fn next_valid(g: &mut HeaderChain, k: u8) -> (BlockHeader, Hash) {
+    let t = g.template();
+    let parent = *g.header(&t.prev_id).unwrap();
+    let h = BlockHeader {
+        version: t.version,
+        height: t.height,
+        prev_id: t.prev_id,
+        timestamp: t.min_timestamp.max(parent.timestamp + 1),
+        difficulty: t.difficulty,
+        tx_root: [k; 32],
+        nonce: k as u64,
+    };
+    let id = g.accept(h, u64::MAX / 2).unwrap().id;
+    (h, id)
+}
+
+/// `n` flooding identities against `addr`: each sends a junk header of
+/// `proto` every 20 ms, reading everything to stay connected, and
+/// reconnects whenever it is disconnected (never banned on loopback with
+/// `allow_private`: like onion peers or rotating addresses).
+fn flood(
+    addr: std::net::SocketAddr,
+    proto: BlockHeader,
+    n: usize,
+    stop: &Arc<AtomicBool>,
+    counter: &Arc<AtomicU64>,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    (0..n)
+        .map(|_| {
+            let (stop, counter) = (stop.clone(), counter.clone());
+            tokio::spawn(async move {
+                while !stop.load(Relaxed) {
+                    let Some((_, mut r, mut w)) = raw_handshake(addr, 0, 5.0).await else {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        continue;
+                    };
+                    let drain = tokio::spawn(async move { while r.recv().await.is_ok() {} });
+                    while !stop.load(Relaxed) {
+                        let k = counter.fetch_add(1, Relaxed);
+                        let m = Message::Headers(vec![junk(&proto, k)]);
+                        if w.send(&m.encode()).await.is_err() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    drain.abort();
+                }
+            })
+        })
+        .collect()
+}
+
+/// What one flood run measured.
+struct FloodRun {
+    /// Seconds from the honest node's new block to the victim storing its
+    /// header, the largest over the run.
+    max_lag: f64,
+    junk_hashes: u64,
+    secs: f64,
+    throttled: u64,
+}
+
+/// R8-8: a victim V syncs from one outbound peer H, which mines a block
+/// every 250 ms, while `attackers` inbound identities flood junk headers
+/// (`flood`). Every hash costs 30 ms.
+async fn flood_run(budget: HeaderPowBudget, attackers: usize) -> FloodRun {
+    const BLOCKS: u64 = 24;
+    let honest = common::slow_node(0x51, fast_config(&[])).await;
+    let (proto, prefix) = steep_blocks(&honest).await;
     let pow = Arc::new(SlowJunkPow {
         delay: Duration::from_millis(30),
         junk: AtomicU64::new(0),
@@ -302,42 +371,13 @@ async fn flood_run(budget: HeaderPowBudget, attackers: usize) -> FloodRun {
     cfg.header_pow_budget = budget;
     let (chain, net) = pow_node(pow.clone(), 0x52, cfg, &[]).await;
     let victim = net.local_addr().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while net.stats().outbound == 0 {
-        assert!(Instant::now() < deadline, "V never connected to H");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    while chain.lock().unwrap().header_height() < prefix {
-        assert!(Instant::now() < deadline, "V never synced H's prefix");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_for("V synced the prefix of H", 20, || {
+        chain.lock().unwrap().header_height() >= prefix
+    })
+    .await;
 
     let stop = Arc::new(AtomicBool::new(false));
-    let counter = Arc::new(AtomicU64::new(0));
-    let mut tasks = Vec::new();
-    for _ in 0..attackers {
-        let (stop, counter) = (stop.clone(), counter.clone());
-        tasks.push(tokio::spawn(async move {
-            while !stop.load(Relaxed) {
-                let Some((_, mut r, mut w)) = raw_handshake(victim, 0, 5.0).await else {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                    continue;
-                };
-                // Read everything, as a real attacker would, to stay
-                // connected.
-                let drain = tokio::spawn(async move { while r.recv().await.is_ok() {} });
-                while !stop.load(Relaxed) {
-                    let k = counter.fetch_add(1, Relaxed);
-                    let m = Message::Headers(vec![junk(&proto, k)]);
-                    if w.send(&m.encode()).await.is_err() {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                drain.abort();
-            }
-        }));
-    }
+    let tasks = flood(victim, proto, attackers, &stop, &Default::default());
     // The flood fills the queue before the honest blocks start.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let start = Instant::now();
@@ -346,11 +386,10 @@ async fn flood_run(budget: HeaderPowBudget, attackers: usize) -> FloodRun {
         honest.mine(1).await;
         let mined = Instant::now();
         assert_eq!(honest.heights().await.1, n);
-        let deadline = mined + Duration::from_secs(60);
-        while chain.lock().unwrap().header_height() < n {
-            assert!(Instant::now() < deadline, "honest header {n} never stored");
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_for("honest header stored", 60, || {
+            chain.lock().unwrap().header_height() >= n
+        })
+        .await;
         max_lag = max_lag.max(mined.elapsed().as_secs_f64());
         let next = mined + Duration::from_millis(250);
         tokio::time::sleep(next.saturating_duration_since(Instant::now())).await;
@@ -369,22 +408,21 @@ async fn flood_run(budget: HeaderPowBudget, attackers: usize) -> FloodRun {
 }
 
 /// R8-8 (header verification DoS): with the header proof-of-work budget, a
-/// flood of junk single headers from 16 unbannable inbound identities costs
-/// at most the budget's bound in hashes (`HeaderPowBudget::bound`), and the
-/// honest outbound peer's headers are stored within one second of being
-/// mined: they are verified before any untrusted batch, behind at most the
-/// one batch already being hashed. Without a budget (priority alone) the
-/// same flood keeps the worker hashing junk whenever it is idle.
+/// flood of junk single headers from 16 unbannable inbound identities (one
+/// class) costs at most the class bound in hashes
+/// (`HeaderPowBudget::class_bound`), and the honest outbound peer's headers
+/// are stored within one second of being mined: they are verified before any
+/// untrusted batch, behind at most the one batch already being hashed.
+/// Without a budget (priority alone) the same flood keeps the worker hashing
+/// junk whenever it is idle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_junk_header_flood_from_unbannable_peers_is_budgeted_and_honest_sync_goes_on() {
     let budget = HeaderPowBudget {
-        class_burst: 2.0,
-        class_rate: 0.5,
-        global_burst: 3.0,
-        global_rate: 1.0,
+        class_burst: 3.0,
+        class_rate: 1.0,
     };
     let bounded = flood_run(budget.clone(), 16).await;
-    let bound = budget.bound(Duration::from_secs_f64(bounded.secs), 2);
+    let bound = budget.class_bound(Duration::from_secs_f64(bounded.secs), 2);
     eprintln!(
         "budgeted: {} junk hashes in {:.1} s (bound {bound:.1}), {} batches throttled, \
          honest header lag at most {:.3} s",
@@ -407,7 +445,6 @@ async fn a_junk_header_flood_from_unbannable_peers_is_budgeted_and_honest_sync_g
         "unbudgeted: {} junk hashes in {:.1} s, honest header lag at most {:.3} s",
         unlimited.junk_hashes, unlimited.secs, unlimited.max_lag
     );
-    assert_eq!(unlimited.throttled, 0);
     assert!(
         unlimited.junk_hashes > 4 * bounded.junk_hashes,
         "the flood is real: {} unbudgeted against {} budgeted",
@@ -416,10 +453,144 @@ async fn a_junk_header_flood_from_unbannable_peers_is_budgeted_and_honest_sync_g
     );
 }
 
+/// RT-HDRDOS F2 (the untrusted floor): a victim with no outbound peers is
+/// flooded through two classes at once, 8 onion identities on its onion
+/// listener and 8 IPv4 identities, while fresh honest IPv4 identities each
+/// announce the next valid header. Classes have separate buckets (no
+/// node-wide one), and within the IPv4 class the next batch is drawn at
+/// random, so each honest header waits about `(k + 1) / class_rate` on
+/// average (a geometric number of draws) with `k` junk batches waiting in its
+/// class: here 1 token/s and k <= 8, about 9 s (measured: means 9.9 s and
+/// 6.3 s in two runs of 5 rounds, single waits 1.0 to 17.2 s). The onion flood takes nothing from the IPv4 class.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_honest_untrusted_peer_progresses_under_a_two_class_flood() {
+    const ROUNDS: u8 = 5;
+    let pow = Arc::new(SlowJunkPow {
+        delay: Duration::from_millis(30),
+        junk: AtomicU64::new(0),
+    });
+    let mut cfg = fast_config(&[]);
+    cfg.onion_listen = Some("127.0.0.1:0".parse().unwrap());
+    cfg.header_pow_budget = HeaderPowBudget {
+        class_burst: 1.0,
+        class_rate: 1.0,
+    };
+    let (prefix, mut g) = steep_prefix();
+    let proto = junk_prototype(&g);
+    let (chain, net) = pow_node(pow.clone(), 0x55, cfg, &prefix).await;
+    let (clear, onion) = (net.local_addr().unwrap(), net.onion_local_addr().unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let counter = Arc::new(AtomicU64::new(0));
+    let mut tasks = flood(onion, proto, 8, &stop, &counter);
+    tasks.extend(flood(clear, proto, 8, &stop, &counter));
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let mut waits = Vec::new();
+    for k in 1..=ROUNDS {
+        let (h, id) = next_valid(&mut g, k);
+        let (_, _r, mut w) = raw_handshake(clear, 0, 5.0).await.expect("handshake");
+        let sent = Instant::now();
+        w.send(&Message::Headers(vec![h]).encode()).await.unwrap();
+        wait_for("honest untrusted header stored", 90, || stored(&chain, &id)).await;
+        waits.push(sent.elapsed().as_secs_f64());
+    }
+    stop.store(true, Relaxed);
+    for t in tasks {
+        t.abort();
+    }
+    let mean = waits.iter().sum::<f64>() / waits.len() as f64;
+    let max = waits.iter().cloned().fold(0.0, f64::max);
+    let s = net.stats();
+    eprintln!(
+        "untrusted floor under a two-class flood: honest waits {waits:.2?} s (mean {mean:.2}, \
+         max {max:.2}); {} junk hashes, {} throttled",
+        pow.junk.load(Relaxed),
+        s.header_pow_throttled
+    );
+    assert!(s.header_pow_throttled > 0, "the flood was throttled");
+    assert!(
+        mean < 20.0,
+        "the untrusted floor collapsed: mean {mean:.2} s"
+    );
+}
+
+/// RT-HDRDOS F1: identities that proved themselves (a live new tip each)
+/// and then send junk are verified after outbound peers, so a stockpile of
+/// them cannot delay the outbound peer's header beyond the batch already
+/// being hashed. 16 proven identities each queue one junk header (100 ms a
+/// hash: 1.6 s in a shared FIFO); the next header of H is stored within
+/// 0.6 s.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn proven_identities_cannot_delay_outbound_headers() {
+    const PROVEN: usize = 16;
+    let honest = common::slow_node(0x56, fast_config(&[])).await;
+    let (proto, prefix) = steep_blocks(&honest).await;
+    let pow = Arc::new(SlowJunkPow {
+        delay: Duration::from_millis(100),
+        junk: AtomicU64::new(0),
+    });
+    let mut cfg = fast_config(&[honest.addr]);
+    cfg.header_pow_budget = HeaderPowBudget {
+        class_burst: 1.0,
+        class_rate: 0.0,
+    };
+    let (chain, net) = pow_node(pow.clone(), 0x57, cfg, &[]).await;
+    let victim = net.local_addr().unwrap();
+    wait_for("V synced the prefix of H", 30, || {
+        chain.lock().unwrap().header_height() >= prefix
+    })
+    .await;
+    // Each identity proves itself with a live new tip on the best chain of
+    // V (headers only: H does not have them, so its next block is a side
+    // branch that V still verifies and stores).
+    let mut writers = Vec::new();
+    for k in 0..PROVEN {
+        let (_, r, mut w) = raw_handshake(victim, 0, 5.0).await.expect("handshake");
+        let h = {
+            let c = chain.lock().unwrap();
+            let mut h = junk_prototype(c.headers());
+            h.nonce = k as u64;
+            h.tx_root = [k as u8 + 1; 32];
+            h
+        };
+        let id = h.id(params().network_id);
+        w.send(&Message::Headers(vec![h]).encode()).await.unwrap();
+        wait_for("proving header stored", 20, || stored(&chain, &id)).await;
+        writers.push((r, w));
+    }
+    assert_eq!(net.stats().header_pow_failed, 0);
+    // All of them queue junk at once, then H mines.
+    for (k, (_, w)) in writers.iter_mut().enumerate() {
+        let m = Message::Headers(vec![junk(&proto, 1000 + k as u64)]);
+        w.send(&m.encode()).await.unwrap();
+    }
+    wait_for("the junk is queued", 20, || {
+        pow.junk.load(Relaxed) >= 1 && net.header_queue_len() >= PROVEN / 2
+    })
+    .await;
+    honest.mine(1).await;
+    let mined = Instant::now();
+    let id = honest.chain.lock().unwrap().tip_id();
+    wait_for("the header of H stored", 30, || stored(&chain, &id)).await;
+    let lag = mined.elapsed().as_secs_f64();
+    wait_for("the junk is hashed", 30, || {
+        pow.junk.load(Relaxed) >= PROVEN as u64
+    })
+    .await;
+    let s = net.stats();
+    eprintln!(
+        "outbound header lag behind {PROVEN} proven junk senders: {lag:.3} s; \
+         junk hashes {} (budgeted failures {})",
+        pow.junk.load(Relaxed),
+        s.header_pow_failed
+    );
+    assert_eq!(s.header_pow_failed, 0, "proven identities are not budgeted");
+    assert!(lag < 0.6, "the header of H waited {lag:.3} s");
+}
+
 /// The budget charges failures only: an honest inbound peer's valid headers
 /// are refunded, so a budget of one hash with no refill still lets it
-/// deliver header after header (after its first, it is trusted:
-/// `Peer::pow_proven`).
+/// deliver header after header (after its first, a live new tip, it is
+/// proven: `Peer::pow_proven`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_honest_inbound_peer_is_not_throttled_by_an_empty_refill() {
     let pow = Arc::new(SlowJunkPow {
@@ -430,8 +601,6 @@ async fn an_honest_inbound_peer_is_not_throttled_by_an_empty_refill() {
     cfg.header_pow_budget = HeaderPowBudget {
         class_burst: 1.0,
         class_rate: 0.0,
-        global_burst: 1.0,
-        global_rate: 0.0,
     };
     let (chain, net) = pow_node(pow, 0x53, cfg, &[]).await;
     let (_, _r, mut w) = raw_handshake(net.local_addr().unwrap(), 0, 5.0)
@@ -439,21 +608,20 @@ async fn an_honest_inbound_peer_is_not_throttled_by_an_empty_refill() {
         .expect("handshake");
     for (i, h) in header_branch(5, u64::MAX).into_iter().enumerate() {
         w.send(&Message::Headers(vec![h]).encode()).await.unwrap();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while chain.lock().unwrap().header_height() < i as u64 + 1 {
-            assert!(Instant::now() < deadline, "header {} not stored", i + 1);
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_for("header stored", 20, || {
+            chain.lock().unwrap().header_height() > i as u64
+        })
+        .await;
     }
     let s = net.stats();
     assert_eq!((s.header_pow_failed, s.header_pow_throttled), (0, 0));
 }
 
-/// An untrusted inbound peer that sent junk is throttled once the budget is
-/// spent, and a junk hash is never refunded: with one hash and no refill,
-/// the second junk header (from a fresh identity) is dropped unhashed.
+/// Junk spends the budget and is never refunded; later untrusted batches
+/// wait (kept in the queue, not dropped) instead of being hashed: with one
+/// hash and no refill, of three junk senders one is hashed and two wait.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn junk_spends_the_budget_and_the_next_untrusted_header_is_dropped_unhashed() {
+async fn junk_spends_the_budget_and_later_untrusted_batches_wait_unhashed() {
     let pow = Arc::new(SlowJunkPow {
         delay: Duration::from_millis(1),
         junk: AtomicU64::new(0),
@@ -462,28 +630,64 @@ async fn junk_spends_the_budget_and_the_next_untrusted_header_is_dropped_unhashe
     cfg.header_pow_budget = HeaderPowBudget {
         class_burst: 1.0,
         class_rate: 0.0,
-        global_burst: 10.0,
-        global_rate: 0.0,
     };
     let (prefix, g) = steep_prefix();
     let proto = junk_prototype(&g);
     let (_chain, net) = pow_node(pow.clone(), 0x54, cfg, &prefix).await;
     let addr = net.local_addr().unwrap();
+    let mut keep = Vec::new();
     for k in 0..3u64 {
-        let (_, _r, mut w) = raw_handshake(addr, 0, 5.0).await.expect("handshake");
+        let (_, r, mut w) = raw_handshake(addr, 0, 5.0).await.expect("handshake");
         let m = Message::Headers(vec![junk(&proto, k)]);
         w.send(&m.encode()).await.unwrap();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
+        wait_for("junk handled", 20, || {
             let s = net.stats();
-            if s.header_pow_failed + s.header_pow_throttled == k + 1 {
-                break;
-            }
-            assert!(Instant::now() < deadline, "junk header {k} not handled");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+            s.header_pow_failed + s.header_pow_throttled == k + 1
+        })
+        .await;
+        keep.push((r, w));
     }
     let s = net.stats();
     assert_eq!((s.header_pow_failed, s.header_pow_throttled), (1, 2));
     assert_eq!(pow.junk.load(Relaxed), 1, "one junk hash, then none");
+    assert_eq!(net.header_queue_len(), 2, "the other two wait");
+}
+
+/// RT-HDRDOS F3: a batch that waits for the budget is verified once a token
+/// frees, without a new announcement from its sender: an honest untrusted
+/// peer's header, behind spent junk, is stored after the refill (no claimed
+/// height lowered, no better chain hidden).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_waiting_batch_is_verified_after_the_refill() {
+    let pow = Arc::new(SlowJunkPow {
+        delay: Duration::from_millis(1),
+        junk: AtomicU64::new(0),
+    });
+    let mut cfg = fast_config(&[]);
+    cfg.header_pow_budget = HeaderPowBudget {
+        class_burst: 1.0,
+        class_rate: 0.5,
+    };
+    let (prefix, mut g) = steep_prefix();
+    let proto = junk_prototype(&g);
+    let (chain, net) = pow_node(pow.clone(), 0x58, cfg, &prefix).await;
+    let addr = net.local_addr().unwrap();
+    let (_, _jr, mut jw) = raw_handshake(addr, 0, 5.0).await.expect("handshake");
+    jw.send(&Message::Headers(vec![junk(&proto, 0)]).encode())
+        .await
+        .unwrap();
+    wait_for("junk hashed", 20, || pow.junk.load(Relaxed) == 1).await;
+    let (h, id) = next_valid(&mut g, 9);
+    let (_, _r, mut w) = raw_handshake(addr, 0, 5.0).await.expect("handshake");
+    let sent = Instant::now();
+    w.send(&Message::Headers(vec![h]).encode()).await.unwrap();
+    wait_for("the batch waits", 5, || {
+        net.stats().header_pow_throttled == 1
+    })
+    .await;
+    assert!(!stored(&chain, &id));
+    wait_for("stored after the refill", 20, || stored(&chain, &id)).await;
+    let waited = sent.elapsed().as_secs_f64();
+    eprintln!("a waiting batch was verified {waited:.2} s after it arrived (refill 2 s)");
+    assert!(waited > 1.0, "it waited for the refill: {waited:.2} s");
 }

@@ -1,6 +1,6 @@
 //! Rate limits and misbehavior scores (docs/p2p.md §10).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Misbehavior score at which a peer is disconnected and banned.
 pub const BAN_THRESHOLD: u32 = 100;
@@ -59,6 +59,19 @@ impl TokenBucket {
     pub fn debit(&mut self, cost: f64, now: Instant) {
         self.refill(now);
         self.tokens -= cost;
+    }
+
+    /// How long until [`Self::has`]`(cost)` holds (zero if it does now;
+    /// `None` if it never will: no refill and too few tokens).
+    pub fn wait_for(&mut self, cost: f64, now: Instant) -> Option<Duration> {
+        self.refill(now);
+        if self.tokens >= cost {
+            return Some(Duration::ZERO);
+        }
+        if self.rate <= 0.0 || cost > self.burst {
+            return None;
+        }
+        Duration::try_from_secs_f64((cost - self.tokens) / self.rate).ok()
     }
 
     /// Returns `cost` tokens (work that turned out to be paid for, such as

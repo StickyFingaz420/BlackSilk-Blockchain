@@ -172,6 +172,7 @@ fn new_inner(
         next_handshake: 0,
         header_queue_len: 0,
         header_queue_origin: HashMap::new(),
+        header_queue_untrusted: 0,
         header_pow: header_budget::PowBudget::new(&cfg.header_pow_budget),
         ctx_rejects: HashSet::new(),
         ctx_rejects_tip: [0; 32],
