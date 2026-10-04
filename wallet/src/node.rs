@@ -13,6 +13,9 @@ pub trait NodeApi {
     fn headers(&self, _from: u64, _count: u64) -> Result<rpc::Headers, String> {
         Err("/headers is not available".into())
     }
+    /// `/distribution`, for tools. The wallet never calls it: its decoy
+    /// distribution comes from its own output index (`crate::index`;
+    /// docs/transactions.md §11.3.1).
     fn distribution(&self, to: u64) -> Result<rpc::Distribution, String>;
     fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String>;
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String>;

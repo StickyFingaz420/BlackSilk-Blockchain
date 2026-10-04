@@ -4,9 +4,11 @@
 
 use super::mock_chain::{MockChain, ZeroPow};
 use super::*;
+use crate::node::NodeApi;
 use crate::px::digest_hex;
 use blacksilk_consensus::{BlockHeader, Hash, PowFunction};
 use blacksilk_px_core::Digest;
+use blacksilk_rpc as rpc;
 use std::sync::Arc;
 
 fn wallet() -> Wallet {
@@ -1600,4 +1602,273 @@ fn the_header_check_refuses_a_timestamp_equal_to_the_median_time_past() {
             assert!(e.contains("median time past"), "{e}");
         }
     }
+}
+
+/// A node for the spend tests (D1, F38-1, F38-6): blocks and headers from
+/// `chain`, `/outputs` answered honestly from its blocks, `/distribution`
+/// answered with `dist` and counted, submissions kept and reported accepted.
+struct Spy<'a> {
+    chain: &'a MockChain,
+    dist: Vec<u64>,
+    dist_calls: std::cell::Cell<u32>,
+    output_calls: std::cell::Cell<u32>,
+    sent: std::cell::RefCell<Vec<Vec<u8>>>,
+}
+
+impl<'a> Spy<'a> {
+    fn new(chain: &'a MockChain, dist: Vec<u64>) -> Self {
+        Self {
+            chain,
+            dist,
+            dist_calls: Default::default(),
+            output_calls: Default::default(),
+            sent: Default::default(),
+        }
+    }
+}
+
+impl NodeApi for Spy<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        self.chain.info()
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        self.chain.blocks(from, count)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        self.chain.headers(from, count)
+    }
+    fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        self.dist_calls.set(self.dist_calls.get() + 1);
+        let mut cumulative = self.dist.clone();
+        cumulative.truncate(to as usize + 1);
+        Ok(rpc::Distribution { cumulative })
+    }
+    fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+        self.output_calls.set(self.output_calls.get() + 1);
+        let all = chain_outputs(self.chain);
+        Ok(rpc::Outputs {
+            outputs: indices.iter().map(|&i| all[i as usize].clone()).collect(),
+        })
+    }
+    fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
+        self.sent.borrow_mut().push(tx.to_vec());
+        Ok(rpc::SubmitResult {
+            accepted: true,
+            id: None,
+            on_best_chain: None,
+            error: None,
+        })
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        self.chain.px_commitments(from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        self.chain.px_contracts(from)
+    }
+}
+
+/// Every output of `chain`, as an honest node's `/outputs` lists it.
+fn chain_outputs(chain: &MockChain) -> Vec<rpc::OutputEntry> {
+    let mut all = Vec::new();
+    for (h, b) in chain.blocks.iter().enumerate() {
+        for tx in &b.txs {
+            for k in tx.output_keys() {
+                all.push(rpc::OutputEntry {
+                    index: all.len() as u64,
+                    one_time_key: hex::encode(k.one_time_key.bytes()),
+                    commitment: hex::encode(k.commitment.bytes()),
+                    height: h as u64,
+                    coinbase: tx.is_coinbase(),
+                });
+            }
+        }
+    }
+    all
+}
+
+/// The honest node's distribution through the tip.
+fn honest_distribution(chain: &MockChain) -> Vec<u64> {
+    let n = chain.height() as usize;
+    (0..n)
+        .map(|h| chain.first_output[h + 1])
+        .chain([chain.info().unwrap().outputs])
+        .collect()
+}
+
+/// Key image → ring of every v1 input of an encoded transfer.
+fn rings_of(bytes: &[u8]) -> BTreeMap<[u8; 32], [u64; 16]> {
+    use blacksilk_tx::types::Transaction;
+    match Transaction::decode(bytes).unwrap() {
+        Transaction::Transfer(t) => t
+            .inputs
+            .iter()
+            .map(|i| (*i.key_image.bytes(), i.ring))
+            .collect(),
+        other => panic!("not a transfer: {other:?}"),
+    }
+}
+
+/// 120 coinbase-only blocks paying `wallet()` enough for any fee.
+fn rich_chain(seed: u64) -> MockChain {
+    let mut chain = MockChain::new(seed);
+    chain.reward = 1_000_000_000_000;
+    let to = wallet().primary();
+    for _ in 0..120 {
+        chain.mine(&to, 0);
+    }
+    chain
+}
+
+fn spend_wallet(from: &Wallet) -> Wallet {
+    let mut w = Wallet::from_json(&from.to_json()).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_allow_stale_tip(true);
+    w
+}
+
+/// D1 (dossier 38 F38-1, F38-6; docs/transactions.md §11.3.1): the decoy
+/// distribution is derived from the wallet's own output index, so a node
+/// serving a distribution that is monotone and has the right total but
+/// skews the ages old gets exactly the rings an honest node gets, for a
+/// wallet that scanned from the genesis and one restored later (whose
+/// older outputs are backfilled). Neither asks for `/distribution`.
+#[test]
+fn rings_do_not_depend_on_the_nodes_distribution() {
+    use rand_chacha::rand_core::SeedableRng;
+    let chain = rich_chain(51);
+    let honest = honest_distribution(&chain);
+    let total = *honest.last().unwrap();
+    // Skewed: three times as many outputs claimed at every height, capped at
+    // the total. Monotone, the right total, the mass moved to old blocks.
+    let skewed: Vec<u64> = honest.iter().map(|&c| (c * 3).min(total)).collect();
+    assert_ne!(skewed, honest);
+    assert_eq!(skewed.last(), Some(&total));
+    assert!(skewed.windows(2).all(|w| w[0] <= w[1]));
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+    for restore in [1, 40] {
+        let mut base =
+            Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), restore).unwrap();
+        base.set_header_pow(Arc::new(ZeroPow));
+        base.set_allow_stale_tip(true);
+        assert_eq!(base.sync(&chain).unwrap(), 120);
+        let mut rings = Vec::new();
+        for dist in [&honest, &skewed] {
+            let mut w = spend_wallet(&base);
+            let node = Spy::new(&chain, dist.clone());
+            let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9);
+            w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+            assert_eq!(node.dist_calls.get(), 0, "restore {restore}: /distribution");
+            assert_eq!(
+                node.output_calls.get() > 0,
+                restore > 1,
+                "restore {restore}: a backfill only below the restore height"
+            );
+            // The wallet's own distribution is the honest node's.
+            assert_eq!(
+                w.index.cumulative(120).unwrap(),
+                honest,
+                "restore {restore}"
+            );
+            let sent = node.sent.borrow();
+            assert_eq!(sent.len(), 1);
+            rings.push(rings_of(&sent[0]));
+        }
+        assert!(!rings[0].is_empty());
+        assert_eq!(rings[0], rings[1], "restore {restore}");
+    }
+}
+
+/// D1: no spend path asks for `/distribution`. The transfer and the deploy
+/// run whole; PX deposits and the v1 fee of contract calls build their v1
+/// inputs with `v1_plans` (the only v1 path besides those two), run here up
+/// to where they would build a PX proof (never built in these tests).
+#[test]
+fn no_spend_path_requests_the_distribution() {
+    use blacksilk_px::vault;
+    use blacksilk_tx::px::Registration;
+    use rand_chacha::rand_core::SeedableRng;
+    let chain = rich_chain(52);
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let mut base = wallet();
+    base.set_header_pow(Arc::new(ZeroPow));
+    base.set_allow_stale_tip(true);
+    assert_eq!(base.sync(&chain).unwrap(), 120);
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(3);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    spend_wallet(&base)
+        .transfer(&node, &to, 1_000, &rules, &mut rng)
+        .unwrap();
+    assert_eq!(node.dist_calls.get(), 0, "transfer");
+    assert_eq!(node.sent.borrow().len(), 1);
+
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    spend_wallet(&base)
+        .px_deploy(
+            &node,
+            vec![Registration {
+                elf: vault::VAULT_ELF.to_vec(),
+                budget: vault::BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
+            }],
+            &rules,
+            &mut rng,
+        )
+        .unwrap();
+    assert_eq!(node.dist_calls.get(), 0, "deploy");
+    assert_eq!(node.sent.borrow().len(), 1);
+
+    let node = Spy::new(&chain, honest_distribution(&chain));
+    let mut w = spend_wallet(&base);
+    w.sync_to_send(&node).unwrap();
+    let (chosen, plans) = w.v1_plans(&node, 1_000, &mut rng).unwrap();
+    assert!(!chosen.is_empty() && plans.len() == chosen.len());
+    assert_eq!(
+        node.dist_calls.get(),
+        0,
+        "v1_plans (PX deposits, contract-call fees)"
+    );
+}
+
+/// D1, the empty-index case (a wallet file written before the output index
+/// existed, no block synced since): the synced block is indexed again from
+/// the block feed, checked against the wallet's own block id, and its first
+/// output ends the backfill. A served block that is not the wallet's is
+/// refused. No `/distribution` request either way.
+#[test]
+fn an_empty_index_takes_its_extent_from_the_wallets_own_tip_block() {
+    use rand_chacha::rand_core::SeedableRng;
+    let mut chain = rich_chain(53);
+    let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 121);
+    let to = Wallet::from_seed(Network::Regtest, [8; 32], 1).primary();
+    let mut base = wallet();
+    base.set_header_pow(Arc::new(ZeroPow));
+    base.set_allow_stale_tip(true);
+    assert_eq!(base.sync(&chain).unwrap(), 120);
+    base.index = OutputIndex::default();
+    let honest = honest_distribution(&chain);
+
+    let mut w = spend_wallet(&base);
+    let node = Spy::new(&chain, honest.clone());
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(4);
+    w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap();
+    assert_eq!(node.dist_calls.get(), 0);
+    assert!(node.output_calls.get() > 0, "the backfill");
+    assert_eq!(w.index.cumulative(120).unwrap(), honest);
+
+    // A node serving another block 120 is refused before anything is
+    // fetched for the backfill.
+    chain.lies.alter_block = Some((
+        120,
+        Box::new(|b: &mut blacksilk_chain::block::Block| b.header.nonce ^= 1),
+    ));
+    let mut w = spend_wallet(&base);
+    let node = Spy::new(&chain, honest.clone());
+    let e = w.transfer(&node, &to, 1_000, &rules, &mut rng).unwrap_err();
+    assert!(e.to_string().contains("not the wallet's"), "{e}");
+    assert_eq!((node.dist_calls.get(), node.output_calls.get()), (0, 0));
+    assert!(w.index.is_empty());
 }

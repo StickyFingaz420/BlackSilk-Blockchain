@@ -100,6 +100,8 @@ pub(crate) struct MockChain {
     /// Every commitment, with its block height, in tree order.
     pub commitments: Vec<(u64, Digest)>,
     pub rng: ChaCha20Rng,
+    /// What each coinbase pays (1 000 by default).
+    pub reward: u64,
     /// Seconds between block timestamps.
     pub spacing: u64,
     pub lies: Lies,
@@ -132,6 +134,7 @@ impl MockChain {
         MockChain {
             headers: HeaderChain::new(params.clone(), Arc::new(ZeroPow)),
             spacing: params.target_block_time,
+            reward: 1_000,
             params,
             blocks: vec![genesis],
             first_output: vec![0],
@@ -305,7 +308,7 @@ impl MockChain {
             height,
             &[Payment {
                 address: *to,
-                amount: 1_000,
+                amount: self.reward,
             }],
             &[9; 32],
             &mut self.rng,

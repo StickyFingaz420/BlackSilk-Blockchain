@@ -697,7 +697,7 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 | POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool | submit | `guard::MAX_TX_BODY_BYTES` (the largest transaction of any kind in hex) |
 | GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100, at most 64 MiB of hex), for wallet scanning | bulk | none |
 | GET | `/headers?from=h&count=n` | the headers of connected blocks `h…h+n−1` (fewer at the tip, none above it), 100 bytes each, concatenated as hex, with the tip height (`1 ≤ n ≤ rpc::MAX_HEADERS_PER_REQUEST`); the wallet's header check reads the chain from the genesis with it (§10) | read | none |
-| GET | `/distribution?to=h` | cumulative output counts per block, for decoy selection | read | none |
+| GET | `/distribution?to=h` | cumulative output counts per block, for tools (the wallet derives its decoy distribution from its own output index and never requests it, transactions.md §11.3.1) | read | none |
 | POST | `/outputs` | output keys and commitments for up to 1 024 global indices | read | `guard::MAX_OUTPUTS_BODY_BYTES` |
 | GET | `/px/commitments?from=f&limit=l` | a page of PX commitments in tree order (px.md §11.4) | read | none |
 | GET | `/px/contracts?from=f` | contract registrations in block order (at most 1 024 per page) | read | none |
@@ -790,12 +790,17 @@ A wallet that uses someone else's node reveals to that node, and over plaintext 
 anyone on the path:
 - its IP address;
 - where it starts scanning (`/blocks?from=`), which approximates its birthday;
-- that a send is imminent: `/distribution` is fetched just before `/tx`;
+- when it sends, from `/tx` itself, and, the first time a restored wallet spends, from
+  the one-time `/outputs` backfill just before it. The wallet does not fetch
+  `/distribution`: its decoy distribution comes from its own output index
+  (transactions.md §11.3.1);
 - the transaction itself, together with its IP address. The node stems it, so the
   network does not learn the origin, but that node's operator does.
 
 Ring members come from the wallet's own output index; `/outputs` is used once, to fill
-the missing range of that index in fixed pages, not per ring. The PX commitment tree is
+the missing range of that index in fixed pages, not per ring. That backfill is not
+verified: below the restore height the node chooses the outputs, and their heights,
+which feed the decoy distribution (F38-2; 38 W11, P1). The PX commitment tree is
 built from the scanned blocks; `/px/commitments` is fetched whole, once, for the part
 below the restore height, and never after it: an imported contract record is placed
 from the commitments of the recent blocks the wallet keeps, or at a rescan (px.md

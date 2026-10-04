@@ -15,6 +15,17 @@
 //! The index is contiguous: it covers `start .. start + len` with no gap.
 //! Reorganizations are undone by height, like the rest of the wallet.
 //!
+//! **The output distribution** the decoy picker draws from (cumulative output
+//! counts per block, `blacksilk_tx::decoy`) is derived from this index
+//! ([`OutputIndex::cumulative`]), never asked of the node at spend time
+//! (docs/transactions.md §11.3.1; dossier 38 F38-1, F38-6). A node-served
+//! distribution could be skewed while staying monotone with the right total,
+//! moving decoy ages away from a young real input, and the request itself
+//! told the node that a spend was being built. The heights of the scanned
+//! range come from blocks the wallet checked; those of the backfilled range
+//! (below the restore height) are the node's `/outputs` answers, checked
+//! only for shape (see `cumulative_of`), not verified (F38-2; 38 W11).
+//!
 //! **Size.** 73 bytes per output in memory; 146 hex characters in the wallet
 //! file (about 150 MB per million outputs). Adequate for the testnet; a
 //! separate append-only file is the next step (docs/reviews/wallet-review.md).
@@ -82,6 +93,25 @@ impl OutputIndex {
         self.entries.get(i)
     }
 
+    /// The indexed outputs, in global-index order.
+    pub fn iter(&self) -> std::slice::Iter<'_, IndexedOutput> {
+        self.entries.iter()
+    }
+
+    /// The output distribution of blocks `0..=synced`: `cumulative[h]` is the
+    /// number of outputs in blocks `0..=h` (what the node's `/distribution`
+    /// serves), from the outputs' heights. The index must be complete (start
+    /// at 0) and pass the shape check of [`cumulative_of`].
+    pub fn cumulative(&self, synced: u64) -> Result<Vec<u64>, String> {
+        if self.start != 0 {
+            return Err(format!(
+                "the output index starts at output {}, not 0",
+                self.start
+            ));
+        }
+        cumulative_of(self.entries.iter(), synced)
+    }
+
     /// Whether every output in `0 .. total` is indexed, and nothing beyond.
     pub fn is_complete(&self, total: u64) -> bool {
         self.start == 0 && self.end() == total
@@ -139,6 +169,77 @@ impl OutputIndex {
         self.entries = all;
         Ok(())
     }
+}
+
+/// The output distribution of blocks `0..=synced` from `outputs`, every
+/// output of those blocks from global index 0 on, in order: `cumulative[h]`
+/// is the number of outputs in blocks `0..=h`.
+///
+/// A cheap sanity check of the heights, from consensus facts: the genesis
+/// body is empty (docs/blocks.md §3), so no output has height 0; every other
+/// block starts with a coinbase of at least one output (`MIN_COINBASE_OUTPUTS`
+/// = 1, `validate_block_transactions_cached`), so every height `1..=synced`
+/// appears, with a coinbase output; heights never decrease and none exceeds
+/// `synced`. Anything else is refused. It catches a backfill with a gap, a
+/// stale tail or relabelled coinbase flags; it cannot catch a consistent
+/// fabrication (the backfill is not verified, F38-2).
+pub fn cumulative_of<'a>(
+    outputs: impl IntoIterator<Item = &'a IndexedOutput>,
+    synced: u64,
+) -> Result<Vec<u64>, String> {
+    let outputs = outputs.into_iter();
+    // Every height from 1 on has an output, so `synced` cannot exceed the
+    // number of outputs; checked before anything is allocated from it.
+    let hint = outputs.size_hint().1.unwrap_or(usize::MAX) as u64;
+    if synced > hint {
+        return Err(format!(
+            "{hint} outputs cannot cover blocks 1 to {synced}, one coinbase output each"
+        ));
+    }
+    let blocks = usize::try_from(synced + 1).map_err(|_| "too many blocks".to_string())?;
+    let mut cumulative = Vec::with_capacity(blocks);
+    // The genesis: no outputs.
+    let (mut height, mut count, mut coinbase) = (0u64, 0u64, true);
+    for e in outputs {
+        if e.height == 0 {
+            return Err(format!(
+                "output {count} is in the genesis block, whose body is empty"
+            ));
+        }
+        if e.height != height {
+            if e.height < height {
+                return Err(format!(
+                    "output {count} (block {}) is out of height order",
+                    e.height
+                ));
+            }
+            if e.height > synced {
+                return Err(format!(
+                    "output {count} is in block {}, above the synced block {synced}",
+                    e.height
+                ));
+            }
+            if !coinbase {
+                return Err(format!("block {height} has no coinbase output"));
+            }
+            if e.height != height + 1 {
+                return Err(format!("block {} has no outputs", height + 1));
+            }
+            cumulative.push(count);
+            height = e.height;
+            coinbase = false;
+        }
+        coinbase |= e.coinbase;
+        count += 1;
+    }
+    if !coinbase {
+        return Err(format!("block {height} has no coinbase output"));
+    }
+    if height != synced {
+        return Err(format!("block {} has no outputs", height + 1));
+    }
+    cumulative.push(count);
+    Ok(cumulative)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -221,6 +322,138 @@ mod tests {
         // A block that does not continue the index restarts it.
         ix.push_block(9, 500, [out(4)]);
         assert_eq!((ix.start(), ix.end()), (500, 501));
+    }
+
+    fn rec(height: u64, coinbase: bool) -> IndexedOutput {
+        IndexedOutput {
+            one_time_key: [height as u8; 32],
+            commitment: [1; 32],
+            height,
+            coinbase,
+        }
+    }
+
+    /// Blocks `1..=n`, block `h` with `1 + h % 3` outputs, the first a
+    /// coinbase output.
+    fn chain_index(n: u64) -> (OutputIndex, Vec<u64>) {
+        let mut ix = OutputIndex::default();
+        let mut cumulative = vec![0];
+        let mut first = 0;
+        for h in 1..=n {
+            let k = 1 + h % 3;
+            ix.push_block(h, first, (0..k).map(|j| ([h as u8; 32], [1; 32], j == 0)));
+            first += k;
+            cumulative.push(first);
+        }
+        (ix, cumulative)
+    }
+
+    #[test]
+    fn cumulative_counts_outputs_per_block() {
+        let (ix, want) = chain_index(30);
+        assert_eq!(ix.cumulative(30).unwrap(), want);
+        // The empty chain (only the genesis).
+        assert_eq!(OutputIndex::default().cumulative(0).unwrap(), vec![0]);
+        // A synced height the index does not reach, or exceeds.
+        assert!(ix.cumulative(31).is_err());
+        assert!(ix.cumulative(29).is_err());
+    }
+
+    #[test]
+    fn cumulative_follows_a_reorganization() {
+        let (mut ix, want) = chain_index(30);
+        ix.rewind(20);
+        assert_eq!(ix.cumulative(20).unwrap(), want[..=20]);
+        // Another block 21, with two outputs.
+        ix.push_block(21, want[20], [out(2), out(4)]);
+        let c = ix.cumulative(21).unwrap();
+        assert_eq!(c[..=20], want[..=20]);
+        assert_eq!(c[21], want[20] + 2);
+    }
+
+    #[test]
+    fn cumulative_after_a_backfill_prepend() {
+        let (full, want) = chain_index(40);
+        // The wallet scanned from block 25: blocks 1..=24 are backfilled.
+        let start = want[24];
+        let mut ix = OutputIndex::default();
+        for h in 25..=40 {
+            let from = want[h as usize - 1];
+            ix.push_block(
+                h,
+                from,
+                (from..want[h as usize]).map(|i| {
+                    let e = full.get(i).unwrap();
+                    (e.one_time_key, e.commitment, e.coinbase)
+                }),
+            );
+        }
+        assert!(ix.cumulative(40).is_err(), "incomplete: starts at {start}");
+        let older: Vec<IndexedOutput> = (0..start).map(|i| *full.get(i).unwrap()).collect();
+        assert_eq!(
+            cumulative_of(older.iter().chain(ix.iter()), 40).unwrap(),
+            want
+        );
+        ix.prepend(older, start).unwrap();
+        assert_eq!(ix.cumulative(40).unwrap(), want);
+    }
+
+    /// The shape check: a backfill missing a block, a block without a
+    /// coinbase output, an output in the genesis, out of order or above the
+    /// synced block are refused.
+    #[test]
+    fn cumulative_refuses_a_malformed_index() {
+        let good = vec![rec(1, true), rec(2, true), rec(2, false), rec(3, true)];
+        assert_eq!(cumulative_of(&good, 3).unwrap(), vec![0, 1, 3, 4]);
+        let bad: [(&str, Vec<IndexedOutput>); 6] = [
+            ("a missing block", vec![rec(1, true), rec(3, true)]),
+            (
+                "no coinbase",
+                vec![rec(1, true), rec(2, false), rec(3, true)],
+            ),
+            (
+                "last without coinbase",
+                vec![rec(1, true), rec(2, true), rec(3, false)],
+            ),
+            (
+                "the genesis",
+                vec![rec(0, true), rec(1, true), rec(2, true), rec(3, true)],
+            ),
+            (
+                "out of order",
+                vec![rec(1, true), rec(3, true), rec(2, true), rec(3, true)],
+            ),
+            (
+                "above",
+                vec![rec(1, true), rec(2, true), rec(3, true), rec(4, true)],
+            ),
+        ];
+        for (what, outputs) in bad {
+            assert!(cumulative_of(&outputs, 3).is_err(), "{what}");
+        }
+        // Too few outputs for the synced height: refused before allocating.
+        assert!(cumulative_of(&good, u64::MAX).is_err());
+    }
+
+    /// 10^6 outputs over 250 000 blocks (the index's documented scale).
+    /// Run with `cargo test --release -p blacksilk-wallet --lib -- --ignored
+    /// cumulative_at_a_million_outputs --nocapture`.
+    #[test]
+    #[ignore = "timing"]
+    fn cumulative_at_a_million_outputs() {
+        let blocks = 250_000u64;
+        let mut ix = OutputIndex::default();
+        for h in 1..=blocks {
+            let first = (h - 1) * 4;
+            ix.push_block(h, first, (0..4).map(|j| ([7; 32], [7; 32], j == 0)));
+        }
+        let t = std::time::Instant::now();
+        let c = ix.cumulative(blocks).unwrap();
+        let took = t.elapsed();
+        assert_eq!(c.len() as u64, blocks + 1);
+        assert_eq!(c[blocks as usize], 1_000_000);
+        println!("cumulative() over 10^6 outputs: {took:?}");
+        assert!(took < std::time::Duration::from_secs(2), "{took:?}");
     }
 
     #[test]

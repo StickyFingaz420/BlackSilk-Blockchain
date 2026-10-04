@@ -172,6 +172,8 @@ struct Flaky<'a> {
     mode: Submit,
     submits: Cell<u32>,
     sent: RefCell<Vec<Vec<u8>>>,
+    /// `/distribution` requests (no spend path makes one, D1).
+    dist_calls: Cell<u32>,
     /// Every `/outputs` request, in order.
     queries: RefCell<Vec<Vec<u64>>>,
     /// Report at most this height (a node behind the wallet)...
@@ -197,6 +199,7 @@ impl<'a> Flaky<'a> {
             status: None,
             submits: Cell::new(0),
             sent: RefCell::new(Vec::new()),
+            dist_calls: Cell::new(0),
             queries: RefCell::new(Vec::new()),
             height_cap: None,
             capped_infos: Cell::new(u32::MAX),
@@ -225,6 +228,7 @@ impl NodeApi for Flaky<'_> {
         NodeApi::headers(self.inner, from, count)
     }
     fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        self.dist_calls.set(self.dist_calls.get() + 1);
         NodeApi::distribution(self.inner, to)
     }
     fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
@@ -1227,6 +1231,7 @@ fn rings_are_built_without_asking_the_node_about_outputs() {
         .transfer(&node, &bob.primary(), 3 * COIN, &net.rules, &mut net.rng)
         .unwrap();
     assert!(node.queries.borrow().is_empty(), "no /outputs request");
+    assert_eq!(node.dist_calls.get(), 0, "no /distribution request (D1)");
     assert_eq!(node.submits.get(), 1);
     net.mine(&miner_addr);
     bob.sync(&net.client).unwrap();
@@ -1239,6 +1244,7 @@ fn rings_are_built_without_asking_the_node_about_outputs() {
         .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
         .unwrap();
     assert!(node.queries.borrow().is_empty(), "no /outputs request");
+    assert_eq!(node.dist_calls.get(), 0, "no /distribution request (D1)");
 }
 
 /// A wallet restored at a later height backfills the outputs it never
@@ -1261,6 +1267,7 @@ fn a_late_restore_backfills_older_outputs_once() {
     let node = Flaky::new(&net.client, Submit::Forward);
     late.transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
         .unwrap();
+    assert_eq!(node.dist_calls.get(), 0, "no /distribution request (D1)");
     {
         let queries = node.queries.borrow();
         assert_eq!(queries.len(), 1, "one page covers {first} outputs");

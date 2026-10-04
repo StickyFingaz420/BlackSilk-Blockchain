@@ -837,9 +837,9 @@ impl Wallet {
         Ok(())
     }
 
-    /// The v1 part of a block: the output index, owned outputs and spends.
-    fn apply_v1_block(&mut self, block: &Block, height: u64, first_output: u64) {
-        // Every output, in the chain's global order (as `scan_block` counts).
+    /// Adds every output of `block` to the output index, in the chain's
+    /// global order (as `scan_block` counts).
+    fn index_block(&mut self, block: &Block, height: u64, first_output: u64) {
         self.index.push_block(
             height,
             first_output,
@@ -850,6 +850,43 @@ impl Wallet {
                     .map(move |k| (*k.one_time_key.bytes(), *k.commitment.bytes(), coinbase))
             }),
         );
+    }
+
+    /// Indexes the synced block again, from the block feed, checked against
+    /// the wallet's own id for it: for an empty output index at a synced
+    /// height above 0 (a wallet file written before the index existed, with
+    /// no block synced since). Its `first_output` is where the backfill ends.
+    /// One `/blocks` request for the wallet's own tip, once per such file.
+    pub(super) fn index_synced_block(&mut self, node: &dyn NodeApi) -> Result<(), WalletError> {
+        let h = self.synced_height;
+        let Some(&ours) = self.block_ids.get(&h) else {
+            return Err(WalletError::BadNodeData(format!(
+                "no block id kept for the synced block {h}; restore the wallet from its seed"
+            )));
+        };
+        let entry = node
+            .blocks(h, 1)
+            .map_err(WalletError::Node)?
+            .blocks
+            .into_iter()
+            .next()
+            .filter(|e| e.height == h)
+            .ok_or_else(|| WalletError::BadNodeData(format!("block {h} was not served")))?;
+        let block = decode_block(&entry)?;
+        if block.id(self.params.network_id) != ours
+            || block.compute_tx_root() != block.header.tx_root
+        {
+            return Err(WalletError::BadNodeData(format!(
+                "block {h} is not the wallet's"
+            )));
+        }
+        self.index_block(&block, h, entry.first_output);
+        Ok(())
+    }
+
+    /// The v1 part of a block: the output index, owned outputs and spends.
+    fn apply_v1_block(&mut self, block: &Block, height: u64, first_output: u64) {
+        self.index_block(block, height, first_output);
         // Gap-limit scan (review M-2): an output found near the edge of the
         // window moves the window, and the block is scanned again with it, so
         // later outputs of the same block (and later blocks) are found too.

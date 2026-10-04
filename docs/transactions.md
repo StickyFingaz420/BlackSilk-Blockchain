@@ -885,7 +885,7 @@ Security relies on the following. Nothing else is assumed.
 | Input/output count fingerprinting | Wallets should default to 2 outputs; consolidation transactions remain visible. |
 | Timing and IP correlation | P2P layer (Dandelion++; outbound Tor for the node; no I2P). Out of scope here. |
 
-#### 11.3.1 Wallet decoy selection (`tx/src/decoy.rs`, `wallet/src/wallet.rs`; wallet policy)
+#### 11.3.1 Wallet decoy selection (`tx/src/decoy.rs`, `wallet/src/wallet/px_flows.rs`, `wallet/src/index.rs`; wallet policy)
 
 **Age draw.** Monero's gamma picker: `x = exp(Gamma(19.28, 1/1.61))` seconds, shifted
 by the 10-block spendable age (or uniform in `[0, 15·T)` below it), converted to an
@@ -977,18 +977,38 @@ ring. The previous single request per input contained the real input among the
 candidates, so the node could intersect it with the ring on chain. Outputs older than
 the wallet's restore height are fetched **once**, as the whole range `0 .. start` in
 consecutive pages of 1,024. Those requests depend on the restore height only, not on
-what is spent. The node still serves the output distribution (one request for the
-synced height, at spend time). That request names no ring member, but it is not
-harmless: it tells the node that a spend is being built, and the wallet **trusts the
-node's distribution for decoy placement**. A malicious node can serve a distribution
-that is monotone and has the right total but skews decoy ages old, so that the real
-young input stands out as the newest member; the wallet checks only that the
-distribution is non-decreasing and that its total equals its own output index
-(F38-1, F38-6). Computing the distribution from the wallet's own index, which already
-holds every output's height, is decided and not implemented (docs/STATUS.md). Until
-then, use your own node. The decoy draws come from an operating-system-seeded RNG,
-not the hedged stream (F38-5, not implemented): a cloned machine or a broken OS RNG
-repeats decoys.
+what is spent.
+
+**The output distribution comes from the wallet's own index (D1, 2026-10-04; F38-1,
+F38-6).** The picker's `cumulative[h]` (outputs in blocks `0..=h`) is derived from the
+heights in that index (`OutputIndex::cumulative`), and the same distribution feeds the
+ring-member age rule (`decoy::RingEligibility`). No spend path requests `/distribution`
+(transfer, deploy, PX deposit, the v1 fee of contract calls; all build v1 rings in
+`plans_for`). Before, one request at spend time told the node a spend was being built,
+and a node could serve a distribution that was monotone with the right total but skewed
+decoy ages old, so the young real input stood out as the newest member. Tested:
+`rings_do_not_depend_on_the_nodes_distribution` (a skewed node gets the honest node's
+rings, scanned and restored wallets) and `no_spend_path_requests_the_distribution`
+(`wallet/src/wallet/tests_sync.rs`); the e2e ring tests count the requests too. The
+endpoint stays for tools.
+
+Before the distribution is used, the index must hold every output from global index 0
+and pass a cheap shape check from consensus facts: no output at height 0 (the genesis
+body is empty), every height `1..=synced` present with at least one coinbase output
+(every block's coinbase has at least one), heights non-decreasing and none above the
+synced block. A backfill that fails it is refused and not stored, so the next spend
+fetches it again. A wallet file written before the index existed, with no block synced
+since, indexes its synced block again from `/blocks` (checked against its own block
+id), whose `first_output` ends the backfill.
+
+**Residual (F38-2; 38 W11, P1).** The heights of outputs below the restore height are
+the node's `/outputs` answers. The shape check catches a gap, a stale tail or a block
+without a coinbase output, but not a consistent fabrication: a node that serves the
+backfill can still choose the distribution, the keys and the commitments of that older
+range. For a wallet scanned from the genesis the whole distribution comes from checked
+blocks. Verifying the backfill (38 W11) is P1. Until then, restore from your own node.
+The decoy draws come from an operating-system-seeded RNG, not the hedged stream (F38-5,
+not implemented): a cloned machine or a broken OS RNG repeats decoys.
 
 **Merge avoidance (review R3-13).** When no single output covers a payment, input
 selection first takes at most one output per source transaction. Outputs stored
