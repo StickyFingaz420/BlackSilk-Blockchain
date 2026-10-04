@@ -96,7 +96,8 @@ impl ServeBudget {
         Waiting(w)
     }
 
-    /// Bytes held now (rounded to KiB).
+    /// Bytes held now (rounded to KiB; the unit tests' probe).
+    #[cfg(test)]
     pub(super) fn used(&self) -> usize {
         let free = self.outbound.available_permits() + self.shared.available_permits();
         SERVE_TX_TOTAL - free * UNIT

@@ -408,12 +408,6 @@ impl Network {
             .sum()
     }
 
-    /// Bytes of `GetTx` answers held node-wide (reserved or queued).
-    #[doc(hidden)]
-    pub fn serving_bytes(&self) -> usize {
-        self.inner.serve_budget.used()
-    }
-
     /// The current Dandelion epoch's stem peers (tests: a stem peer is
     /// never dropped by an honest burst, TM2-17).
     #[doc(hidden)]
