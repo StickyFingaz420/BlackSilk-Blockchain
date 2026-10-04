@@ -2406,3 +2406,159 @@ fn a_file_without_a_pin_is_pinned_on_load() {
         Some(pin.first_output)
     );
 }
+
+/// The red team's node behind the wallet (RT-D1d P10): it reports block
+/// `cap` as its tip, serves nothing above it, and, with `fake_base`, a
+/// header of block `cap` without its work.
+struct Behind<'a> {
+    chain: &'a MockChain,
+    cap: u64,
+    fake_base: bool,
+}
+
+impl NodeApi for Behind<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        let mut i = self.chain.info()?;
+        i.height = self.cap;
+        i.header_height = self.cap;
+        Ok(i)
+    }
+    fn blocks(&self, f: u64, c: u64) -> Result<rpc::Blocks, String> {
+        let mut r = self.chain.blocks(f, c)?;
+        r.blocks.retain(|b| b.height <= self.cap);
+        Ok(r)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        let mut r = self.chain.headers(from, count)?;
+        let size = blacksilk_rpc::HEADER_BYTES;
+        if self.fake_base && from + count > self.cap && from <= self.cap && !r.headers.is_empty() {
+            let mut bytes = hex::decode(&r.headers).unwrap();
+            let off = ((self.cap - from) as usize) * size;
+            if off + size <= bytes.len() {
+                let mut h = BlockHeader::from_bytes(&bytes[off..off + size]).unwrap();
+                h.nonce ^= 1;
+                bytes[off..off + size].copy_from_slice(&h.to_bytes());
+                r.headers = hex::encode(bytes);
+            }
+        }
+        Ok(r)
+    }
+    fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+        panic!("/distribution")
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        Spy::new(self.chain, vec![]).outputs(i)
+    }
+    fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+        Err("no".into())
+    }
+    fn px_commitments(&self, f: u64) -> Result<rpc::PxCommitments, String> {
+        self.chain.px_commitments(f)
+    }
+    fn px_contracts(&self, f: u64) -> Result<rpc::PxContracts, String> {
+        self.chain.px_contracts(f)
+    }
+}
+
+/// RT-D1d R1 (P10): a node behind the wallet's restore point walks it back
+/// (its missing blocks count as a mismatch) and would then have the PX
+/// backfill take its base id from an unverified single header, which the
+/// next header check refused at every sync. The backfill now waits for a
+/// node past the restore point, and an honest node then recovers the
+/// wallet, unchanged, without a restore.
+#[test]
+fn a_node_behind_the_restore_point_cannot_poison_the_px_base() {
+    let chain = rich_chain(95);
+    let mut w = rt_restored(40);
+    w.set_header_pow(known_pow(&chain));
+    let honest = Spy::new(&chain, vec![]);
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    let before = own_indices(&w);
+    let index = w.index.clone();
+    let behind = Behind {
+        chain: &chain,
+        cap: 39,
+        fake_base: true,
+    };
+    let e = w.sync(&behind).unwrap_err().to_string();
+    assert!(e.contains("not past the wallet's restore point"), "{e}");
+    assert!(w.block_ids.get(&39).is_none_or(|id| *id == chain.id(39)));
+    assert!(w.verifies_headers());
+    let later = Spy::new(&chain, vec![]);
+    for _ in 0..2 {
+        assert_eq!(w.sync(&later).unwrap(), 120, "recovered without a restore");
+    }
+    assert_eq!(own_indices(&w), before);
+    assert_eq!(w.index, index);
+    assert_eq!(later.output_calls.get(), 0, "the output backfill is kept");
+}
+
+/// RT-D1d R1 (b): a PX base id already poisoned (the state 663160c could
+/// reach: taken from an unverified header, the PX tree built on it, the
+/// header check due) is replaced by the checked id and the PX backfill
+/// rebuilt, instead of failing every sync.
+#[test]
+fn a_poisoned_px_base_heals_under_the_header_check() {
+    let chain = rich_chain(97);
+    let mut w = rt_restored(40);
+    w.set_header_pow(known_pow(&chain));
+    let honest = Spy::new(&chain, vec![]);
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    let before = own_indices(&w);
+    // Poison it: no header check, a node behind the restore point with a
+    // fake header for block 39.
+    w.rewind(39);
+    w.restore_check = false;
+    let behind = Behind {
+        chain: &chain,
+        cap: 39,
+        fake_base: true,
+    };
+    let _ = w.sync(&behind);
+    assert_ne!(w.block_ids.get(&39), Some(&chain.id(39)), "poisoned");
+    assert!(w.px.tree.is_some());
+    w.restore_check = true;
+    assert_eq!(w.sync(&honest).unwrap(), 120, "healed");
+    assert_eq!(w.block_ids.get(&39), Some(&chain.id(39)));
+    assert_eq!(own_indices(&w), before);
+}
+
+/// RT-D1d Q12 and P11: at a difficulty above 1 it is the proof of work that
+/// refuses a relinked chain after a forced walk-back; a relinked suffix
+/// above the restore point with a shift is refused by the index's
+/// continuity; and no case moves an output position.
+#[test]
+fn proof_of_work_refuses_a_relinked_chain() {
+    let mut chain = MockChain::new(98);
+    chain.spacing = 1;
+    chain.reward = 1_000_000_000_000;
+    for _ in 0..120 {
+        chain.mine(&wallet().primary(), 0);
+    }
+    assert!(chain.blocks[40].header.difficulty > 1);
+    let restored = || {
+        let mut w = rt_restored(40);
+        w.set_header_pow(known_pow(&chain));
+        w.sync(&Spy::new(&chain, vec![])).unwrap();
+        w
+    };
+    let mut w = restored();
+    let before = own_indices(&w);
+    assert_eq!(w.sync(&evil(&chain, 40, 0, true)).unwrap(), 120);
+    let e = w
+        .sync(&relink(&chain, 40, 5, true))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("proof of work") || e.contains("header"), "{e}");
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+
+    // Relinked from 41 with a shift: the index does not continue.
+    let mut w = restored();
+    assert!(w.sync(&relink(&chain, 41, 5, false)).is_err());
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+    // Relinked from 41 without a shift, on a routine sync (no header
+    // check unless `set_verify_headers`): positions are unchanged.
+    let mut w = restored();
+    let _ = w.sync(&relink(&chain, 41, 0, false));
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+}

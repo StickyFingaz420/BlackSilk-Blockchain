@@ -1053,7 +1053,14 @@ from the genesis. The bandwidth bound is per `sync` call: at most one walk-back 
 rescan from the restore point (the blocks from there, the header chain from the genesis)
 and one PX backfill (the commitment and contract lists, and the blocks they name); the
 output backfill is not fetched again unless the restore point changed. A node can repeat
-this at every sync; nothing rate-limits it yet.
+this at every sync; nothing rate-limits it yet. A node behind the restore point cannot
+have the PX backfill take its base id from its own unverified headers: while the header
+check is due, the backfill waits for a node past the restore point ("sync again"), and a
+base id that a checked header chain from the genesis contradicts is replaced and the PX
+backfill rebuilt, instead of failing every sync (RT-D1d R1). Routine syncs (no restore
+check, no `set_verify_headers`) still do not check proof of work: a node can relink the
+blocks above the restore point, but not move an output position (the index must
+continue).
 
 The decoy draws come from an
 operating-system-seeded RNG, not the hedged stream (F38-5, not implemented): a cloned

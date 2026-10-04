@@ -205,6 +205,22 @@ fn fetch_headers(
     Ok(out)
 }
 
+/// The node's PX commitment and contract lists below block `base` (none for
+/// the genesis), for the PX backfill.
+fn backfill_lists(node: &dyn NodeApi, base: u64) -> Result<BackfillLists, WalletError> {
+    Ok(if base == 0 {
+        BackfillLists {
+            commitments: Vec::new(),
+            contracts: Vec::new(),
+        }
+    } else {
+        BackfillLists {
+            commitments: PxStore::fetch_commitments(node, base)?,
+            contracts: PxStore::fetch_contract_list(node, base)?,
+        }
+    })
+}
+
 /// The id of the node's block at `height` (computed from its header), or
 /// `None` if the node has none there.
 fn node_id_at(
@@ -402,17 +418,19 @@ impl Wallet {
                 self.rewind(self.restore_height.saturating_sub(1));
             }
             let base = self.synced_height;
-            Some(if base == 0 {
-                BackfillLists {
-                    commitments: Vec::new(),
-                    contracts: Vec::new(),
-                }
-            } else {
-                BackfillLists {
-                    commitments: PxStore::fetch_commitments(node, base)?,
-                    contracts: PxStore::fetch_contract_list(node, base)?,
-                }
-            })
+            // The backfill's base id must come from the header check when
+            // one is due (RT-D1d R1): a node that is not past the restore
+            // point leaves the check nothing to run on, and the ids would
+            // be its unverified single headers.
+            if base > 0 && self.verifies_headers() && base >= info.height {
+                return Err(WalletError::Node(format!(
+                    "the node (at block {}) is not past the wallet's restore point (block {}); \
+                     sync again",
+                    info.height,
+                    self.first_scanned()
+                )));
+            }
+            Some(backfill_lists(node, base)?)
         } else {
             None
         };
@@ -471,19 +489,23 @@ impl Wallet {
                     })?;
                     c.flush().map_err(bad)?;
                     let (_, last) = c.last();
-                    // Below the restore point the wallet's id is the PX
-                    // backfill's base, itself a node's word and rebuilt from
-                    // this check's ids when the backfill runs (after a
-                    // rescan from the restore point, RT-D1c M1): a header
-                    // chain from the genesis that ends elsewhere is a
-                    // reorganization below the restore point, not a lie.
-                    let rebuilt = synced < self.first_scanned() && self.px.tree.is_none();
-                    if !rebuilt
-                        && self
-                            .block_ids
-                            .get(&synced)
-                            .is_some_and(|ours| *ours != last)
-                    {
+                    let differs = self
+                        .block_ids
+                        .get(&synced)
+                        .is_some_and(|ours| *ours != last);
+                    if synced < self.first_scanned() {
+                        // Below the restore point the wallet's id is the PX
+                        // backfill's base, itself a node's word (RT-D1c M1,
+                        // RT-D1d R1): a checked chain from the genesis that
+                        // ends elsewhere is a reorganization below the
+                        // restore point or a poisoned base. The checked id
+                        // replaces it and the PX backfill is rebuilt on it,
+                        // below, instead of failing every sync.
+                        if differs {
+                            self.block_ids.insert(synced, last);
+                            self.px.tree = None;
+                        }
+                    } else if differs {
                         return Err(WalletError::BadNodeData(
                             "the node's headers do not end at the wallet's last block".into(),
                         ));
@@ -494,6 +516,12 @@ impl Wallet {
                 }
                 Some(c)
             }
+        };
+        // A PX backfill the header check found poisoned (above) is rebuilt
+        // now, its ids anchored to the checked header (`backfill`).
+        let backfill = match backfill {
+            None if self.px.tree.is_none() => Some(backfill_lists(node, self.synced_height)?),
+            b => b,
         };
         if let Some(lists) = backfill {
             self.backfill(node, lists, backfill_ids)?;
