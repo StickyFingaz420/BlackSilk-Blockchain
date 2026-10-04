@@ -44,6 +44,24 @@ impl Node {
         }
     }
 
+    /// The `output_count` and `output_root` of a block at `height` with
+    /// `txs` on `parent` (B-OMR): every output of the parent's branch, from
+    /// the bodies, then the block's.
+    fn outputs_on(&self, parent: Hash, height: u64, txs: &[Transaction]) -> (u64, Hash) {
+        let mut branch = Vec::new();
+        let mut cur = parent;
+        while let Some(h) = self.headers.header(&cur).filter(|h| h.height > 0) {
+            branch.push((h.height, cur));
+            cur = h.prev_id;
+        }
+        let mut f = blacksilk_tx::mmr::OutputFrontier::new();
+        for (h, id) in branch.iter().rev() {
+            f.append_block(*h, &self.bodies[id]);
+        }
+        f.append_block(height, txs);
+        (f.count(), f.root())
+    }
+
     /// Mines a block with `transfers` on `parent` and feeds it through the header
     /// chain; applies any resulting reorganization to the transaction state.
     fn mine_on(
@@ -68,6 +86,7 @@ impl Node {
         let mut txs = vec![Transaction::Coinbase(cb)];
         txs.extend(transfers.into_iter().map(Transaction::from));
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = self.outputs_on(parent, t.height, &txs);
         let header = BlockHeader {
             version: HEADER_VERSION,
             height: t.height,
@@ -77,6 +96,10 @@ impl Node {
                 .max(self.headers.params().genesis.timestamp + 120 * t.height),
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
+            output_count,
+            output_root,
+            // No PX transaction: the parent's PX root (B-PXR).
+            px_root: self.headers.header(&parent).unwrap().px_root,
             nonce,
         };
         let now = header.timestamp;
@@ -89,11 +112,7 @@ impl Node {
             for id in &reorg.connected {
                 let body = self.bodies[id].clone();
                 let h = self.headers.header(id).unwrap();
-                let ctx = BlockContext {
-                    height: h.height,
-                    reward: REWARD,
-                    tx_root: h.tx_root,
-                };
+                let ctx = BlockContext::of(h, REWARD);
                 validate_block_transactions(
                     &body,
                     &ctx,
@@ -163,11 +182,7 @@ fn header_commits_to_the_body() {
     let id = node.mine(vec![]);
     let header = *node.headers.header(&id).unwrap();
     let body = node.bodies[&id].clone();
-    let good = BlockContext {
-        height: header.height,
-        reward: REWARD,
-        tx_root: header.tx_root,
-    };
+    let good = BlockContext::of(&header, REWARD);
     // Re-validating against the parent state succeeds...
     node.net.chain.undo_block();
     assert_eq!(

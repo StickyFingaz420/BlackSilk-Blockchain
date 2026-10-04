@@ -104,6 +104,11 @@ pub mod tags {
     pub const PX_SIG_MESSAGE: &str = "px/sig-message";
     pub const PX_DEPLOY_PAYLOAD: &str = "px/deploy-payload";
     pub const PX_CONTRACT_ID: &str = "px/contract-id";
+    // The output Merkle mountain range the headers commit to (rule B-OMR,
+    // docs/consensus.md §7.1).
+    pub const OUTPUT_MMR_LEAF: &str = "output-mmr/leaf";
+    pub const OUTPUT_MMR_NODE: &str = "output-mmr/node";
+    pub const OUTPUT_MMR_ROOT: &str = "output-mmr/root";
 
     /// Every tag, for the distinctness test.
     pub const ALL: &[&str] = &[
@@ -181,12 +186,16 @@ pub mod tags {
         PX_SIG_MESSAGE,
         PX_DEPLOY_PAYLOAD,
         PX_CONTRACT_ID,
+        OUTPUT_MMR_LEAF,
+        OUTPUT_MMR_NODE,
+        OUTPUT_MMR_ROOT,
     ];
 
     /// The consensus tags: every tag a node hashes with to reach a verdict
     /// on a block or transaction (generators, key images, CLSAG and
     /// Bulletproofs+ transcripts, transaction and PX hashes and signature
-    /// messages, program and statement ids, contract ids). The consensus
+    /// messages, program and statement ids, contract ids, the output Merkle
+    /// mountain range of the headers). The consensus
     /// fingerprint lists them (node/src/fingerprint.rs, RTFP3-1), so a
     /// changed tag changes it. Tags only wallets, the P2P layer, provers or
     /// the frozen Wasm engine use are not listed: two nodes that differ in
@@ -217,6 +226,9 @@ pub mod tags {
         PX_SIG_MESSAGE,
         PX_DEPLOY_PAYLOAD,
         PX_CONTRACT_ID,
+        OUTPUT_MMR_LEAF,
+        OUTPUT_MMR_NODE,
+        OUTPUT_MMR_ROOT,
     ];
 }
 

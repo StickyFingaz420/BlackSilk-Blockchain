@@ -201,7 +201,7 @@ It is the single definition of block validity for node and miner.
 
 | Rule | Design | Replaces finding |
 |---|---|---|
-| Header | fixed 100-byte encoding; id = H(domain ‖ network_id ‖ header) | B3 (node rebuilt the header), network separation |
+| Header | fixed 172-byte encoding (v3: commits to the output set and the PX root, docs/consensus.md §2, §7.1); id = H(domain ‖ network_id ‖ header) | B3 (node rebuilt the header), network separation |
 | PoW | RandomX(seed, full header) recomputed by every verifier; `h × d < 2^256` | P5 (miner/node mismatch), P6/P7 (timing/heuristic "checks" gone), P8 (inverted targets) |
 | RandomX key | Monero schedule: epoch 2048, lag 64, seed taken from the header's own branch | P10 (per-block key) |
 | Difficulty | LWMA-1 (N = 60, T = 120 s), enforced exactly | P9 (two algorithms, not enforced) |

@@ -371,6 +371,7 @@ impl MockChain {
                 difficulty: forged.unwrap_or_else(|| self.next_difficulty()),
                 tx_root: [0; 32],
                 nonce: 0,
+                ..Default::default()
             },
             txs,
         };

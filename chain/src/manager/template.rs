@@ -5,6 +5,7 @@ use crate::emission::block_reward;
 use crate::mempool::{MempoolError, Origin, COINBASE_RESERVE};
 use crate::sync_policy;
 use blacksilk_consensus::Hash;
+use blacksilk_tx::mmr::OutputFrontier;
 use blacksilk_tx::types::Transaction;
 
 impl ChainManager {
@@ -64,8 +65,33 @@ impl ChainManager {
 
     /// Template for a coinbase-only child of any valid known block (e.g. to extend
     /// a side branch). Mempool transactions are only offered on the tip.
+    /// `None` also when a block between the parent and the connected chain
+    /// has no body here: its outputs, which the child's `output_root`
+    /// extends (B-OMR), are unknown.
     pub fn template_on(&self, parent: &Hash) -> Option<Template> {
+        self.template_on_with(parent, &|_| None)
+    }
+
+    /// [`Self::template_on`], taking the bodies of the branch's blocks this
+    /// manager does not hold (a header received alone, a body dropped as
+    /// invalid or low-work) from `bodies`, as the miner of a side branch
+    /// knows them.
+    pub fn template_on_with(
+        &self,
+        parent: &Hash,
+        bodies: &dyn Fn(&Hash) -> Option<Vec<Transaction>>,
+    ) -> Option<Template> {
+        self.template_on_range(parent, self.output_frontier_of(parent, bodies)?)
+    }
+
+    /// [`Self::template_on`] with the output range after `parent` given by
+    /// the caller (for a parent whose branch bodies this manager does not
+    /// hold, such as a header received alone): a wrong range gives a block
+    /// that fails B-OMR.
+    pub fn template_on_range(&self, parent: &Hash, outputs: OutputFrontier) -> Option<Template> {
         let t = self.headers.template_on(*parent)?;
+        // A coinbase appends no PX commitment: the parent's root (B-PXR).
+        let px_root = self.headers.header(parent)?.px_root;
         Some(Template {
             height: t.height,
             prev_id: t.prev_id,
@@ -76,7 +102,55 @@ impl ChainManager {
             reward: block_reward(t.height, self.generated_before(t.height)),
             fees: 0,
             txs: Vec::new(),
+            outputs,
+            px_root,
         })
+    }
+
+    /// The output range after the known block `id` (B-OMR): the connected
+    /// chain's at their last common block, extended with the bodies of the
+    /// branch's blocks above it (this manager's, else from `bodies`). `None`
+    /// if one of those bodies is missing.
+    fn output_frontier_of(
+        &self,
+        id: &Hash,
+        bodies: &dyn Fn(&Hash) -> Option<Vec<Transaction>>,
+    ) -> Option<OutputFrontier> {
+        let mut branch = Vec::new();
+        let mut cur = *id;
+        let base = loop {
+            let h = self.headers.header(&cur)?;
+            if self.connected.get(h.height as usize) == Some(&cur) {
+                break h.height;
+            }
+            branch.push((h.height, cur));
+            cur = h.prev_id;
+        };
+        let mut outputs = self.state.output_frontier_after(base)?;
+        for (height, id) in branch.iter().rev() {
+            match self.bodies.get(id) {
+                Some(body) => outputs.append_block(*height, body),
+                None => outputs.append_block(*height, &bodies(id)?),
+            }
+        }
+        Some(outputs)
+    }
+
+    /// The PX tree's root after the connected tip with `txs` appended, in
+    /// the header encoding (B-PXR); `None` if their commitments do not fit.
+    pub fn px_root_with(&self, txs: &[Transaction]) -> Option<Hash> {
+        let leaves: Vec<_> = txs
+            .iter()
+            .filter_map(|t| match t {
+                Transaction::Px(p) => Some(p.commitments),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        self.state
+            .px()
+            .root_after(&leaves)
+            .map(|r| blacksilk_tx::px::digest_bytes(&r))
     }
 
     /// Template for the next block on the connected tip.
@@ -90,7 +164,7 @@ impl ChainManager {
         // The pool holds only transactions validated under the next block's
         // rules (`finish_sync` flushes it at an activation); checked here too,
         // so that a template never offers transactions of another rule set.
-        let txs = if self.mempool.validated_under() == Some(rules.domain()) {
+        let mut txs = if self.mempool.validated_under() == Some(rules.domain()) {
             self.mempool.select(
                 t.height,
                 rules.max_block_weight.saturating_sub(COINBASE_RESERVE),
@@ -99,6 +173,16 @@ impl ChainManager {
             )
         } else {
             Vec::new()
+        };
+        // The selection keeps within the tree's free leaves, so the root
+        // exists; if it did not, a coinbase-only template is still valid.
+        let px_root = match self.px_root_with(&txs) {
+            Some(root) => root,
+            None => {
+                log::error!("template: the selected PX commitments do not fit the tree");
+                txs.clear();
+                self.tip_header().px_root
+            }
         };
         let fees = txs.iter().map(Transaction::fee).sum();
         Template {
@@ -111,6 +195,8 @@ impl ChainManager {
             reward,
             fees,
             txs,
+            outputs: blacksilk_tx::validate::ChainView::output_frontier(&self.state),
+            px_root,
         }
     }
 
@@ -268,6 +354,7 @@ mod tests {
             .unwrap();
             let txs = vec![Transaction::Coinbase(cb)];
             let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+            let (output_count, output_root) = t.outputs_after(&txs);
             let header = BlockHeader {
                 version: t.version,
                 height: t.height,
@@ -275,6 +362,9 @@ mod tests {
                 timestamp: t.min_timestamp.max(genesis_time + 120 * t.height),
                 difficulty: t.difficulty,
                 tx_root: tx_root(&ids),
+                output_count,
+                output_root,
+                px_root: t.px_root,
                 nonce,
             };
             let b = Block { header, txs };

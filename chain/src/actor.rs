@@ -192,7 +192,8 @@ enum Command {
         label: String,
     },
     Submit {
-        block: Block,
+        /// Boxed: a block is far larger than the other commands.
+        block: Box<Block>,
         now: u64,
         only_if_header_known: bool,
         reply: SubmitReply,
@@ -419,7 +420,7 @@ impl ChainHandle {
         self.queue
             .offer(Lane::Blocks, (block, reply), |(block, reply)| {
                 Command::Submit {
-                    block,
+                    block: Box::new(block),
                     now,
                     only_if_header_known,
                     reply: Box::new(reply),
@@ -439,7 +440,7 @@ impl ChainHandle {
         self.queue.push_waiting(
             Lane::Blocks,
             Command::Submit {
-                block,
+                block: Box::new(block),
                 now,
                 only_if_header_known: false,
                 reply: Box::new(move |r| {
@@ -755,7 +756,7 @@ impl Actor {
                     let r = if only_if_header_known && m.header(&id).is_none() {
                         None
                     } else {
-                        Some(m.submit_block_bounded(block, now, self.budget))
+                        Some(m.submit_block_bounded(*block, now, self.budget))
                     };
                     m.publish_summary();
                     self.manager_pending = m.sync_pending();
@@ -889,7 +890,7 @@ impl ChainHandle {
         self.queue.push(
             Lane::Blocks,
             Command::Submit {
-                block,
+                block: Box::new(block),
                 now,
                 only_if_header_known: false,
                 reply: Box::new(reply),

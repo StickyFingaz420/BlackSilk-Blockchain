@@ -46,6 +46,7 @@ fn header(height: u64) -> BlockHeader {
         difficulty: 1 + height,
         tx_root: [(height % 241) as u8; 32],
         nonce: height.wrapping_mul(0x9e37_79b9),
+        ..Default::default()
     }
 }
 

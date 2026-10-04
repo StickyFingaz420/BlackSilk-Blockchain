@@ -12,6 +12,7 @@ use blacksilk_crypto::keys::Address;
 use blacksilk_randomx::{Cache, Dataset, Vm};
 use blacksilk_rpc as rpc;
 use blacksilk_tx::builder::{build_coinbase, Payment};
+use blacksilk_tx::mmr::OutputFrontier;
 use blacksilk_tx::types::Transaction;
 use rand_core::{CryptoRng, RngCore};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -24,6 +25,8 @@ pub enum TemplateError {
     Hex(&'static str),
     Tx(usize),
     Coinbase,
+    /// The output peaks do not match the output count.
+    Outputs,
 }
 
 /// Builds the block for `template`, paying `reward + fees` to `payout`.
@@ -36,6 +39,14 @@ pub fn build_block<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> Result<Block, TemplateError> {
     let prev_id = rpc::parse_hash(&template.prev_id).ok_or(TemplateError::Hex("prev_id"))?;
+    let px_root = rpc::parse_hash(&template.px_root).ok_or(TemplateError::Hex("px_root"))?;
+    let peaks = template
+        .output_peaks
+        .iter()
+        .map(|p| rpc::parse_hash(p).ok_or(TemplateError::Hex("output_peaks")))
+        .collect::<Result<Vec<Hash>, _>>()?;
+    let mut outputs =
+        OutputFrontier::from_parts(template.output_count, peaks).ok_or(TemplateError::Outputs)?;
     let mut txs = Vec::with_capacity(template.txs.len() + 1);
     let coinbase = build_coinbase(
         template.height,
@@ -53,6 +64,9 @@ pub fn build_block<R: RngCore + CryptoRng>(
         txs.push(Transaction::decode(&bytes).map_err(|_| TemplateError::Tx(i))?);
     }
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    // B-OMR: the parent's output range with this block's outputs, coinbase
+    // first.
+    outputs.append_block(template.height, &txs);
     let header = BlockHeader {
         // The version of the epoch at the template's height (the node's
         // schedule), not a compiled constant.
@@ -62,6 +76,9 @@ pub fn build_block<R: RngCore + CryptoRng>(
         timestamp: now.max(template.min_timestamp),
         difficulty: template.difficulty,
         tx_root: tx_root(&ids),
+        output_count: outputs.count(),
+        output_root: outputs.root(),
+        px_root,
         nonce: 0,
     };
     log::debug!(
@@ -704,6 +721,7 @@ mod tests {
             difficulty: 3,
             tx_root: [5; 32],
             nonce: 0,
+            ..Default::default()
         };
         let pow = PowContext::new(t.seed_id, false, 2);
         let stop = AtomicBool::new(false);
@@ -1188,6 +1206,7 @@ mod tests {
             difficulty: u64::MAX,
             tx_root: [0; 32],
             nonce: 0,
+            ..Default::default()
         };
         let stop = AtomicBool::new(false);
         let (found, n) = search(&pow, &header, 0, 2, 4, &stop);

@@ -330,6 +330,14 @@ impl ChainView for View<'_> {
         self.tick();
         self.inner.px_tree_size()
     }
+    fn px_root_after(&self, leaves: &[Digest]) -> Option<Digest> {
+        self.tick();
+        self.inner.px_root_after(leaves)
+    }
+    fn output_frontier(&self) -> blacksilk_tx::mmr::OutputFrontier {
+        self.tick();
+        self.inner.output_frontier()
+    }
 }
 
 fn random_point(r: &mut ChaCha20Rng) -> Point {

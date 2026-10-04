@@ -53,6 +53,7 @@ fn block_on(
     let mut all = vec![Transaction::Coinbase(cb)];
     all.extend(txs);
     let ids: Vec<Hash> = all.iter().map(Transaction::hash).collect();
+    let (output_count, output_root) = t.outputs_after(&all);
     let genesis_time = m.params().genesis.timestamp;
     Block {
         header: BlockHeader {
@@ -63,6 +64,9 @@ fn block_on(
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce: 0,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         },
         txs: all,
     }

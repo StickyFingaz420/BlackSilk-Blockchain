@@ -36,6 +36,7 @@ use crate::block::Block;
 use crate::mempool::{Mempool, Returned};
 use crate::store::BlockStore;
 use blacksilk_consensus::{ChainParams, Hash, HeaderChain, HeaderError};
+use blacksilk_tx::mmr::OutputFrontier;
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::Transaction;
@@ -118,6 +119,23 @@ pub struct Template {
     pub fees: u64,
     /// Transactions to include after the coinbase, in order.
     pub txs: Vec<Transaction>,
+    /// The output range after the parent (count and peaks): the block's
+    /// `output_count` and `output_root` extend it with the block's outputs,
+    /// coinbase first (rule B-OMR; [`Template::outputs_after`]).
+    pub outputs: OutputFrontier,
+    /// The block's `px_root` when it holds exactly the coinbase and `txs`
+    /// (rule B-PXR): the coinbase appends no PX commitment.
+    pub px_root: Hash,
+}
+
+impl Template {
+    /// The `output_count` and `output_root` of a block of this template
+    /// whose transactions are `txs` (all of them, coinbase first).
+    pub fn outputs_after(&self, txs: &[Transaction]) -> (u64, Hash) {
+        let mut f = self.outputs.clone();
+        f.append_block(self.height, txs);
+        (f.count(), f.root())
+    }
 }
 
 /// Reorganizations at least this deep are logged as warnings. There is no depth

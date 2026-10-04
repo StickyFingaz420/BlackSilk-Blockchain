@@ -145,6 +145,7 @@ fn header_branch(n: usize, dt: u64, nonce: u64) -> Vec<BlockHeader> {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce,
+            ..Default::default()
         };
         g.accept(h, u64::MAX / 2).unwrap();
         out.push(h);
@@ -510,6 +511,7 @@ async fn invalid_header_gets_the_peer_disconnected() {
         difficulty: 999_999,
         tx_root: [0; 32],
         nonce: 0,
+        ..Default::default()
     };
     w.send(&Message::Headers(vec![bad]).encode()).await.unwrap();
     assert!(closes_within(&mut r, 5).await, "disconnected");
@@ -1373,6 +1375,7 @@ async fn unknown_version_headers_need_real_proof_of_work() {
         difficulty: t.difficulty,
         tx_root: [0; 32],
         nonce,
+        ..Default::default()
     };
 
     // (a) Junk proof of work, at the end of a requested batch: penalized.
@@ -1453,6 +1456,7 @@ async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
         .unwrap();
         let txs = vec![Transaction::Coinbase(cb)];
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: HEADER_VERSION,
             height: t.height,
@@ -1463,6 +1467,9 @@ async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce: 0,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
         let b = Block { header, txs };
         assert!(
@@ -1489,6 +1496,7 @@ async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce: 0,
+            ..Default::default()
         }
     };
     let nid = params().network_id;
@@ -1917,6 +1925,7 @@ async fn clock_samples_come_from_live_arrivals_only() {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce,
+            ..Default::default()
         }
     };
     let fork = g.tip_id();
@@ -2640,6 +2649,7 @@ async fn a_ban_disconnects_every_connection_from_the_ip_and_is_saved() {
         difficulty: 999_999,
         tx_root: [0; 32],
         nonce: 0,
+        ..Default::default()
     };
     w2.send(&Message::Headers(vec![bad]).encode())
         .await
@@ -4161,6 +4171,7 @@ async fn a_deep_fork_unknown_version_header_claiming_max_difficulty_is_not_hashe
         difficulty,
         tx_root: [0; 32],
         nonce: 77,
+        ..Default::default()
     };
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
     wait_until("registered", 30, || a.net.stats().peers == 1).await;
@@ -4201,6 +4212,7 @@ async fn only_distinct_outbound_reporters_trigger_the_upgrade_warning() {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce,
+            ..Default::default()
         }
     };
     let tip = g.tip_id();
@@ -4263,6 +4275,7 @@ async fn one_outbound_reporter_on_our_best_work_warns_at_once() {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce,
+            ..Default::default()
         }
     };
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -4299,6 +4312,7 @@ async fn the_upgrade_warning_thresholds_are_inclusive() {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce,
+            ..Default::default()
         }
     };
     let at = |h: u64| g.main_id_at(h).unwrap();
@@ -4365,6 +4379,7 @@ async fn an_old_epoch_unknown_version_header_triggers_no_cache_build() {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce: 5,
+            ..Default::default()
         }
     };
     let old = newer(g.main_id_at(2099).unwrap());
@@ -4406,6 +4421,7 @@ async fn an_unknown_version_header_keyed_by_its_own_batch_is_hashed() {
         difficulty: t.difficulty,
         tx_root: [0; 32],
         nonce: 5,
+        ..Default::default()
     };
     let mut batch = ours[2047..].to_vec();
     assert_eq!(batch[0].height, 2048);
@@ -4483,6 +4499,7 @@ async fn an_unsolicited_low_work_header_keeps_the_peers_claimed_height() {
         difficulty: t.difficulty,
         tx_root: [0; 32],
         nonce: 77,
+        ..Default::default()
     };
     let before = pow.0.load(std::sync::atomic::Ordering::SeqCst);
     w.send(&Message::Headers(vec![fork]).encode())
@@ -5927,6 +5944,7 @@ async fn rt_sync_tips_after_an_invalidated_branch_are_announced_to_its_relayer()
         .unwrap();
         let txs = vec![Transaction::Coinbase(cb)];
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: HEADER_VERSION,
             height: t.height,
@@ -5937,6 +5955,9 @@ async fn rt_sync_tips_after_an_invalidated_branch_are_announced_to_its_relayer()
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce: 7,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
         Block { header, txs }
     };
@@ -5961,6 +5982,7 @@ async fn rt_sync_tips_after_an_invalidated_branch_are_announced_to_its_relayer()
                 difficulty: t.difficulty,
                 tx_root: [0; 32],
                 nonce: 7,
+                ..Default::default()
             };
             x = g.accept(h, u64::MAX / 2).unwrap().id;
             out.push(h);

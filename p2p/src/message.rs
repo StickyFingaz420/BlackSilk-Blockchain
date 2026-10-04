@@ -292,6 +292,7 @@ mod tests {
             difficulty: 5,
             tx_root: [2; 32],
             nonce: 3,
+            ..Default::default()
         };
         vec![
             Message::Version(Version {

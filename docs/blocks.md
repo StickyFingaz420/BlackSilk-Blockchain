@@ -66,14 +66,16 @@ Monero adopted the same reasoning in 2022.
 
 Each network's genesis header is the constant in `consensus/src/params.rs`.
 - **Its body is empty:** no transactions and `tx_root` = 32 zero bytes, the Merkle root
-  of the empty list.
+  of the empty list; no outputs (`output_count` 0, `output_root` 32 zero bytes, the
+  root of the empty range) and the empty PX tree's root as `px_root`
+  (`consensus::genesis::EMPTY_PX_ROOT`).
 - **There is no premine and no founder reward.** The first coins are created by block 1.
 - The genesis block is never validated; it is the root of the chain.
 
 ## 4. Block format
 
 ```
-header      100 bytes                          consensus.md §2
+header      172 bytes                          consensus.md §2
 tx_count    varint, 1 ≤ n ≤ 10 000
 txs[n]:     varint length ‖ transaction bytes  transactions.md §4 (strict decoding)
 ```
@@ -93,8 +95,9 @@ A block `B` at height `h` with parent `P` is valid iff all of the following hold
 1. its header is valid (consensus.md §6);
 2. `P` is valid;
 3. its transactions are valid against the transaction state after `P`, with
-   `BlockContext { height: h, reward: reward(h), tx_root: B.header.tx_root }`
-   (transactions.md §8, rules T, C and B1–B7);
+   `BlockContext::of(B.header, reward(h))` (height, reward, and the header's `tx_root`,
+   `output_count`, `output_root` and `px_root`; transactions.md §8, rules T, C, B1–B8,
+   B-OMR and B-PXR);
 4. with block weight limit `MAX_BLOCK_WEIGHT = 600 000` and
    `FEE_PER_WEIGHT = 20 atomic units` (transactions.md §8.4); the v1 part of a PX or
    deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` against it
@@ -117,11 +120,18 @@ invalid block reports, never its validity.
   reorganizing.
 - A body that does not match its header's `tx_root` is simply discarded. The header
   stays valid, because anyone can pair a valid header with garbage.
+- A body that matches `tx_root` but not the header's `output_count`, `output_root` or
+  `px_root` (B-OMR, B-PXR) is the block's own body: the header commits to a false
+  state, so the **block** is invalid and marked invalid with its descendants, like any
+  other body failure. Only the block's miner can produce such a pair (the header
+  commits to the body through `tx_root`).
 
 ## 6. Reorganization and transaction state
 
 The transaction state is:
-- the ordered global output set;
+- the ordered global output set, with every node of its Merkle mountain range
+  (consensus.md §7.1), so the range after any connected block is a lookup (undo
+  truncates it);
 - the set of spent key images;
 - the running `G`;
 - the PX state (px.md §5): commitment tree, root window, nullifier set, containment
@@ -691,12 +701,12 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 | Method | Path | Purpose | Class | Body limit |
 |---|---|---|---|---|
 | GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version), `template_ready`, `template_latched` and, during an operator fork, `operator_fork` (§9.4); `network_psk_loaded` (whether a pre-shared key is loaded, never the key), `overrides` (the operator flags of this run that change a default, e.g. `--invalidate-block <id>`, `--skip-randomx-self-test`) and `operator_verdicts` (`block`, `height` or `null`: the operator invalidations in force) | read | none |
-| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions, and `next_seed_id` inside the key-switch window; `503` until the node has caught up, during a drain, and during an operator fork (§9.4) | bulk | none |
+| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions, the parent's output range (`output_count`, `output_peaks`: the miner appends its coinbase's and the transactions' outputs and puts the count and root in the header, B-OMR), the block's `px_root` for exactly these transactions (B-PXR), and `next_seed_id` inside the key-switch window; `503` until the node has caught up, during a drain, and during an operator fork (§9.4) | bulk | none |
 | GET | `/tip?after=<id>&wait=<s>` | the connected tip (height, id, header height, `template_ready`); with `after`, held until the tip differs from it, at most `wait` ≤ 30 s (§9.4) | long poll | none |
 | POST | `/block` | submit a mined block (`{"hex": …}`); admission rule §9.2 | block | `rpc::MAX_REQUEST_BYTES` (a maximum-size block in hex) |
 | POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool | submit | `guard::MAX_TX_BODY_BYTES` (the largest transaction of any kind in hex) |
 | GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100, at most 64 MiB of hex), for wallet scanning | bulk | none |
-| GET | `/headers?from=h&count=n` | the headers of connected blocks `h…h+n−1` (fewer at the tip, none above it), 100 bytes each, concatenated as hex, with the tip height (`1 ≤ n ≤ rpc::MAX_HEADERS_PER_REQUEST`); the wallet's header check reads the chain from the genesis with it (§10) | read | none |
+| GET | `/headers?from=h&count=n` | the headers of connected blocks `h…h+n−1` (fewer at the tip, none above it), 172 bytes each, concatenated as hex, with the tip height (`1 ≤ n ≤ rpc::MAX_HEADERS_PER_REQUEST`); the wallet's header check reads the chain from the genesis with it (§10) | read | none |
 | GET | `/distribution?to=h` | cumulative output counts per block, for tools (the wallet derives its decoy distribution from its own output index and never requests it, transactions.md §11.3.1) | read | none |
 | POST | `/outputs` | output keys and commitments for up to 1 024 global indices | read | `guard::MAX_OUTPUTS_BODY_BYTES` |
 | GET | `/px/commitments?from=f&limit=l` | a page of PX commitments in tree order (px.md §11.4) | read | none |
@@ -991,7 +1001,7 @@ and hashes the sampled headers in light mode):
 
 A header that fails is refused, with every block from it on. Every check starts at the
 genesis (W3-39b): the headers below the first block the wallet scans come from
-`/headers` (100 bytes each, `rpc::MAX_HEADERS_PER_REQUEST` per request) and are
+`/headers` (172 bytes each, `rpc::MAX_HEADERS_PER_REQUEST` per request) and are
 checked first, so at any restore height every header's difficulty follows from the
 genesis by the LWMA rule, and the work sample is drawn from the whole chain. A later
 check continues from the wallet's own last headers when an earlier one checked them

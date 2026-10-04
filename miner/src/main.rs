@@ -728,6 +728,9 @@ mod tests {
                     reward: t.reward,
                     fees: t.fees,
                     txs: t.txs.iter().map(|tx| hex::encode(tx.encode())).collect(),
+                    output_count: t.outputs.count(),
+                    output_peaks: t.outputs.peaks().iter().map(hex::encode).collect(),
+                    px_root: hex::encode(t.px_root),
                 },
                 next_seed_id: next.map(hex::encode),
             })

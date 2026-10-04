@@ -94,6 +94,7 @@ impl Env {
     fn block(&self, txs: Vec<Transaction>) -> Block {
         let t = self.m.template();
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: t.version,
             height: t.height,
@@ -104,6 +105,10 @@ impl Env {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce: 0,
+            output_count,
+            output_root,
+            // The root after the body's own PX commitments (B-PXR).
+            px_root: self.m.px_root_with(&txs).unwrap_or_default(),
         };
         Block { header, txs }
     }
@@ -349,11 +354,8 @@ fn b5_the_body_must_match_the_tx_root() {
     assert!(matches!(env.submit(b), Err(SubmitError::BodyMismatch)));
     // The body rule itself, on the same state.
     let txs = vec![cb.clone()];
-    let mut ctx = BlockContext {
-        height: 1,
-        reward: env.reward(),
-        tx_root: tx_root(&[cb.hash()]),
-    };
+    let mut ctx = BlockContext::committing(1, env.reward(), &txs, env.m.state());
+    assert_eq!(ctx.tx_root, tx_root(&[cb.hash()]));
     let rules = env.m.next_rules();
     let mut rng = ChaCha20Rng::seed_from_u64(5);
     assert_eq!(

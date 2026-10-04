@@ -31,6 +31,7 @@ fn mine(chain: &HeaderChain, timestamp: u64, start_nonce: u64) -> BlockHeader {
         difficulty: t.difficulty,
         tx_root: tx_root(&[[t.height as u8; 32]]),
         nonce: start_nonce,
+        ..Default::default()
     };
     while !check_hash(&vm.hash(&header.to_bytes()), header.difficulty) {
         header.nonce += 1;
@@ -74,6 +75,7 @@ fn insufficient_work_is_rejected() {
         difficulty: t.difficulty,
         tx_root: [1; 32],
         nonce: 0,
+        ..Default::default()
     };
     // Find a nonce that does NOT meet the difficulty (7 in 8 chance per try).
     while check_hash(&vm.hash(&header.to_bytes()), header.difficulty) {

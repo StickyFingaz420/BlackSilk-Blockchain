@@ -24,7 +24,7 @@ pub const MAX_OUTPUTS_PER_REQUEST: usize = 1024;
 pub const MAX_HEADERS_PER_REQUEST: u64 = 2_000;
 /// Bytes of one encoded block header (`blacksilk_consensus::HEADER_SIZE`,
 /// which the node and the wallet assert equal).
-pub const HEADER_BYTES: usize = 100;
+pub const HEADER_BYTES: usize = 172;
 
 // ---- authentication (docs/blocks.md §9.1) ----
 
@@ -142,6 +142,15 @@ pub struct Template {
     pub fees: u64,
     /// Encoded transfers to include after the coinbase, in order.
     pub txs: Vec<String>,
+    /// The output range after the parent (rule B-OMR, docs/consensus.md
+    /// §7.1): its count and its peaks (hex, largest first). The miner
+    /// appends its coinbase's outputs, then those of `txs`, and puts the
+    /// resulting count and root in the header.
+    pub output_count: u64,
+    pub output_peaks: Vec<String>,
+    /// The header's `px_root` (hex) for a block of exactly the coinbase and
+    /// `txs` (rule B-PXR).
+    pub px_root: String,
 }
 
 fn first_header_version() -> u32 {
@@ -1118,6 +1127,9 @@ mod tests {
             reward: 9,
             fees: 1,
             txs: vec!["abcd".into()],
+            output_count: 3,
+            output_peaks: vec!["cc".repeat(32), "dd".repeat(32)],
+            px_root: "ee".repeat(32),
         }
     }
 

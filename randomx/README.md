@@ -98,7 +98,7 @@ What this does **not** cover:
 - AesGenerator4R and AesHash1R have no direct vector (the reference has none either);
   they are pinned only through the end-to-end hashes.
 - There is no comparison with the reference at scale: the evidence is the 6 hashes
-  above (3 keys), and no input has BlackSilk's 32-byte-key, 100-byte-header shape.
+  above (3 keys), and no input has BlackSilk's 32-byte-key, 172-byte-header shape.
 - The rounding emulation has unit tests (directed rounding, signed zeros, rescaled
   residuals, overflow, infinity propagation) that check self-consistency, not
   agreement with an IEEE reference.

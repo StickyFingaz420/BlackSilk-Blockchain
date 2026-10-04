@@ -395,6 +395,7 @@ fn regtest_store_with(
         .unwrap();
         let txs = vec![Transaction::Coinbase(cb)];
         let hashes: Vec<[u8; 32]> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: t.version,
             height: t.height,
@@ -404,6 +405,9 @@ fn regtest_store_with(
                 .max(p.genesis.timestamp + p.target_block_time * t.height),
             difficulty: t.difficulty,
             tx_root: tx_root(&hashes),
+            output_count,
+            output_root,
+            px_root: t.px_root,
             nonce: 0,
         };
         let b = Block { header, txs };

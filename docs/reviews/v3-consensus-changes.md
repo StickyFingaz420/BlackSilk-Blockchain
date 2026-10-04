@@ -37,6 +37,7 @@ they are never renamed. Index:
 - px-proof-decode-bounds (zk, px, tx, p2p admission; W4-PXDOS)
 - px-ciphertext-r (tx; PX-R)
 - rx-salt (randomx; RX-SALT)
+- output-root (consensus header, tx, px, chain, rpc, miner, node, wallet; OMR)
 
 New sections are appended at the end.
 
@@ -3510,3 +3511,179 @@ salt, never sizes or frequencies"). Internal engineering work, not an audit.
   `8b96c3a3…`, `9eab5567…`; regtest `aebaf337…`, `1ad5f7f5…`; mainnet `67a1e4b9…`,
   `55353dc4…`. Identity unchanged (testnet `b333a99f…`, regtest `dfab90c6…`, mainnet
   `2dbb1c37…`).
+
+<a id="output-root"></a>
+
+## output-root: headers commit to the v1 output set (a Merkle mountain range) and to the PX tree root
+
+Revision: OMR:header-commits-output-mmr-and-px-root
+
+Owner: OMR (implementation lead). Decision: "output-root (Lead, 2026-10-04)" in
+`phase2-2026-09-27/decisions.md` (a Grin-style output commitment in the header; a PX
+root evaluated for the same revision). Raised by 38 W11 (verified backfill, P1, "Decoy
+and relay plan") and RT-D1b N2 (the restore node is trusted for the outputs below the
+restore height). Internal engineering work, not an audit.
+
+1. **Problem.** No header committed to the chain's state, only to the block's
+   transactions (`tx_root`). Three consequences:
+   - **v1 outputs.** The global index of an output, which every ring member names, is
+     the node's word: a wallet reads `first_output` of each scanned block from
+     `/blocks`, and the outputs below its restore height from `/outputs`, unverified
+     (RT-D1b N2, 38 W11). A node that shifts or alters that list makes the wallet's
+     rings name other outputs than it believes (a failed spend at best, a ring that
+     marks its user at worst), and it can serve each client its own list.
+   - **PX commitments.** A restored wallet takes the commitment list below its restore
+     height from `/px/commitments`. It is bound to the chain only once a scanned PX
+     transaction anchors at a root that includes a scanned commitment; until then
+     deposits wait 100 blocks (the root window), and an end check (W3-39b) is needed
+     against relabelled lists (px.md §11.4).
+   - **Light verification.** Nothing short of replaying every block shows that a list
+     of outputs, or a PX root, is the chain's.
+2. **Demonstrated failure.** On base `374d779`: `rpc::BlockEntry::first_output` is
+   copied into the wallet's index without a check (`wallet/src/wallet/sync.rs`,
+   `apply_v1_block`), and `complete_index` (`wallet/src/wallet/px_flows.rs`) prepends
+   the node's `/outputs` answer below the restore height after checking only its
+   length against the node's own distribution. Both are numbers and keys only the node
+   vouches for; no header field can refute them. px.md §11.4 documents the 100-block
+   wait and W3-39b as residuals of the same gap.
+3. **Prior art.**
+   - Grin (Mimblewimble): headers commit to the output, range-proof and kernel MMRs
+     (`output_root`, `output_mmr_size`); each block appends to its parent's MMRs.
+   - Zcash: every header commits to the note commitment tree root
+     (`hashFinalSaplingRoot`), and since NU5 to a history tree (ZIP 221, an MMR over
+     the block headers, FlyClient).
+   - Ethereum's state root; Bitcoin's Utreexo and assumeUTXO discussions.
+   - Peter Todd's Merkle mountain ranges (2012) and Grin's `pmmr` (post-order storage,
+     bagged peaks).
+4. **Rule.** The header grows from 100 to 172 bytes (docs/consensus.md §2):
+   `output_count` (LE64) at 92, `output_root` (32) at 100, `px_root` (32) at 132; the
+   nonce moves to 164.
+   - **B-OMR** (`tx/src/validate.rs`, right after B5): `output_count` = the parent's
+     count + the block's outputs, coinbase first, in block order; `output_root` =
+     `root` of the parent's range with them appended (docs/consensus.md §7.1:
+     `leaf = H32("output-mmr/leaf", one_time_key ‖ commitment ‖ LE64 height ‖
+     u8 coinbase)`, `node = H32("output-mmr/node", l ‖ r)`, `root(n) =
+     H32("output-mmr/root", LE64 n ‖ peaks, largest first)`, all zero for none).
+     Errors `OutputCountMismatch { expected, found }` and `OutputRootMismatch`.
+   - **B-PXR** (right after B8): `px_root` = `digest_bytes` of the PX tree's root after
+     the block's commitments are appended in block order: the root the block adds to the
+     root window (px.md §5). Error `PxRootMismatch`.
+   - **Genesis:** `output_count` 0, `output_root` zero, `px_root` the empty tree's root
+     (`consensus::genesis::EMPTY_PX_ROOT`; the consensus crate computes no Poseidon2, so
+     the constant is checked against the PX state by `tx/src/state.rs` and against
+     `empty.32` of the independent Poseidon2 vectors by `tools/vectors/output_mmr.py`).
+     `ChainParams::check` requires all three.
+   - A failure of either rule makes the **block** invalid (marked invalid with its
+     descendants, `ChainManager::invalidate`), unlike a `tx_root` mismatch, which
+     discards a body as not the block's (blocks.md §5): a body that matches `tx_root`
+     is the block's own, so the header commits to a false state.
+   - The three new tags are in `tags::CONSENSUS`: they define a consensus rule.
+5. **Alternatives.**
+   - **A hash chain** (`output_root = H(parent root ‖ the block's outputs)`): simpler
+     (no peaks in the template) but no inclusion proof of a single output. Rejected: the
+     MMR costs one hash per output plus one per merge and keeps proofs possible.
+   - **A sparse Merkle tree or UTXO commitment.** BlackSilk outputs are never removed
+     (ring signatures hide spends), so an append-only accumulator is the exact fit.
+   - **Peaks bagged right to left** (Grin): equivalent. One hash over `LE64 n` and the
+     peaks left to right is simpler and binds the count.
+   - **A header-only bound** (`output_count > parent.output_count`, or an upper bound
+     from the block weight): not adopted. It would duplicate body-rule constants
+     (`MIN_COINBASE_OUTPUTS`, the weight per output) in the header crate and reject
+     nothing the body check does not: no block is connected before its body is
+     validated, and a header with false values is like a header with an invalid body.
+   - **No `px_root`.** Evaluated: it costs one 32-byte field and one `root_after` per
+     block in validation (at most 32 Poseidon2 permutations per commitment plus 32 for
+     the root, next to about 0.2 s of proof verification per PX transaction), and
+     nothing in the miner: a coinbase appends no PX commitment, so the node computes
+     `px_root` for exactly the template's transactions and the template carries it (a
+     template on a side branch is coinbase-only and takes the parent header's value). It
+     removes the PX backfill's trust in one check (item 10), and a second header
+     revision later would cost another reset and re-pin. **Included.**
+6. **Affected components.**
+   - consensus: `BlockHeader` (three fields, `Default` for tests), `HEADER_SIZE` 172,
+     `NONCE_OFFSET` 164, `genesis::EMPTY_PX_ROOT`, `GenesisSpec::header`,
+     `ChainParams::check`.
+   - crypto: tags `output-mmr/leaf`, `output-mmr/node`, `output-mmr/root` (in `ALL` and
+     `CONSENSUS`).
+   - tx: `mmr` (new: `leaf`, `node`, `OutputFrontier`, `OutputMmr`), `ChainView`
+     (`output_frontier`, `px_root_after`), `BlockContext` (three fields, `of`,
+     `committing`), `BlockError` (three variants), `validate_block_transactions`,
+     `MemoryChain` (every node of the range; `output_frontier_after`, `output_root`).
+   - px: `State::root_after`.
+   - chain: `Template` (`outputs`, `px_root`, `outputs_after`), `template`,
+     `template_on` (the range of a side-branch parent from the bodies above the fork;
+     `None` without them), `template_on_with` and `template_on_range` (the caller
+     gives the bodies or the range a header-only branch lacks), `px_root_with`,
+     `sync_state` (`BlockContext::of`); the chain actor's block command holds its block
+     boxed (the 172-byte header made it the one large variant).
+   - rpc and node: `/template` gains `output_count`, `output_peaks` and `px_root`;
+     `HEADER_BYTES` 172.
+   - miner: `build_block` extends the template's peaks with its coinbase's and the
+     template transactions' outputs.
+   - node fingerprint: `consensus.EMPTY_PX_ROOT`, the rule samples, the revision; the
+     header size and nonce offset entries move.
+   - tools: genesis (prints the new fields), labnet and supply-audit (the header size).
+7. **Activation.** Part of the v3 genesis rule set; no activation height. The testnet v3
+   has not launched (the reset is authorized); every genesis id changes.
+8. **Compatibility.** A new header format: no block of an earlier build is valid, and
+   every network's genesis id moves (testnet `b16090df…`, regtest `3dbdba2a…`, mainnet
+   `59f74a49…`). Block stores of earlier builds are refused by the store's genesis check
+   ("wrong network data directory"); a format-0 regtest store (no file header) no longer
+   decodes and must be deleted. `rpc::Template` gains required fields: a miner of an
+   earlier build cannot decode this node's template.
+9. **Reorg.** The node's state keeps every node of the range: undo truncates it
+   (`OutputMmr::truncate`) and the range after any connected block is a lookup. Each
+   block is validated against its parent's range, so a reorganization revalidates the
+   new branch on its own state; a side-branch template takes the range at the fork and
+   appends the bodies above it.
+10. **Wallet.** In a separate commit (merged after the wallet-distribution branch):
+    each scanned block's `first_output` must satisfy `first_output + outputs(block) ==
+    header.output_count`, which fixes the global index of every output the wallet
+    indexes, and the outputs fetched below the restore height are checked, with the
+    scanned ones, against the synced header's `output_count` and `output_root`: the
+    node's output list is no longer trusted (RT-D1b N2; 38 W11 for the index). The PX
+    backfill's root is checked against the base block's `px_root`, so a shortened or
+    altered commitment list is refused at once; the 100-block wait and the W3-39b end
+    check become redundant and stay as defence in depth.
+11. **Mining.** `/template` carries the parent's range (the count and at most 64 peaks)
+    and the block's `px_root`. The reference miner appends its coinbase's outputs, then
+    the template transactions', and sets both fields; third-party miners must do the
+    same (blocks.md §9). A miner that changes the transaction set must recompute
+    `px_root` if it drops or adds PX transactions, which needs the PX tree frontier the
+    template does not carry; the reference miner never changes the set.
+12. **P2P.** Headers are 172 bytes (a full `Headers` message: 2 000 × 172 = 344 000
+    bytes, inside `MAX_FRAME`). A peer relaying a block that fails B-OMR or B-PXR is
+    treated as for any invalid block (docs/p2p.md §10).
+13. **Vectors.** `tools/vectors/output_mmr.py` (standard-library Python from the spec
+    text, using the recursive definition rather than the incremental algorithm) writes
+    `tx/tests/data/output_mmr.txt` (6 leaves, 6 peak lists, roots for 24 sizes up to
+    1 000) and prints the header layout, the block ids and the genesis ids pinned in
+    `consensus/tests/golden.rs` and `consensus/src/params.rs`.
+14. **Regression tests.**
+    - `tx/src/mmr.rs`: frontier, full range and recursive definition agree for every
+      size up to 300; truncate-then-append equals the original; the root binds the
+      count, the order and each leaf field; `from_parts` needs one peak per set bit.
+    - `tx/tests/output_mmr_vectors.rs`: the independent vectors, through both the
+      frontier and the full range.
+    - `px/src/state.rs`: `root_after` equals the root `apply_block` records over 4 000
+      random apply and undo steps, and follows the capacity.
+    - `consensus/src/header.rs`: every field has its own byte range; the id commits to
+      each new field. `consensus/tests/golden.rs`: the layout, ids and genesis ids.
+    - `tx/src/state.rs`: `EMPTY_PX_ROOT` is the PX state's genesis root; the frontier
+      after every height of a chain with undo equals a recomputation.
+    - `chain/tests/output_root.rs` (adversarial): a wrong count, a wrong root, the
+      right outputs in another order, a wrong `px_root` with and without PX
+      commitments, each refused and marked invalid with its descendants and the honest
+      sibling then connected; a reorganization across branches of different output
+      counts; the template's range equals the connected tip's after every block; a
+      side-branch template.
+    - Fingerprint rule samples: a leaf, the roots of 0, 1, 2, 3 and 7 leaves, the
+      commitments of a block of the fixture coinbase on the genesis state, and a
+      `root_after` on the empty tree.
+15. **Suite results and open review points.** Results are in the commit messages. Open:
+    - the range is not served with inclusion proofs yet (`/outputs` could return them);
+      wallets check whole lists against one header;
+    - the decoy distribution (`/distribution`) stays the node's word above what the
+      wallet indexes (the wallet-distribution work, 38 D1);
+    - the node keeps about 64 bytes per output in memory for the range, next to the
+      output records.

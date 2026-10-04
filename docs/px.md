@@ -321,6 +321,7 @@ The proof's table heights are public (zkvm.md §8).
 |---|---|
 | Tree | Append-only frontier: 32 digests plus the size. Commitments are appended in block order, one leaf per output commitment (two per transfer today). Capacity `CAPACITY = 2^32` leaves: a block whose commitments would exceed it is invalid (B8, transactions.md §8.3; testnet v3). The append that fills the tree keeps the full root, which the frontier returns at `size = CAPACITY` (21-D; below capacity every root is unchanged). Once full, the tree takes no more PX outputs until a new-tree epoch is designed. |
 | Root window | The roots after each of the last 100 blocks (initially the empty-tree root). A transfer's anchor must be one of them. Anchors never refer to a state inside the current block. |
+| Header root | Every block header carries the root after the block as `px_root` (rule B-PXR, transactions.md §8.3; the genesis header the empty tree's root, `EMPTY_PX_ROOT`): the root it adds to the window, so a list of commitments can be checked against one header (testnet v3, reviews/v3-consensus-changes.md#output-root). |
 | Nullifier set | A nullifier can appear once, ever: across blocks, within a block, and within a transfer. |
 | Pool | `pool' = pool + bridge_in − bridge_out ≥ 0`, applied in order, as `u128`. Even a complete proof-system break cannot withdraw more than was deposited (containment, zk.md §4.7). |
 

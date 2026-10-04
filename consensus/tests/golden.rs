@@ -208,6 +208,7 @@ fn child(chain: &HeaderChain, timestamp: u64) -> BlockHeader {
         difficulty: t.difficulty,
         tx_root: [0; 32],
         nonce: 0,
+        ..Default::default()
     }
 }
 
@@ -355,9 +356,12 @@ fn header_bytes_and_id_golden() {
         timestamp: 1_800_000_000,
         difficulty: 12_345,
         tx_root: [9; 32],
+        output_count: 77,
+        output_root: [10; 32],
+        px_root: [11; 32],
         nonce: 0xDEAD_BEEF,
     };
-    // Layout of §2, written out field by field (script).
+    // Layout of §2, written out field by field (tools/vectors/output_mmr.py).
     assert_eq!(
         hex(&h.to_bytes()),
         "01000000\
@@ -366,37 +370,42 @@ fn header_bytes_and_id_golden() {
          00d2496b00000000\
          3930000000000000\
          0909090909090909090909090909090909090909090909090909090909090909\
+         4d00000000000000\
+         0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\
+         0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\
          efbeadde00000000"
     );
     // id = Blake2b-256("BlackSilk/block-id" ‖ LE32(network_id) ‖ header) (script).
     assert_eq!(
         hex(&h.id(0x00DE_B06E)),
-        "4b798523f86f62286ac96f847da2b92c19482ae1dad2a36ffec8bb4b7d21b9b7"
+        "b55e333ef752369d2e92c58bec523681c45437771ccbb60620499c5801f25fac"
     );
     assert_eq!(
-        hex(&h.id(0x0001_D672)),
-        "049e180a7fa223456981bdb0b4f97d5dbc04d4f971ad5479bc917328c3069a5f"
+        hex(&h.id(0x0001_D673)),
+        "c2a5633f91ff1fe41cc7404e7df102fbca2c5314b0f9bc682cf20a6ee78e83e6"
     );
 }
 
 #[test]
 fn genesis_ids_golden() {
     // From the §1 parameters (version 1, height 0, zero prev_id and tx_root,
-    // timestamp, D0, nonce 0) with the script. Testnet: the v3 id 0x0001D673
-    // with the placeholder genesis time and no beacon (fingerprint v3; the
-    // launch commit changes it). The retired v2 value was 6556f92d…037d.
+    // no outputs, the empty PX root, timestamp, D0, nonce 0) with
+    // tools/vectors/output_mmr.py. Testnet: the v3 id 0x0001D673 with the
+    // placeholder genesis time and no beacon (fingerprint v3; the launch
+    // commit changes it). Before the 172-byte header (#output-root) it was
+    // 08b9e7c9…6bcf; the retired v2 value was 6556f92d…037d.
     assert_eq!(
         hex(&ChainParams::testnet().genesis_id()),
-        "08b9e7c994bf8329fb710dd374af20e5450839e7cdaa6f2b6a05fd772cc96bcf"
+        "b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0"
     );
     assert_eq!(
         hex(&ChainParams::regtest().genesis_id()),
-        "087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7"
+        "3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141"
     );
     // Mainnet genesis time is provisional (§1): this pins today's value only.
     assert_eq!(
         hex(&ChainParams::mainnet().genesis_id()),
-        "5f6a73da4d6f67fcb4487942d9ff6b7066b668f23bc6a739e2a17d5a8b358ed4"
+        "59f74a4965f7302ad4db6e7993d8f3542ddb147c84819dd63dd71f9f76f784e5"
     );
 }
 

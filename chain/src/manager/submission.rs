@@ -325,6 +325,7 @@ mod tests {
             .unwrap();
             let txs = vec![Transaction::Coinbase(cb)];
             let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+            let (output_count, output_root) = t.outputs_after(&txs);
             let header = BlockHeader {
                 version: HEADER_VERSION,
                 height: t.height,
@@ -332,6 +333,9 @@ mod tests {
                 timestamp: t.min_timestamp.max(genesis_time + 120 * t.height),
                 difficulty: t.difficulty,
                 tx_root: tx_root(&ids),
+                output_count,
+                output_root,
+                px_root: t.px_root,
                 nonce,
             };
             let b = Block { header, txs };

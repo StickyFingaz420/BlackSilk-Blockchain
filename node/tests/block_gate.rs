@@ -31,6 +31,7 @@ fn header_branch(p: &ChainParams, n: usize) -> Vec<BlockHeader> {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce: 0,
+            ..Default::default()
         };
         g.accept(h, u64::MAX / 2).unwrap();
         out.push(h);
@@ -64,6 +65,7 @@ fn the_rpc_block_gate_applies_the_shared_work_gate() {
             difficulty: t.difficulty,
             tx_root: [1; 32],
             nonce: 0,
+            ..Default::default()
         }
     };
     assert_eq!(rpc_block_admissible(&m, &own), Ok(()));

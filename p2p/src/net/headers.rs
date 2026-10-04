@@ -1417,6 +1417,7 @@ mod tests {
                 difficulty: t.difficulty,
                 tx_root: [0; 32],
                 nonce: k,
+                ..Default::default()
             };
             g.accept(h, u64::MAX / 2).unwrap();
             loop {
@@ -1480,6 +1481,7 @@ mod tests {
             difficulty: t.difficulty + 5,
             tx_root: [0; 32],
             nonce: 0,
+            ..Default::default()
         };
         let addr = NetAddr::parse("1.2.3.4:5").unwrap();
         let verify = |inner: Arc<Inner>| {
@@ -1524,6 +1526,7 @@ mod tests {
             difficulty: 1,
             tx_root: [0; 32],
             nonce: n,
+            ..Default::default()
         };
         // A refused header, accepted inside a batch that is not live.
         inner.clock().note_future_refusal(header(1).id(nid), 900);
@@ -1610,6 +1613,7 @@ mod tests {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce,
+            ..Default::default()
         };
         let (tip, side) = (child(1), child(2));
         // Sends one header and waits until the worker has taken it up.

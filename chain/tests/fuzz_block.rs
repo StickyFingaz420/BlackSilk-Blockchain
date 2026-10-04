@@ -34,6 +34,7 @@ fn mutated_blocks_never_panic_and_decode_canonically() {
             difficulty: 1,
             tx_root: tx_root(&ids),
             nonce: 0,
+            ..Default::default()
         },
         txs,
     };

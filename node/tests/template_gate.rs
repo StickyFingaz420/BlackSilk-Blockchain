@@ -105,6 +105,7 @@ fn headers_on(m: &ChainManager, n: usize, dt: u64) -> Vec<BlockHeader> {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce: 9,
+            ..Default::default()
         };
         g.accept(h, u64::MAX / 2).unwrap();
         out.push(h);
@@ -129,6 +130,7 @@ fn mine_at(m: &mut ChainManager, rng: &mut ChaCha20Rng, time: u64, now: u64) -> 
     .unwrap();
     let txs = vec![Transaction::Coinbase(cb)];
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    let (output_count, output_root) = t.outputs_after(&txs);
     let header = BlockHeader {
         version: t.version,
         height: t.height,
@@ -137,6 +139,9 @@ fn mine_at(m: &mut ChainManager, rng: &mut ChaCha20Rng, time: u64, now: u64) -> 
         difficulty: t.difficulty,
         tx_root: tx_root(&ids),
         nonce: 0,
+        output_count,
+        output_root,
+        px_root: t.px_root,
     };
     let b = Block { header, txs };
     m.submit_block(b.clone(), now).unwrap();

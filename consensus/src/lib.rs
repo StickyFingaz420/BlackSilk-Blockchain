@@ -60,6 +60,7 @@ mod tests {
             difficulty: 0x1c1b_1a19_1817_1615,
             tx_root: [0; 32],
             nonce: 0x2423_2221_201f_1e1d,
+            ..Default::default()
         };
         let b = h.to_bytes();
         assert_eq!(b[0..12], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);

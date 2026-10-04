@@ -23,6 +23,26 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+thread_local! {
+    /// The body of every block this test built, by id: the output range a
+    /// template on a branch extends (B-OMR) needs the bodies the manager
+    /// does not hold (headers sent alone, bodies dropped as invalid).
+    static BUILT: std::cell::RefCell<std::collections::HashMap<Hash, Vec<Transaction>>> =
+        Default::default();
+}
+
+/// Records `b`'s body ([`BUILT`]) and returns it.
+fn remember(b: Block) -> Block {
+    let id = b.id(params().network_id);
+    BUILT.with(|m| m.borrow_mut().insert(id, b.txs.clone()));
+    b
+}
+
+/// The body of a block this test built.
+fn known_body(id: &Hash) -> Option<Vec<Transaction>> {
+    BUILT.with(|m| m.borrow().get(id).cloned())
+}
+
 struct ZeroPow;
 impl PowFunction for ZeroPow {
     fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
@@ -86,6 +106,7 @@ impl Miner {
         let mut all = vec![Transaction::Coinbase(cb)];
         all.extend(txs);
         let ids: Vec<Hash> = all.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&all);
         let header = BlockHeader {
             version: HEADER_VERSION,
             height: t.height,
@@ -96,8 +117,11 @@ impl Miner {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
-        Block { header, txs: all }
+        remember(Block { header, txs: all })
     }
 
     /// Mines the next block on the connected tip (with mempool transactions).
@@ -112,7 +136,7 @@ impl Miner {
 
     /// A coinbase-only child of `parent` (any valid known header).
     fn child(&mut self, m: &ChainManager, parent: &Hash, claim_delta: u64, nonce: u64) -> Block {
-        let t = m.template_on(parent).unwrap();
+        let t = m.template_on_with(parent, &known_body).unwrap();
         let claim = (claim_delta > 0).then(|| t.reward + claim_delta);
         self.build(&t, vec![], claim, nonce)
     }
@@ -128,9 +152,14 @@ impl Miner {
     ) -> Vec<Block> {
         let mut out = Vec::new();
         let mut p = parent;
+        // The output range above `parent` (B-OMR): `m` holds none of the
+        // bodies after the first block.
+        let mut outputs = m.template_on_with(&parent, &known_body).unwrap().outputs;
         for _ in 0..n {
-            let b = self.child(m, &p, 0, nonce);
+            let t = m.template_on_range(&p, outputs.clone()).unwrap();
+            let b = self.build(&t, vec![], None, nonce);
             m.accept_headers(&[b.header], b.header.timestamp).unwrap();
+            outputs.append_block(t.height, &b.txs);
             p = id(&b);
             out.push(b);
         }
@@ -620,7 +649,7 @@ fn transactions_return_to_the_mempool_across_a_body_complete_reorg() {
     assert!(m.mempool().is_empty());
 
     // Branch B (the rival in B1) arrives headers first, bodies in reverse.
-    let t = m.template_on(&f).unwrap();
+    let t = m.template_on_with(&f, &known_body).unwrap();
     let fee = rival.fee();
     let b1 = miner.build(&t, vec![rival.clone()], Some(t.reward + fee), 5);
     m.accept_headers(&[b1.header], b1.header.timestamp).unwrap();

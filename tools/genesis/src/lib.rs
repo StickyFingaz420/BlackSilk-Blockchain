@@ -403,6 +403,7 @@ pub fn report(inputs: &GenesisInputs, g: &Genesis) -> String {
          \x20 nonce (LE64 d[0..8]) {nonce} ({nonce:#018x})\n\
          genesis header\n\
          \x20 version {v}, height {height}, prev_id 0, tx_root 0\n\
+         \x20 output_count 0, output_root 0, px_root {px} (the empty PX tree)\n\
          \x20 timestamp {ts}, difficulty {d}, nonce {nonce}\n\
          \x20 bytes {bytes}\n\
          genesis id {id}\n",
@@ -417,6 +418,7 @@ pub fn report(inputs: &GenesisInputs, g: &Genesis) -> String {
             &inputs.btc_hash
         )),
         dig = hex(&g.nonce_digest),
+        px = hex(&h.px_root),
         nonce = h.nonce,
         v = h.version,
         height = h.height,

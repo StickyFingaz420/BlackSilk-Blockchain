@@ -53,6 +53,7 @@ fn header_branch(n: usize, bad: u64) -> Vec<BlockHeader> {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce: if t.height == bad { BAD_NONCE } else { 0 },
+            ..Default::default()
         };
         g.accept(h, u64::MAX / 2).unwrap();
         out.push(h);

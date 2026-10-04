@@ -360,11 +360,7 @@ impl ChainManager {
                 let h = header.height;
                 let generated = self.generated();
                 let reward = block_reward(h, generated);
-                let ctx = BlockContext {
-                    height: h,
-                    reward,
-                    tx_root: header.tx_root,
-                };
+                let ctx = BlockContext::of(header, reward);
                 // The rules of the block's own height (its epoch's branch id).
                 let rules = self.rules_at(h);
                 // PX proofs already verified on mempool admission are not

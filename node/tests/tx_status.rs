@@ -59,6 +59,7 @@ impl Miner {
         let mut txs = vec![Transaction::Coinbase(cb)];
         txs.extend(t.txs.iter().cloned());
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: HEADER_VERSION,
             height: t.height,
@@ -69,6 +70,9 @@ impl Miner {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce: 0,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
         let b = Block { header, txs };
         let now = b.header.timestamp;

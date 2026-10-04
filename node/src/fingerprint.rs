@@ -44,6 +44,7 @@ use blacksilk_consensus::{
 use blacksilk_consensus::{difficulty, merkle, timestamp};
 use blacksilk_crypto::Point;
 use blacksilk_px::fingerprint::{px_entries, Manifest};
+use blacksilk_tx::mmr;
 use blacksilk_tx::params::{self as tx, max_weight, SigDomain, TxRules};
 use blacksilk_tx::px::{deploy_fee, Registration};
 use blacksilk_tx::types::{v1_part_weight, OutputKey};
@@ -164,6 +165,10 @@ pub const REVISIONS: &[Revision] = &[
     Revision {
         id: "RX-SALT:blacksilk-randomx-argon2-salt",
         record: "rx-salt",
+    },
+    Revision {
+        id: "OMR:header-commits-output-mmr-and-px-root",
+        record: "output-root",
     },
 ];
 
@@ -349,7 +354,11 @@ fn chain_entries(network: Network) -> Manifest {
             "consensus.HEADER_VERSION",
             blacksilk_consensus::HEADER_VERSION,
         )
-        .size("consensus.NONCE_OFFSET", blacksilk_consensus::NONCE_OFFSET);
+        .size("consensus.NONCE_OFFSET", blacksilk_consensus::NONCE_OFFSET)
+        .bytes(
+            "consensus.EMPTY_PX_ROOT",
+            &blacksilk_consensus::genesis::EMPTY_PX_ROOT,
+        );
     m.u("tx.TX_VERSION", tx::TX_VERSION)
         .list(
             "tx.KINDS",
@@ -492,6 +501,9 @@ fn rule_samples(network: Network) -> Manifest {
         timestamp: 1_700_000_000,
         difficulty: 1_000,
         tx_root: [2; 32],
+        output_count: 5,
+        output_root: [3; 32],
+        px_root: [4; 32],
         nonce: 42,
     };
     m.bytes(
@@ -503,6 +515,30 @@ fn rule_samples(network: Network) -> Manifest {
         "rules.sample.tx_root([1; 32], [2; 32], [3; 32])",
         &merkle::tx_root(&[[1; 32], [2; 32], [3; 32]]),
     );
+
+    // The output range (B-OMR, docs/consensus.md §7.1): a leaf, and the
+    // roots over the first n leaves of key [i; 32], commitment [i + 100; 32],
+    // height i / 2, coinbase for even i (the empty range, one peak, two and
+    // three peaks).
+    m.bytes(
+        "rules.sample.output_mmr.leaf ([1; 32], [2; 32], 3, coinbase)",
+        &mmr::leaf(&[1; 32], &[2; 32], 3, true),
+    );
+    let mut outputs = mmr::OutputFrontier::new();
+    for n in 0u8..=7 {
+        if [0, 1, 2, 3, 7].contains(&n) {
+            m.bytes(
+                &format!("rules.sample.output_mmr.root ({n} leaves)"),
+                &outputs.root(),
+            );
+        }
+        outputs.push(mmr::leaf(
+            &[n; 32],
+            &[n + 100; 32],
+            u64::from(n / 2),
+            n % 2 == 0,
+        ));
+    }
 
     // The genesis-nonce derivation (Bitcoin block 0, H = 0, test-vector id).
     let btc0 =
@@ -801,6 +837,17 @@ impl ChainView for FixtureChain<'_> {
     fn px_tree_size(&self) -> u64 {
         0
     }
+    fn px_root_after(
+        &self,
+        leaves: &[blacksilk_px::core::Digest],
+    ) -> Option<blacksilk_px::core::Digest> {
+        blacksilk_px::state::State::new().root_after(leaves)
+    }
+    /// No block is validated on this view (only transactions): the fixture's
+    /// outputs are sparse ring members, not a range, so the range is empty.
+    fn output_frontier(&self) -> blacksilk_tx::mmr::OutputFrontier {
+        blacksilk_tx::mmr::OutputFrontier::new()
+    }
 }
 
 /// The transaction samples (network-independent, computed once per process):
@@ -872,6 +919,38 @@ fn compute_transaction_samples() -> Manifest {
     .bytes(
         "rules.sample.tx_hash (fixture coinbase)",
         &f.coinbase.hash(),
+    );
+
+    // B-OMR and B-PXR: the header commitments of a block holding only the
+    // fixture coinbase on the genesis state (no output, the empty PX tree),
+    // as `BlockContext::committing` computes them: LE64(output_count) ‖
+    // output_root ‖ px_root. And the PX root after two fixed commitments.
+    let height = match &f.coinbase {
+        Transaction::Coinbase(c) => c.height,
+        _ => unreachable!("the fixture coinbase"),
+    };
+    let genesis_state = blacksilk_tx::state::MemoryChain::new();
+    let ctx = blacksilk_tx::BlockContext::committing(
+        height,
+        0,
+        std::slice::from_ref(&f.coinbase),
+        &genesis_state,
+    );
+    let mut commitments = ctx.output_count.to_le_bytes().to_vec();
+    commitments.extend_from_slice(&ctx.output_root);
+    commitments.extend_from_slice(&ctx.px_root);
+    m.bytes(
+        "rules.sample.block_commitments (fixture coinbase on the genesis state)",
+        &commitments,
+    )
+    .bytes(
+        "rules.sample.px_root_after ([1, 2, 3, 4, 5, 6, 7, 8], [9; 8]; empty tree)",
+        &blacksilk_tx::px::digest_bytes(
+            &genesis_state
+                .px()
+                .root_after(&[[1, 2, 3, 4, 5, 6, 7, 8], [9; 8]])
+                .expect("two leaves fit"),
+        ),
     );
 
     // One variant per error class; each changes one thing of the valid case.

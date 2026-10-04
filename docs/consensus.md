@@ -66,7 +66,7 @@ quickly. Every other rule is the same on all networks.
 
 ## 2. Block header
 
-Serialized form: exactly **100 bytes**, fields in this order, no padding:
+Serialized form: exactly **172 bytes**, fields in this order, no padding:
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
@@ -76,9 +76,21 @@ Serialized form: exactly **100 bytes**, fields in this order, no padding:
 | 44 | 8 | `timestamp` | seconds since the Unix epoch (miner-chosen) |
 | 52 | 8 | `difficulty` | the block's difficulty, must equal §4 |
 | 60 | 32 | `tx_root` | Merkle root of the block's transaction ids (§7) |
-| 92 | 8 | `nonce` | miner-controlled |
+| 92 | 8 | `output_count` | v1 outputs of the chain through this block, coinbase outputs included (genesis: 0) |
+| 100 | 32 | `output_root` | root of the output Merkle mountain range over those outputs (§7.1; all zero for none) |
+| 132 | 32 | `px_root` | the PX commitment tree's root after this block (px.md §5), eight little-endian 32-bit words |
+| 164 | 8 | `nonce` | miner-controlled |
 
-Decoding is strict: any length other than 100 bytes is invalid.
+Decoding is strict: any length other than 172 bytes is invalid.
+
+`output_count`, `output_root` and `px_root` are checked against the block's body and
+its parent's state (rules B-OMR and B-PXR, transactions.md §8.3), not by header
+validation: a header with false values is accepted into the header tree like a header
+whose body is invalid, and its block is marked invalid when the body is validated
+(blocks.md §5). No header-only bound is placed on them (for example
+`output_count > parent.output_count`): it would duplicate the body rules' constants in
+the header rules and reject nothing a body check does not, since no block is connected
+before its body is validated (docs/reviews/v3-consensus-changes.md#output-root).
 
 **Block id:** `id = H("BlackSilk/block-id" ‖ LE32(network_id) ‖ header_bytes)`.
 The network id makes headers, and therefore whole chains, unique to one network.
@@ -99,7 +111,7 @@ change) can; the salt is not a security boundary
 (reviews/v3-consensus-changes.md#rx-salt).
 
 **Input:** `pow_hash = RandomX(key = seed_id(height), input = header_bytes)`.
-The whole 100-byte header, including the nonce, is the input. The PoW hash is not
+The whole 172-byte header, including the nonce, is the input. The PoW hash is not
 part of the header or of any block data sent to peers: every node recomputes it for
 headers it receives. The node does cache it in its **local** block store and, at
 restart, trusts the stored value for blocks read from its own file instead of
@@ -307,6 +319,42 @@ The leaf/node prefixes prevent second-preimage confusion between leaves and inne
 nodes. Carrying odd nodes up (instead of duplicating them as Bitcoin does) removes
 the CVE-2012-2459 class of duplicate-transaction malleability.
 
+### 7.1 Output root (rule B-OMR)
+
+Every header commits to the chain's v1 output set: `output_count`, the number of
+outputs through the block, and `output_root`, the root of a Merkle mountain range (MMR)
+over them in global-index order (`blacksilk_tx::mmr`). With `H32` the domain-separated
+Blake2b-256 of transactions.md §1.2:
+
+```
+leaf(o)     = H32("output-mmr/leaf", one_time_key ‖ commitment ‖ LE64(height) ‖ u8(coinbase))
+node(l, r)  = H32("output-mmr/node", l ‖ r)
+peaks(n)    = the roots of the perfect subtrees of the binary decomposition of n,
+              largest (oldest) first: n = 2^a + 2^b + … with a > b > …
+root(0)     = 32 zero bytes
+root(n)     = H32("output-mmr/root", LE64(n) ‖ peaks(n)[0] ‖ … ‖ peaks(n)[k−1])
+```
+
+- `one_time_key` and `commitment` are the output's 32-byte encodings; a coinbase
+  output's commitment is `amount·H` (transactions.md §4.3), as rings resolve it.
+  `height` is the block's height and `coinbase` is 1 for the outputs of the coinbase.
+- Appending leaf number `c` (0-based) pushes it as a new peak, then replaces the two
+  rightmost peaks by `node(left, right)`, `trailing_ones(c)` times.
+- A block's outputs are appended in block order: the coinbase's, then each
+  transaction's (transfers, and the v1 outputs of PX and deploy transactions), in
+  output order. PX commitments are not v1 outputs; `px_root` commits to them.
+- `root(n)` binds `n`, which fixes the number and the heights of the peaks; the three
+  tags keep leaves, nodes and roots apart.
+- Vectors: `tools/vectors/output_mmr.py` (independent, standard-library Python, from
+  this text) writes `tx/tests/data/output_mmr.txt`, which `tx/tests/output_mmr_vectors.rs`
+  checks against both the frontier and the full range.
+
+A block is valid only if its `output_count` is its parent's plus its outputs and its
+`output_root` is the `root` of that range (B-OMR). The node keeps every node of the
+range (about 64 bytes per output), so the range after any connected block is a lookup;
+a miner extends the parent's peaks, which `/template` carries (blocks.md §9.4). A
+wallet holding a list of outputs checks it against one header: the count and the root.
+
 ## 8. Chain selection and reorganization
 
 - The **best chain** is the valid chain with the greatest cumulative work. On a tie
@@ -366,7 +414,7 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
   bs-1a to bs-1f were generated by this crate; no second complete RandomX
   implementation has computed them (record #rx-salt has a reproduction recipe). There is no comparison against the reference at scale (no reference
   corpus, no oracle for the software rounding emulation), and no vector has
-  BlackSilk's 32-byte-key, 100-byte-header shape.
+  BlackSilk's 32-byte-key, 172-byte-header shape.
 - **RandomX full mode** (what the miner uses) must reproduce the official hash vectors
   and BlackSilk's bs-1a to bs-1c, and agree with light mode (what nodes verify with)
   on 512 random inputs per key. The

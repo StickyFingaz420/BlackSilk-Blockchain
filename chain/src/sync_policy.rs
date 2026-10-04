@@ -279,6 +279,7 @@ mod tests {
             difficulty: t.difficulty,
             tx_root: tx_root(&[[tag; 32]]),
             nonce: 0,
+            ..Default::default()
         }
     }
 

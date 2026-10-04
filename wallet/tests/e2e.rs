@@ -35,6 +35,10 @@ struct Net {
     client: Client,
     rng: ChaCha20Rng,
     rules: TxRules,
+    /// The bodies of the blocks `mine_on_block` built: a template on a
+    /// branch whose bodies the node dropped (low-work) needs them for the
+    /// output range (B-OMR).
+    built: std::collections::HashMap<Hash, Vec<blacksilk_tx::types::Transaction>>,
 }
 
 impl Net {
@@ -68,6 +72,7 @@ impl Net {
             client: Client::new(&addr.to_string()),
             rng: ChaCha20Rng::seed_from_u64(1),
             rules,
+            built: Default::default(),
         }
     }
 
@@ -106,7 +111,10 @@ impl Net {
         nonce: u64,
     ) -> (Hash, blacksilk_chain::block::Block) {
         let mut m = self.shared.lock().unwrap();
-        let t = m.template_on(parent).unwrap();
+        let built = &self.built;
+        let t = m
+            .template_on_with(parent, &|id| built.get(id).cloned())
+            .unwrap();
         let rt = rpc::Template {
             height: t.height,
             prev_id: hex::encode(t.prev_id),
@@ -117,6 +125,9 @@ impl Net {
             reward: t.reward,
             fees: 0,
             txs: vec![],
+            output_count: t.outputs.count(),
+            output_peaks: t.outputs.peaks().iter().map(hex::encode).collect(),
+            px_root: hex::encode(t.px_root),
         };
         let mut b = blacksilk_miner::build_block(
             &rt,
@@ -129,6 +140,8 @@ impl Net {
         b.header.nonce = nonce;
         let now = b.header.timestamp;
         let id = m.submit_block(b.clone(), now).unwrap().id;
+        drop(m);
+        self.built.insert(id, b.txs.clone());
         (id, b)
     }
 }

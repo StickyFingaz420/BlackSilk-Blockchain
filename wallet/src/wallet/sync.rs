@@ -1386,6 +1386,7 @@ mod tests {
                 difficulty: 1,
                 tx_root: [0; 32],
                 nonce: 0,
+                ..Default::default()
             },
             txs,
         }

@@ -101,6 +101,22 @@ impl State {
         self.frontier.size()
     }
 
+    /// The tree's root after appending `leaves` (in order) to the current
+    /// tree, without changing the state: the root the block appending them
+    /// records (rule B-PXR, docs/px.md §5). `None` if they do not fit
+    /// ([`StateError::TreeFull`]; rule B8 refuses such a block first).
+    pub fn root_after(&self, leaves: &[Digest]) -> Option<Digest> {
+        if leaves.is_empty() {
+            return Some(self.root());
+        }
+        let mut perm = HostPerm::new();
+        let mut frontier = self.frontier.clone();
+        for cm in leaves {
+            frontier.append(&mut perm, *cm).ok()?;
+        }
+        Some(frontier.root(&mut perm, &self.empty))
+    }
+
     /// Leaves the tree can still take: `CAPACITY − size`.
     pub fn free_leaves(&self) -> u64 {
         crate::tree::CAPACITY - self.frontier.size()
@@ -255,6 +271,19 @@ mod tests {
         }
     }
 
+    /// `root_after` past the capacity is `None`, as `apply_block` fails
+    /// there; up to it, the full tree's root (21-D).
+    #[test]
+    fn root_after_follows_the_capacity() {
+        let cap = crate::tree::CAPACITY;
+        let s = State::with_uniform_tree_for_tests(cap - 1, d(7), 0);
+        assert!(s.root_after(&[d(7)]).is_some());
+        assert_eq!(s.root_after(&[d(7), d(8)]), None);
+        assert_eq!(s.root_after(&[]), Some(s.root()));
+        let full = State::with_uniform_tree_for_tests(cap, d(7), 0);
+        assert_eq!(s.root_after(&[d(7)]), Some(full.root()));
+    }
+
     #[test]
     fn compact_undo_equals_the_full_clone_reference() {
         let mut rng = ChaCha20Rng::seed_from_u64(0x21F);
@@ -277,8 +306,12 @@ mod tests {
                 .collect();
             let before = s.clone();
             let full = s.roots.len() == ROOT_WINDOW;
+            let leaves: Vec<Digest> = block.iter().flat_map(|t| t.commitments).collect();
+            let predicted = s.root_after(&leaves);
             match s.apply_block(&block) {
                 Ok(u) => {
+                    // B-PXR: the predicted root is the one the block records.
+                    assert_eq!(predicted, Some(s.root()), "root_after at step {step}");
                     assert_eq!(u.frontier.is_some(), n > 0);
                     assert_eq!(u.evicted.is_some(), full);
                     evicting += usize::from(full);

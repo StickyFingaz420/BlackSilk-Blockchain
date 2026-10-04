@@ -130,6 +130,7 @@ fn main() {
             difficulty: 1,
             tx_root: tx_root(&ids),
             nonce: 0,
+            ..Default::default()
         },
         txs,
     };
@@ -410,6 +411,7 @@ fn main() {
             difficulty: 1,
             tx_root: tx_root(&ids),
             nonce: 0,
+            ..Default::default()
         },
         txs,
     };

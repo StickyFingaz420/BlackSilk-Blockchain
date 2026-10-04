@@ -30,8 +30,9 @@
 //! | [`resolve_rings`] | C1 |
 //! | [`check_signatures`] | C3 |
 //! | [`validate_transfer`] | all of T and C (mempool) |
-//! | [`validate_block_transactions`] | B1–B8, plus all T and C with block-wide batching |
+//! | [`validate_block_transactions`] | B1–B8, B-OMR, B-PXR, plus all T and C with block-wide batching |
 
+use crate::mmr::OutputFrontier;
 use crate::params::*;
 use crate::px::{
     check_deploy_structure, check_px_balance, check_px_structure, digest_bytes, PxDeploy, PxTx,
@@ -85,6 +86,13 @@ pub trait ChainView {
     fn px_contract_exists(&self, contract: &Digest) -> bool;
     /// Leaves in the PX commitment tree (at most `px::tree::CAPACITY`).
     fn px_tree_size(&self) -> u64;
+    /// The PX tree's root after appending `leaves` to it, in order (rule
+    /// B-PXR); `None` if they do not fit. Changes nothing.
+    fn px_root_after(&self, leaves: &[Digest]) -> Option<Digest>;
+    // ---- The output range (rule B-OMR, docs/consensus.md §7.1) ----
+    /// The output Merkle mountain range's frontier over every output
+    /// ([`Self::output`]): its count and peaks.
+    fn output_frontier(&self) -> OutputFrontier;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1066,6 +1074,59 @@ pub struct BlockContext {
     pub reward: u64,
     /// The header's `tx_root`.
     pub tx_root: Hash,
+    /// The header's `output_count` and `output_root` (B-OMR).
+    pub output_count: u64,
+    pub output_root: Hash,
+    /// The header's `px_root` (B-PXR).
+    pub px_root: Hash,
+}
+
+impl BlockContext {
+    /// The context of a block at `height` paying `reward` whose header
+    /// commits honestly to the body `txs` on the parent state `chain`: the
+    /// transactions' root (B5), the output range (B-OMR) and the PX root
+    /// (B-PXR; zero if the body's commitments do not fit the tree). For
+    /// builders and tests.
+    pub fn committing(
+        height: u64,
+        reward: u64,
+        txs: &[Transaction],
+        chain: &impl ChainView,
+    ) -> Self {
+        let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let mut outputs = chain.output_frontier();
+        outputs.append_block(height, txs);
+        let commitments: Vec<Digest> = txs
+            .iter()
+            .filter_map(|t| match t {
+                Transaction::Px(p) => Some(p.commitments),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        Self {
+            height,
+            reward,
+            tx_root: blacksilk_consensus::merkle::tx_root(&ids),
+            output_count: outputs.count(),
+            output_root: outputs.root(),
+            px_root: chain
+                .px_root_after(&commitments)
+                .map_or([0; 32], |r| digest_bytes(&r)),
+        }
+    }
+
+    /// The context of a block with `header`, paying `reward`.
+    pub fn of(header: &blacksilk_consensus::BlockHeader, reward: u64) -> Self {
+        Self {
+            height: header.height,
+            reward,
+            tx_root: header.tx_root,
+            output_count: header.output_count,
+            output_root: header.output_root,
+            px_root: header.px_root,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1098,6 +1159,18 @@ pub enum BlockError {
     },
     /// B5.
     TxRootMismatch,
+    /// B-OMR: the header's `output_count` is not the parent's plus the
+    /// block's outputs (`expected`).
+    OutputCountMismatch {
+        expected: u64,
+        found: u64,
+    },
+    /// B-OMR: the header's `output_root` is not the root of the parent's
+    /// output range with the block's outputs appended.
+    OutputRootMismatch,
+    /// B-PXR: the header's `px_root` is not the PX tree's root after the
+    /// block's PX output commitments.
+    PxRootMismatch,
     /// B6.
     WeightExceeded {
         weight: u128,
@@ -1133,8 +1206,9 @@ pub enum BlockError {
 }
 
 /// Validates the transactions of a block at `ctx.height` against `chain` (the
-/// state after the parent block). Checks B1–B8 and every T/C rule, cheap
-/// first (docs/transactions.md §8.3): structure, B5, B6, B3, balances, PX
+/// state after the parent block). Checks B1–B8, B-OMR, B-PXR and every T/C
+/// rule, cheap first (docs/transactions.md §8.3): structure, B5, B-OMR, B6,
+/// B8, B-PXR, B3, balances, PX
 /// proof decoding, C2 and PX1–PX4 and PX6 with each PX proof's shape, every ring
 /// (C1), one Bulletproofs+ batch (T10), the CLSAGs (C3), and the PX proofs
 /// (PX5) last. The order decides only which error an invalid block reports,
@@ -1226,6 +1300,21 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
     if blacksilk_consensus::merkle::tx_root(&ids) != ctx.tx_root {
         return Err(BlockError::TxRootMismatch);
     }
+    // B-OMR: the header commits to the output set through this block: the
+    // parent's range with the block's outputs (coinbase first, in block
+    // order) appended (docs/consensus.md §7.1). One hash per output and one
+    // per merge.
+    let mut outputs = chain.output_frontier();
+    outputs.append_block(ctx.height, txs);
+    if outputs.count() != ctx.output_count {
+        return Err(BlockError::OutputCountMismatch {
+            expected: outputs.count(),
+            found: ctx.output_count,
+        });
+    }
+    if outputs.root() != ctx.output_root {
+        return Err(BlockError::OutputRootMismatch);
+    }
     // B6: the block weight (transfers, and the v1 part of PX and deploy
     // transactions: `Transaction::weight`, R12-2), and the separate PX byte
     // budget. Before any cryptography, so a block stuffed with CLSAGs costs
@@ -1262,10 +1351,22 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
     // PX commitment tree (testnet v3; docs/reviews/v3-consensus-changes.md
     // #tree-capacity). `MemoryChain::apply_block` fails exactly past this
     // bound, so a valid block always applies.
-    let leaves: u64 = pxs.iter().map(|(_, t)| t.commitments.len() as u64).sum();
+    let commitments: Vec<Digest> = pxs
+        .iter()
+        .flat_map(|(_, t)| t.commitments.iter().copied())
+        .collect();
+    let leaves = commitments.len() as u64;
     let free = px_free_leaves(chain);
     if leaves > free {
         return Err(BlockError::PxTreeFull { leaves, free });
+    }
+    // B-PXR: the header commits to the PX tree's root after this block's
+    // commitments (docs/px.md §5): the root the block records in the root
+    // window. B8 holds, so they fit. At most 32 permutations per commitment
+    // plus 32 for the root.
+    match chain.px_root_after(&commitments) {
+        Some(root) if digest_bytes(&root) == ctx.px_root => {}
+        _ => return Err(BlockError::PxRootMismatch),
     }
     // B3
     let fees: u128 = txs.iter().skip(1).map(|t| t.fee() as u128).sum();

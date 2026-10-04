@@ -705,6 +705,7 @@ mod tests {
             difficulty: c.required_difficulty(parent),
             tx_root: tx_root(&[[tag; 32]]),
             nonce: 0,
+            ..Default::default()
         };
         let seed = c.seed_id_for(parent, h.height);
         while !check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), h.difficulty) {
