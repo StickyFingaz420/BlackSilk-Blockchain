@@ -126,6 +126,24 @@ fn an_unconfirmed_backfill_is_used_only_once_it_cannot_steer_the_anchor() {
     assert_eq!(w.px.anchor_root(137).unwrap(), (128, chain.roots[128]));
 }
 
+/// B-PXR with the header check: a wallet restored with the header chain
+/// checked from the genesis (proof of work) binds its PX backfill at once,
+/// since every root of its window is the `px_root` of a checked header; an
+/// anchor on backfilled commitments is then usable without the 100-block
+/// wait (RT-OMR2 M1: only then).
+#[test]
+fn a_header_checked_restore_binds_the_px_backfill_at_once() {
+    let chain = chain_with(2, 60, &[3, 10, 11, 25]);
+    let mut w = Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), 31).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_allow_stale_tip(true);
+    assert!(w.verifies_headers());
+    assert_eq!(w.sync(&chain).unwrap(), 60);
+    let t = w.px.tree.as_ref().unwrap();
+    assert!(t.is_confirmed(), "bound by the checked headers' PX roots");
+    assert_eq!(w.px.anchor_root(60).unwrap(), (48, chain.roots[48]));
+}
+
 /// A node that shortens, alters or pads the list below the restore height
 /// is caught by the first PX transaction anchored after it: the block is
 /// refused, and the tree is rebuilt from a fresh list at the next sync (from
@@ -266,12 +284,12 @@ fn witnesses_verify_and_follow_a_reorganization() {
 /// headers listed, whose hash meets none above 1; counts the hashes.
 #[derive(Default)]
 struct BadPow {
-    bad: std::sync::Mutex<Vec<[u8; blacksilk_consensus::HEADER_SIZE]>>,
+    bad: std::sync::Mutex<Vec<[u8; blacksilk_consensus::POW_BLOB_SIZE]>>,
     calls: std::sync::atomic::AtomicU64,
 }
 
 impl PowFunction for BadPow {
-    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
         self.calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.bad.lock().unwrap().iter().any(|b| b[..] == *header) {
@@ -337,10 +355,11 @@ fn a_restore_refuses_a_header_with_bad_proof_of_work() {
     let chain = fast_chain(8, 30);
     for bad in [30u64, 17] {
         let pow = Arc::new(BadPow::default());
-        pow.bad
-            .lock()
-            .unwrap()
-            .push(chain.blocks[bad as usize].header.to_bytes());
+        pow.bad.lock().unwrap().push(
+            chain.blocks[bad as usize]
+                .header
+                .pow_blob(chain.params.network_id),
+        );
         let mut w = restored(Some(pow.clone()), 1);
         w.set_header_samples(u64::MAX);
         let e = w.sync(&chain).unwrap_err();
@@ -373,10 +392,11 @@ fn a_short_forged_suffix_is_refused() {
     let pow = Arc::new(BadPow::default());
     for h in 396..400u64 {
         assert!(chain.blocks[h as usize].header.difficulty > 1);
-        pow.bad
-            .lock()
-            .unwrap()
-            .push(chain.blocks[h as usize].header.to_bytes());
+        pow.bad.lock().unwrap().push(
+            chain.blocks[h as usize]
+                .header
+                .pow_blob(chain.params.network_id),
+        );
     }
     for restore in [1, 200, 398, 400] {
         for _ in 0..5 {
@@ -623,7 +643,7 @@ fn header_feed_cost_for_3000_headers() {
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Measured(blacksilk_consensus::RandomXPow, AtomicU64);
     impl PowFunction for Measured {
-        fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
             self.1.fetch_add(1, Ordering::Relaxed);
             let _ = self.0.pow_hash(seed, header);
             [0; 32]
@@ -989,10 +1009,10 @@ fn parallel_and_sequential_verdicts_agree() {
             headers[f as usize - 1].difficulty += 1;
         }
         let pow = BadPow::default();
-        pow.bad
-            .lock()
-            .unwrap()
-            .extend(bad.iter().map(|&h| headers[h as usize - 1].to_bytes()));
+        pow.bad.lock().unwrap().extend(
+            bad.iter()
+                .map(|&h| headers[h as usize - 1].pow_blob(params.network_id)),
+        );
         let run = |threads: usize, deferred: bool| {
             // Every header's work is checked (samples = expected).
             let mut c = HeaderCheck::from_genesis(&params, &pow, N, N, u64::MAX / 2).unwrap();
@@ -1052,10 +1072,11 @@ fn a_parallel_restore_refuses_at_the_forged_block() {
     for bad in [150u64, 330, 399] {
         for restore in [100u64, 360] {
             let pow = Arc::new(BadPow::default());
-            pow.bad
-                .lock()
-                .unwrap()
-                .push(chain.blocks[bad as usize].header.to_bytes());
+            pow.bad.lock().unwrap().push(
+                chain.blocks[bad as usize]
+                    .header
+                    .pow_blob(chain.params.network_id),
+            );
             let mut w = restored(Some(pow.clone()), restore);
             let e = w.sync(&chain).unwrap_err().to_string();
             assert!(e.contains(&format!("header {bad}'s proof of work")), "{e}");
@@ -1076,7 +1097,7 @@ fn dense_tail_pow_720_headers_sequential_and_parallel() {
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Measured(blacksilk_consensus::RandomXPow, AtomicU64);
     impl PowFunction for Measured {
-        fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
             self.1.fetch_add(1, Ordering::Relaxed);
             let _ = self.0.pow_hash(seed, header);
             [0; 32]
@@ -1087,9 +1108,10 @@ fn dense_tail_pow_720_headers_sequential_and_parallel() {
     let params = ChainParams::regtest();
     let pow = Measured(blacksilk_consensus::RandomXPow::new(), AtomicU64::new(0));
     // The light cache is built once, outside the measurement.
-    let _ = pow
-        .0
-        .pow_hash(&params.genesis_id(), &[0; blacksilk_consensus::HEADER_SIZE]);
+    let _ = pow.0.pow_hash(
+        &params.genesis_id(),
+        &[0; blacksilk_consensus::POW_BLOB_SIZE],
+    );
     let all = std::thread::available_parallelism().map_or(1, |n| n.get());
     for threads in [1, all] {
         let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
@@ -1365,7 +1387,7 @@ fn deferred_proof_of_work_runs_on_helper_threads() {
         waited: std::sync::atomic::AtomicBool,
     }
     impl PowFunction for Threads {
-        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
             let mut seen = self.seen.lock().unwrap();
             seen.insert(std::thread::current().id());
             self.more.notify_all();
@@ -1418,10 +1440,11 @@ fn the_dense_tail_is_exactly_the_last_720_headers_and_the_first() {
     // an unsampled check, one at the tail's lowest header does not.
     for (h, refused) in [(N - tail, false), (N - tail + 1, true)] {
         let pow = Arc::new(BadPow::default());
-        pow.bad
-            .lock()
-            .unwrap()
-            .push(chain.blocks[h as usize].header.to_bytes());
+        pow.bad.lock().unwrap().push(
+            chain.blocks[h as usize]
+                .header
+                .pow_blob(chain.params.network_id),
+        );
         let mut w = restored(Some(pow), 1);
         w.set_header_samples(0);
         assert_eq!(w.sync(&chain).is_err(), refused, "{h}");
@@ -1893,8 +1916,12 @@ fn an_empty_index_takes_its_extent_from_the_wallets_own_tip_block() {
     chain.first_output[120] += 1;
     let mut w = spend_wallet(&base);
     let node = Spy::new(&chain, honest.clone());
+    // Since output-root the header check refuses it first (B-OMR).
     w.sync(&node).unwrap();
-    assert!(w.take_warnings().iter().any(|m| m.contains("contradict")));
+    assert!(w
+        .take_warnings()
+        .iter()
+        .any(|m| m.contains("does not match its header")));
     assert_eq!(node.output_calls.get(), 0);
     assert!(w.index.is_empty());
 }
@@ -2106,7 +2133,8 @@ fn a_forced_rescan_cannot_shift_the_restore_point() {
     // The walk-back with the shift: refused at the restore point.
     let node = evil(&chain, 40, 5, true);
     let e = w.sync(&node).unwrap_err().to_string();
-    assert!(e.contains("restore again from a trusted node"), "{e}");
+    // Since output-root the header refuses the shift first (B-OMR).
+    assert!(e.contains("does not match its header"), "{e}");
     assert_eq!(node.output_calls.get(), 0);
     assert!(
         own_indices(&w).iter().all(|i| before.contains(i)),
@@ -2123,7 +2151,8 @@ fn a_forced_rescan_cannot_shift_the_restore_point() {
     assert_eq!(w.index.start(), 0);
     let node = evil(&chain, 40, 5, false);
     let e = w.sync(&node).unwrap_err().to_string();
-    assert!(e.contains("restore again from a trusted node"), "{e}");
+    // Since output-root the header refuses the shift first (B-OMR).
+    assert!(e.contains("does not match its header"), "{e}");
     assert_eq!(node.output_calls.get(), 0);
     assert_eq!(w.synced_height(), 39, "block 40 is not applied");
     assert_eq!(w.index.start(), 0, "the backfill is kept");
@@ -2141,26 +2170,21 @@ fn a_forced_rescan_cannot_shift_the_restore_point() {
     );
 }
 
-/// RT-D1b N2 (the red team's P3 probe): the node used for a restore is
-/// trusted for output positions at the restore point, and can shift them
-/// (residual, under research). A later honest node contradicts the stored
-/// positions, and the wallet says what that means.
+/// RT-D1b N2 (the red team's P3 probe), closed by output-root: the node used
+/// for a restore can no longer shift the output positions at the restore
+/// point, since each block's header fixes its first output (B-OMR). The
+/// shift is refused at the restore point itself.
 #[test]
-fn a_shift_at_restore_is_reported_by_a_later_honest_node() {
+fn a_shift_at_restore_is_refused_by_the_header() {
     let chain = rich_chain(81);
     let mut w = rt_restored(40);
     let node = evil(&chain, 40, 5, false);
-    assert_eq!(w.sync(&node).unwrap(), 120);
-    // The shift is not detectable from that node alone.
-    assert_eq!(w.index.start(), 0);
-    let mut later = rich_chain(81);
-    later.mine(&wallet().primary(), 0);
-    let e = w.sync(&later).unwrap_err().to_string();
+    let e = w.sync(&node).unwrap_err().to_string();
     assert!(
-        e.contains("The node used for restore may have lied about output positions"),
+        e.contains("block 40's first output index does not match its header"),
         "{e}"
     );
-    assert!(e.contains("restore again from a trusted node"), "{e}");
+    assert_eq!(w.sync(&chain).unwrap(), 120);
 }
 
 /// RT-D1b N3: a real reorganization below the restore point (another
@@ -2275,10 +2299,10 @@ impl NodeApi for Relink<'_> {
 
 /// Proof of work that only the given headers meet: the real chain's, not a
 /// relinked copy's (the regtest `ZeroPow` accepts every header).
-struct KnownPow(std::collections::HashSet<Vec<u8>>);
+struct KnownPow(std::collections::HashSet<blacksilk_consensus::PowBlob>);
 
 impl PowFunction for KnownPow {
-    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
         if self.0.contains(header) {
             [0; 32]
         } else {
@@ -2292,7 +2316,7 @@ fn known_pow(chain: &MockChain) -> Arc<dyn PowFunction> {
         chain
             .blocks
             .iter()
-            .map(|b| b.header.to_bytes().to_vec())
+            .map(|b| b.header.pow_blob(chain.params.network_id))
             .collect(),
     ))
 }
@@ -2391,7 +2415,8 @@ fn a_file_without_a_pin_is_pinned_on_load() {
     let mut w = reload(&w);
     assert_eq!(w.restore_point, Some(RestorePoint { id: None, ..pin }));
     let e = w.sync(&evil(&chain, 40, 5, true)).unwrap_err().to_string();
-    assert!(e.contains("restore again from a trusted node"), "{e}");
+    // Since output-root the header refuses the shift first (B-OMR).
+    assert!(e.contains("does not match its header"), "{e}");
     assert!(own_indices(&w).iter().all(|i| before.contains(i)));
     // The honest block at the same position passes, and the pin gets its id.
     assert_eq!(w.sync(&Spy::new(&chain, vec![])).unwrap(), 120);
@@ -2561,4 +2586,72 @@ fn proof_of_work_refuses_a_relinked_chain() {
     let mut w = restored();
     let _ = w.sync(&relink(&chain, 41, 0, false));
     assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+}
+
+/// B-OMR (RT-D1b N2): a node that shifts a block's `first_output` is refused
+/// at that block (the header fixes it); the honest node is then followed.
+#[test]
+fn a_shifted_first_output_index_is_refused() {
+    let mut chain = chain_with(21, 30, &[5]);
+    chain.lies.shift_first_output = Some(12);
+    let mut w = wallet();
+    let e = w.sync(&chain).unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("first output index does not match its header"),
+        "{e}"
+    );
+    assert_eq!(w.synced_height(), 11);
+    chain.lies = Default::default();
+    assert_eq!(w.sync(&chain).unwrap(), 30);
+}
+
+/// B-OMR (38 W11): the outputs below the restore height, fetched once from
+/// `/outputs`, are checked with the scanned ones against the synced
+/// header's `output_count` and `output_root`: an honest list completes the
+/// index, a list with one output's height changed is refused and the index
+/// is left as it was.
+#[test]
+fn the_output_backfill_is_checked_against_the_header() {
+    let chain = {
+        let mut c = chain_with(22, 40, &[]);
+        c.lies.alter_output = Some(7);
+        c.lies.serve_outputs = true;
+        c
+    };
+    let mut w = Wallet::from_seed(Network::Regtest, [7; 32], 21);
+    assert_eq!(w.sync(&chain).unwrap(), 40);
+    let total = w.synced_header(&chain).unwrap().output_count;
+    let start = w.index.start();
+    assert!(start > 7);
+    let e = w.complete_index(&chain).unwrap_err();
+    assert!(e.to_string().contains("header commits to"), "{e}");
+    assert_eq!(w.index.start(), start, "nothing prepended");
+    let mut honest = chain;
+    honest.lies = Default::default();
+    honest.lies.serve_outputs = true;
+    w.complete_index(&honest).unwrap();
+    assert!(w.index.is_complete(total));
+}
+
+/// B-PXR: a commitment list that is the chain's set but labels a commitment
+/// with an earlier height inside the root window gives a window root that is
+/// not that block's header `px_root`: refused at once (before output-root,
+/// only a later anchor or the 100-block wait caught it).
+#[test]
+fn a_relabelled_commitment_inside_the_window_is_refused_by_the_headers() {
+    let mut chain = chain_with(23, 40, &[3, 10, 25]);
+    // Block 10's commitments reported as block 9's: the list's last block
+    // (25) is right, so the end check (W3-39b) passes; the root after block
+    // 9 does not.
+    chain.lies.relabel = Some(Box::new(|_, h| if h == 10 { 9 } else { h }));
+    let mut w = Wallet::from_seed(Network::Regtest, [7; 32], 31);
+    let e = w.sync(&chain).unwrap_err();
+    assert!(e.to_string().contains("PX root"), "{e}");
+    assert!(w.px.tree.is_none());
+    chain.lies = Default::default();
+    assert_eq!(w.sync(&chain).unwrap(), 40);
+    // Without a header check the base id is the node's word: the tree is
+    // the honest list's but stays unconfirmed (RT-OMR2 M1).
+    assert!(!w.px.tree.as_ref().unwrap().is_confirmed());
 }

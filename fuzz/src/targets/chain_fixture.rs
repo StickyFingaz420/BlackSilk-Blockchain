@@ -28,7 +28,7 @@ use std::sync::Arc;
 pub struct ZeroPow;
 
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         [0; 32]
     }
 }
@@ -81,6 +81,7 @@ impl Miner {
         let mut txs = vec![Transaction::Coinbase(cb)];
         txs.extend(t.txs.iter().cloned());
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: t.version,
             height: t.height,
@@ -91,6 +92,9 @@ impl Miner {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce: 0,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
         Block { header, txs }
     }

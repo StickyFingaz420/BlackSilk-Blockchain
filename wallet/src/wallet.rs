@@ -1169,6 +1169,25 @@ mod tests {
         w.index
             .push_block(251, 2_500, [([0; 32], [0; 32], true); 3]);
         w.synced_height = 251;
+        // The synced header commits to exactly the honest outputs (B-OMR).
+        let mut range = blacksilk_tx::mmr::OutputFrontier::new();
+        for i in 0..2_500u64 {
+            range.push(blacksilk_tx::mmr::leaf(
+                &[0; 32],
+                &[0; 32],
+                i / 10 + 1,
+                true,
+            ));
+        }
+        for _ in 0..3 {
+            range.push(blacksilk_tx::mmr::leaf(&[0; 32], &[0; 32], 251, true));
+        }
+        w.headers.push_back(blacksilk_consensus::BlockHeader {
+            height: 251,
+            output_count: range.count(),
+            output_root: range.root(),
+            ..Default::default()
+        });
         // A backfill missing a block, or with a block without a coinbase
         // output, is refused, and the index is left as it was.
         for lie in [Lie::MissingBlock, Lie::NoCoinbase] {

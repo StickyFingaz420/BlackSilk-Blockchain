@@ -295,7 +295,8 @@ impl<'a> HeaderCheck<'a> {
         }
         let jobs = std::mem::take(&mut self.pending);
         let computed = AtomicU64::new(0);
-        let failed = first_failure(self.pow, &jobs, self.threads, &computed);
+        let nid = self.params.network_id;
+        let failed = first_failure(self.pow, nid, &jobs, self.threads, &computed);
         self.pow_checked += computed.into_inner();
         match failed {
             None => Ok(()),
@@ -399,6 +400,7 @@ impl<'a> HeaderCheck<'a> {
 /// `computed` counts the hashes computed.
 fn first_failure(
     pow: &dyn PowFunction,
+    network_id: u32,
     jobs: &[PowJob],
     threads: usize,
     computed: &AtomicU64,
@@ -414,7 +416,7 @@ fn first_failure(
         }
         let job = &jobs[i];
         computed.fetch_add(1, Ordering::Relaxed);
-        let hash = pow.pow_hash(&job.seed, &job.header.to_bytes());
+        let hash = pow.pow_hash(&job.seed, &job.header.pow_blob(network_id));
         if !check_hash(&hash, job.header.difficulty) {
             failed.fetch_min(i, Ordering::Relaxed);
         }

@@ -45,7 +45,11 @@
 //!   still read and appended to as it is (blocks only, in its own record
 //!   layout), with a warning;
 //! - format 1 (file header, untyped `"BSB1"` block records; pre-freeze labnet
-//!   stores): refused on every network with resync advice.
+//!   stores): refused on every network with resync advice;
+//! - format 2 (the 100-byte header, or the intermediate output-root build
+//!   whose stored PoW hashes are of the header, not the mining blob):
+//!   refused on every network with resync advice (output-root). Format 3
+//!   stores 172-byte headers and the mining blob's PoW hash.
 //!
 //! **Failure behaviour** (docs/blocks.md §8):
 //! - A record is durable when `append` returns (`sync_data`).
@@ -70,8 +74,8 @@ use std::path::{Path, PathBuf};
 
 const FILE_MAGIC: &[u8; 4] = b"BSBH";
 /// Current `blocks.dat` format version (0 = legacy file without a header,
-/// 1 = untyped records).
-pub const FORMAT_VERSION: u32 = 2;
+/// 1 = untyped records, 2 = 100-byte headers or header-input PoW hashes).
+pub const FORMAT_VERSION: u32 = 3;
 /// Length of the file header.
 pub const FILE_HEADER: usize = 48;
 /// Length of a record's frame header (magic, length, checksum).
@@ -785,6 +789,11 @@ impl BlockStore for FileStore {
                      migrates old stores. Stop the node, move {path} aside (or start with a \
                      fresh data directory) and start again to resync the chain from its \
                      peers (docs/testnet.md §4.5)"
+                )))
+            }
+            2 => {
+                return Err(corrupt(format!(
+                    "{path}: block store format version 2 (written before the 172-byte                      header and the mining-blob proof of work, or by an intermediate build                      whose stored proof-of-work hashes are of another input); this build                      reads format {FORMAT_VERSION} only and never migrates old stores. Stop                      the node, move {path} aside (or start with a fresh data directory) and                      start again to resync the chain from its peers (docs/testnet.md §4.5)"
                 )))
             }
             v => {
@@ -1902,7 +1911,13 @@ mod tests {
         bad_magic[3] ^= 1;
         assert!(bind_err(&bad_magic).contains("not a block store"));
         assert!(bind_err(b"hello, this is not a store").contains("not a block store"));
-        for (v, text) in [(1u32, "format version 1"), (3, "version 3")] {
+        // Format 2 (the 100-byte header, or the intermediate output-root
+        // build's header-input PoW hashes) is refused with resync advice.
+        for (v, text) in [
+            (1u32, "format version 1"),
+            (2, "format version 2 (written before the 172-byte"),
+            (4, "version 4"),
+        ] {
             let mut other = good.clone();
             other[4..8].copy_from_slice(&v.to_le_bytes());
             let crc = crc32fast::hash(&other[..44]);

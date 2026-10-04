@@ -16,10 +16,10 @@ fn key(i: u8) -> [u8; 32] {
     [0xA0 ^ i; 32]
 }
 
-/// Header-shaped input (100 bytes) with a varying nonce field.
-fn blob(n: u64) -> [u8; 100] {
-    let mut b = [0x3C; 100];
-    b[92..].copy_from_slice(&n.to_le_bytes());
+/// A mining-blob-shaped input with a varying nonce field.
+fn blob(n: u64) -> blacksilk_consensus::PowBlob {
+    let mut b = [0x3C; blacksilk_consensus::POW_BLOB_SIZE];
+    b[blacksilk_consensus::POW_NONCE_OFFSET..].copy_from_slice(&n.to_le_bytes());
     b
 }
 

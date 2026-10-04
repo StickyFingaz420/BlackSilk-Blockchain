@@ -105,6 +105,26 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// B-OMR: the header fixes the global index of the block's first output
+/// (`header.output_count` minus the block's outputs), so the node's
+/// `first_output` is checked, never trusted: this closes RT-D1b N2 (the
+/// restore node's word for the positions at and below the restore point).
+/// Every block the wallet indexes passes here; `block` is already checked
+/// against its id (and so its header).
+fn check_first_output_against_header(
+    block: &Block,
+    height: u64,
+    first_output: u64,
+) -> Result<(), WalletError> {
+    let outputs: u64 = block.txs.iter().map(|t| t.output_keys().len() as u64).sum();
+    if first_output.checked_add(outputs) != Some(block.header.output_count) {
+        return Err(WalletError::BadNodeData(format!(
+            "block {height}'s first output index does not match its header"
+        )));
+    }
+    Ok(())
+}
+
 /// Decodes a block the node served.
 fn decode_block(entry: &rpc::BlockEntry) -> Result<Block, WalletError> {
     let bytes =
@@ -561,6 +581,7 @@ impl Wallet {
                         "block {from} does not match its id"
                     )));
                 }
+                check_first_output_against_header(&block, from, entry.first_output)?;
                 // Each block must extend the one before it (review F6), the
                 // first one the backfill's base.
                 if let Some(prev) = self.block_ids.get(&(entry.height - 1)) {
@@ -876,9 +897,94 @@ impl Wallet {
         }
         self.px
             .set_base(base, &lists.commitments, true, contracts)?;
+        if let Err(e) = self.check_px_roots(node, base, ids[&base]) {
+            // The next sync fetches a fresh list.
+            self.px.tree = None;
+            return Err(e);
+        }
         // Imported records older than the scanned blocks (RTW3-15).
         self.px.place_from_list(&lists.commitments)?;
         self.block_ids.insert(base, ids[&base]);
+        Ok(())
+    }
+
+    /// The header of the synced block: the wallet's last header, or the
+    /// node's, which must have the synced block's id.
+    pub(super) fn synced_header(&self, node: &dyn NodeApi) -> Result<BlockHeader, WalletError> {
+        let h = self.synced_height;
+        if let Some(x) = self.headers.back().filter(|x| x.height == h) {
+            return Ok(*x);
+        }
+        let nid = self.params.network_id;
+        let x = fetch_headers(node, h, h, nid)?
+            .pop()
+            .ok_or_else(|| WalletError::BadNodeData(format!("no header at {h}")))?;
+        if self.block_ids.get(&h) != Some(&x.id(nid)) {
+            return Err(WalletError::BadNodeData(format!(
+                "the node's header {h} is not the synced block's"
+            )));
+        }
+        Ok(x)
+    }
+
+    /// Checks the backfilled PX tree against the headers (B-PXR): every root
+    /// of its window, from the commitment list and its heights, must be the
+    /// `px_root` of that block's header, the last one the base block's
+    /// (`base_id`). The list is then the exact list of the chain those
+    /// headers belong to, its heights included.
+    ///
+    /// The tree is bound to the chain at once (`confirm`: no wait for an
+    /// anchor that includes a scanned commitment, px.md §11.4) only when
+    /// `base_id` is the header the wallet checked from the genesis with
+    /// proof of work (`checked_through` at the base). Otherwise the base id
+    /// is the node's word, and a node could serve a consistent fake chain of
+    /// headers with matching roots: the tree stays unconfirmed, with the
+    /// backfill-tail check, the 100-block anchor wait and the rebuild on a
+    /// refused block (RT-OMR2 M1).
+    fn check_px_roots(
+        &mut self,
+        node: &dyn NodeApi,
+        base: u64,
+        base_id: Hash,
+    ) -> Result<(), WalletError> {
+        let nid = self.params.network_id;
+        let lo = base.saturating_sub(blacksilk_px::state::ROOT_WINDOW as u64 - 1);
+        let headers = fetch_headers(node, lo, base, nid)?;
+        if headers.last().map(|h| (h.height, h.id(nid))) != Some((base, base_id)) {
+            return Err(WalletError::BadNodeData(
+                "the node's headers do not end at the backfill's base block".into(),
+            ));
+        }
+        let tree = self.px.tree.as_ref().expect("the backfill's tree is set");
+        for h in &headers {
+            let Some((root, _)) = tree.root_at(h.height) else {
+                continue;
+            };
+            if blacksilk_tx::px::digest_bytes(&root) != h.px_root {
+                return Err(WalletError::BadNodeData(format!(
+                    "the node's commitment list does not give block {}'s PX root (a \
+                     commitment left out, altered or labelled with another height)",
+                    h.height
+                )));
+            }
+        }
+        if tree.root_at(base).is_none() {
+            return Err(WalletError::BadNodeData(
+                "the backfill has no root at its base".into(),
+            ));
+        }
+        let checked = self.checked_through == Some(base)
+            && self
+                .headers
+                .back()
+                .is_some_and(|h| h.height == base && h.id(nid) == base_id);
+        if checked {
+            self.px
+                .tree
+                .as_mut()
+                .expect("the backfill's tree is set")
+                .confirm(base);
+        }
         Ok(())
     }
 
@@ -942,9 +1048,10 @@ impl Wallet {
     }
 
     /// A node's position for block `height`'s first output (`theirs`)
-    /// contradicts the wallet's (`ours`). For a restored wallet the positions
-    /// below and at the restore point came from the node used for the
-    /// restore (RT-D1b N2), so either node may be the liar.
+    /// contradicts the wallet's (`ours`). Since output-root both positions
+    /// passed the header check (`check_first_output_against_header`), so
+    /// this needs a header chain that changed; the message keeps the advice
+    /// for a restore made by an earlier build (RT-D1b N2).
     pub(super) fn positions_contradicted(
         &self,
         height: u64,
@@ -1009,7 +1116,10 @@ impl Wallet {
     /// - Otherwise (the first scan, or an index from an older file): block 1
     ///   starts at 0 (the genesis has no outputs) and no block starts below
     ///   its height − 1 (every block from 1 on has at least one output).
-    ///   That position is the restore node's word (RT-D1b N2).
+    ///   Since output-root the position is also fixed by the block's header
+    ///   (`check_first_output_against_header`, run before this on every
+    ///   indexed block), so it is no longer the restore node's word (RT-D1b
+    ///   N2 closed); these checks stay as defence in depth.
     fn check_first_output(
         &self,
         height: u64,
@@ -1108,6 +1218,7 @@ impl Wallet {
             )));
         }
         let first = entry.first_output;
+        check_first_output_against_header(&block, h, first)?;
         let count = block
             .txs
             .iter()
@@ -1376,6 +1487,58 @@ mod tests {
         Wallet::from_seed(Network::Regtest, [7; 32], 1)
     }
 
+    /// The pinned restore point (RT-D1b N1), driven directly with a
+    /// fabricated pin (RT-OMR3 L4a): the same block at the pinned position
+    /// passes; at another position it is the contradiction that tells the
+    /// user the restore node may have lied; another block there is refused
+    /// without a header check and is a reorganization (reset) with one; a
+    /// position-only pin accepts any block at the pinned position.
+    #[test]
+    fn the_restore_point_pin_holds_and_reports_a_contradiction() {
+        let mut w = Wallet::from_seed(Network::Regtest, [7; 32], 40);
+        let (pinned, other) = ([1u8; 32], [2u8; 32]);
+        w.restore_point = Some(RestorePoint {
+            height: 40,
+            id: Some(pinned),
+            first_output: 100,
+        });
+        assert!(!w.check_first_output(40, &pinned, 100).unwrap());
+        let e = w
+            .check_first_output(40, &pinned, 105)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("places its first output at 105"), "{e}");
+        assert!(e.contains("output index at 100"), "{e}");
+        assert!(e.contains("restore again from a trusted node"), "{e}");
+        // Another block at the restore point.
+        w.verify_headers = false;
+        w.restore_check = false;
+        let e = w
+            .check_first_output(40, &other, 100)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("another block at the wallet's restore point"),
+            "{e}"
+        );
+        w.verify_headers = true;
+        assert!(w.check_first_output(40, &other, 100).unwrap(), "a reset");
+        // A position-only pin: any block, at the pinned position only.
+        w.restore_point = Some(RestorePoint {
+            height: 40,
+            id: None,
+            first_output: 100,
+        });
+        assert!(!w.check_first_output(40, &other, 100).unwrap());
+        let e = w
+            .check_first_output(40, &other, 99)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("restore again from a trusted node"), "{e}");
+        // The shape bound below the pin: at least height - 1.
+        assert!(w.check_first_output(41, &other, 30).is_err());
+    }
+
     fn block(height: u64, txs: Vec<Transaction>) -> Block {
         Block {
             header: BlockHeader {
@@ -1386,6 +1549,7 @@ mod tests {
                 difficulty: 1,
                 tx_root: [0; 32],
                 nonce: 0,
+                ..Default::default()
             },
             txs,
         }

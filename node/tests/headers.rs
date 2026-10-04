@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 struct ZeroPow;
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         [0; 32]
     }
 }
@@ -59,6 +59,7 @@ fn mine(shared: &Shared, n: u64) {
         .unwrap();
         let txs = vec![Transaction::Coinbase(cb)];
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: t.version,
             height: t.height,
@@ -69,6 +70,9 @@ fn mine(shared: &Shared, n: u64) {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce: 0,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
         let now = header.timestamp;
         c.submit_block(Block { header, txs }, now).unwrap();
@@ -165,6 +169,7 @@ fn headers_follow_the_connected_chain_not_a_bodiless_heavier_branch() {
             difficulty: t.difficulty,
             tx_root: [1; 32],
             nonce: 0,
+            ..Default::default()
         };
         g.accept(h, u64::MAX / 2).unwrap();
         branch.push(h);

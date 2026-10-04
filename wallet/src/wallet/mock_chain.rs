@@ -46,7 +46,7 @@ fn undelivered() -> Vec<u8> {
 pub(crate) struct ZeroPow;
 
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         [0; 32]
     }
 }
@@ -84,6 +84,13 @@ pub(crate) struct Lies {
     /// true header.
     #[allow(clippy::type_complexity)]
     pub alter_block: Option<(u64, Box<dyn Fn(&mut Block)>)>,
+    /// `/blocks`: the `first_output` of the block at this height is one
+    /// more than the chain's.
+    pub shift_first_output: Option<u64>,
+    /// `/outputs`: the output with this global index gets another height.
+    pub alter_output: Option<u64>,
+    /// `/outputs` is served (off: the node refuses it, as most tests want).
+    pub serve_outputs: bool,
 }
 
 pub(crate) struct MockChain {
@@ -93,6 +100,8 @@ pub(crate) struct MockChain {
     pub blocks: Vec<Block>,
     pub first_output: Vec<u64>,
     outputs: u64,
+    /// The output range after the last block (B-OMR).
+    output_range: blacksilk_tx::mmr::OutputFrontier,
     /// The consensus PX state after the last block.
     pub px: State,
     /// `roots[h]`: the PX tree root after block `h`.
@@ -150,6 +159,7 @@ impl MockChain {
             contracts: Vec::new(),
             difficulty: None,
             forged_headers: false,
+            output_range: Default::default(),
         }
     }
 
@@ -360,6 +370,16 @@ impl MockChain {
                 .into_iter()
                 .map(|t| Transaction::PxDeploy(Box::new(t))),
         );
+        // The header commits to the output range and the PX tree after the
+        // block (B-OMR, B-PXR); a forged block's to the tree with its own
+        // commitments, as its miner would.
+        self.output_range.append_block(height, &txs);
+        let cms: Vec<Digest> = self.commitments.iter().map(|c| c.1).collect();
+        let px_root = blacksilk_tx::px::digest_bytes(
+            &State::new()
+                .root_after(&cms)
+                .expect("the mock's tree has room"),
+        );
         let forged = self.difficulty.as_ref().and_then(|f| f(height));
         self.forged_headers |= forged.is_some();
         let mut block = Block {
@@ -370,6 +390,9 @@ impl MockChain {
                 timestamp: self.params.genesis.timestamp + self.spacing * height,
                 difficulty: forged.unwrap_or_else(|| self.next_difficulty()),
                 tx_root: [0; 32],
+                output_count: self.output_range.count(),
+                output_root: self.output_range.root(),
+                px_root,
                 nonce: 0,
             },
             txs,
@@ -460,7 +483,8 @@ impl NodeApi for MockChain {
                     rpc::BlockEntry {
                         height: h,
                         id: hex::encode(b.id(self.params.network_id)),
-                        first_output: self.first_output[h as usize],
+                        first_output: self.first_output[h as usize]
+                            + u64::from(self.lies.shift_first_output == Some(h)),
                         hex: hex::encode(b.encode()),
                     }
                 })
@@ -485,8 +509,33 @@ impl NodeApi for MockChain {
         Err("not used".into())
     }
 
-    fn outputs(&self, _: &[u64]) -> Result<rpc::Outputs, String> {
-        Err("not used".into())
+    /// The chain's outputs at `indices` (`alter_output` lies about one).
+    fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+        if !self.lies.serve_outputs {
+            return Err("not used".into());
+        }
+        let mut all = Vec::new();
+        for (h, b) in self.blocks.iter().enumerate() {
+            for tx in &b.txs {
+                for k in tx.output_keys() {
+                    all.push((k, h as u64, tx.is_coinbase()));
+                }
+            }
+        }
+        let outputs = indices
+            .iter()
+            .map(|&i| {
+                let (k, h, coinbase) = &all[i as usize];
+                rpc::OutputEntry {
+                    index: i,
+                    one_time_key: hex::encode(k.one_time_key.bytes()),
+                    commitment: hex::encode(k.commitment.bytes()),
+                    height: h + u64::from(self.lies.alter_output == Some(i)),
+                    coinbase: *coinbase,
+                }
+            })
+            .collect();
+        Ok(rpc::Outputs { outputs })
     }
 
     fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {

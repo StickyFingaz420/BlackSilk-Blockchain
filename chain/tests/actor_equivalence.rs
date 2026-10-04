@@ -59,7 +59,7 @@ use std::sync::{mpsc, Arc, Mutex};
 
 struct ZeroPow;
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         [0; 32]
     }
 }
@@ -102,6 +102,7 @@ fn build(t: &Template, miner: &WalletKeys, rng: &mut ChaCha20Rng, extra: u64) ->
     .unwrap();
     let txs = vec![Transaction::Coinbase(cb)];
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    let (output_count, output_root) = t.outputs_after(&txs);
     let header = BlockHeader {
         version: t.version,
         height: t.height,
@@ -112,6 +113,9 @@ fn build(t: &Template, miner: &WalletKeys, rng: &mut ChaCha20Rng, extra: u64) ->
         difficulty: t.difficulty,
         tx_root: tx_root(&ids),
         nonce: 0,
+        output_count,
+        output_root,
+        px_root: t.px_root,
     };
     Block { header, txs }
 }

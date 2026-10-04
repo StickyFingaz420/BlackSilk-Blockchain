@@ -519,6 +519,13 @@ impl ChainView for View<'_> {
     fn px_tree_size(&self) -> u64 {
         0
     }
+    /// No block is validated on this view.
+    fn px_root_after(&self, leaves: &[Digest]) -> Option<Digest> {
+        blacksilk_px::state::State::new().root_after(leaves)
+    }
+    fn output_frontier(&self) -> blacksilk_tx::mmr::OutputFrontier {
+        blacksilk_tx::mmr::OutputFrontier::new()
+    }
 }
 
 /// D4 property: on random chains (1–3 coinbase and 0–4 transfer outputs per

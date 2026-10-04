@@ -2,7 +2,6 @@
 
 #![allow(dead_code)]
 
-use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::ChainParams;
 use blacksilk_crypto::keys::{Address, SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_crypto::Point;
@@ -155,13 +154,10 @@ impl TestNet {
         )
     }
 
+    /// The context of a block of `txs` whose header commits honestly to
+    /// them (B5, B-OMR, B-PXR) on the current state.
     pub fn context(&self, txs: &[Transaction]) -> BlockContext {
-        let ids: Vec<_> = txs.iter().map(Transaction::hash).collect();
-        BlockContext {
-            height: self.height(),
-            reward: REWARD,
-            tx_root: tx_root(&ids),
-        }
+        BlockContext::committing(self.height(), REWARD, txs, &self.chain)
     }
 
     /// Validates and applies a block with the given transfers (plus a correct

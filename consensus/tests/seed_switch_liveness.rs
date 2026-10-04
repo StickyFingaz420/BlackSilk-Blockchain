@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 fn a_cache_build_does_not_stall_callers_of_a_built_key() {
     let pow = Arc::new(RandomXPow::new());
     let (old, new) = ([0x51; 32], [0x52; 32]);
-    let blob = [7u8; 100];
+    let blob = [7u8; blacksilk_consensus::POW_BLOB_SIZE];
 
     let started = Instant::now();
     let reference = pow.pow_hash(&old, &blob);

@@ -814,6 +814,9 @@ async fn template(
                 .into_iter()
                 .map(|tx| hex::encode(tx.encode()))
                 .collect(),
+            output_count: t.outputs.count(),
+            output_peaks: t.outputs.peaks().iter().map(hex::encode).collect(),
+            px_root: hex::encode(t.px_root),
         },
         next_seed_id: next.map(hex::encode),
     }))
@@ -1130,7 +1133,7 @@ pub fn connected_headers(m: &ChainManager, from: u64, count: u64) -> Vec<BlockHe
     out
 }
 
-/// `/headers`: one Query command copies the headers (100 bytes each, at
+/// `/headers`: one Query command copies the headers (172 bytes each, at
 /// most `rpc::MAX_HEADERS_PER_REQUEST`); hex encoding follows outside it.
 async fn headers(
     State(App { chain: s, .. }): State<App>,

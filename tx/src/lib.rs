@@ -8,6 +8,7 @@
 //! | [`px`] | private-execution transactions and private-contract deploys |
 //! | [`validate`] | stateless, contextual and block-level rules |
 //! | [`state`] | reference in-memory chain state with reorg undo |
+//! | [`mmr`] | the output Merkle mountain range the headers commit to |
 //! | [`builder`] | wallet-side transfer and coinbase construction |
 //! | [`scan`] | wallet-side scanning (view keys only) |
 //! | [`decoy`] | wallet-side decoy selection (gamma picker) |
@@ -20,6 +21,7 @@
 pub mod builder;
 pub mod codec;
 pub mod decoy;
+pub mod mmr;
 pub mod params;
 pub mod px;
 pub mod px_builder;

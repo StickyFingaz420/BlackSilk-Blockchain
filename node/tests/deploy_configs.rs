@@ -242,22 +242,28 @@ fn consensus_fingerprints_are_pinned() {
 /// fixture samples and the revision PX-R:ciphertext-r-canonical-not-identity;
 /// identity unchanged); re-pinned by RX-SALT (rules and consensus: BlackSilk's
 /// RandomX salt, the known answer bs-1a and the revision
-/// RX-SALT:blacksilk-randomx-argon2-salt; identity unchanged).
+/// RX-SALT:blacksilk-randomx-argon2-salt; identity unchanged); re-pinned by
+/// output-root (all three: the 172-byte header moves every genesis id; the
+/// rules gain the output-range and mining-hash tags, the mining-blob
+/// constants, their samples and the revision
+/// OMR:header-output-mmr-px-root-and-mining-blob, after RX-SALT's).
 const TESTNET: [&str; 3] = [
-    "8b96c3a385f3d92c782d3d840d3b0fe570aa20672b6f05e84f88929537c85ead",
-    "9eab5567e5b648177f2c7093cc6b9c840cbff38d2dfc2cef542e56fc739280f5",
-    "b333a99f2bcd5d351fe87d043e9cd17d6920c43c09021ea453bc14d9fec4b294",
+    "e1f86036450fdbe95ae9682b5ad6a566bd8cd53aa4795a58fa503435b52ea3d0",
+    "41eb61ba3c5c4b4fc1e51f096ba9eb348edf44ac0010c8a716437873560373f8",
+    "3ad61ec9d375629ebcc56fa9231bb2d946a50c26c913d471495a7c10b3f62603",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT).
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
+/// output-root).
 const REGTEST: [&str; 3] = [
-    "aebaf33756f6d6715b9a3ad0d89d493293d36ca93042ed31249afe7b6e1101bd",
-    "1ad5f7f5b6011ba0c1d79b2db8dd56323ed99513bb8a4b46c4757b9459eb98dc",
-    "dfab90c6b92c127ab987cc3285557ad9b71ccd29c05bf2024531c54f10f6cf87",
+    "35ba46ef41b7501d0c8cd925db1ba419e4c1e56b260701c1517488c6de86c1a8",
+    "c88c3f9a4ef4dd722c35c39c5708cae67b26128665a25e60653d9c8b70efb5d3",
+    "93d0d09dc0dee8070e8d0cfde0d10db3484c31bf65301eab09056f34aa72a79b",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT). The mainnet
-/// parameters are provisional; mainnet is not launched.
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
+/// output-root). The mainnet parameters are provisional; mainnet is not
+/// launched.
 const MAINNET: [&str; 3] = [
-    "67a1e4b9737ff9d2ea9d5fde6c614fdca1647235bfb7e93796e44c65905af9cb",
-    "55353dc42b5f0b5322514c6a8eaba6f20d0c44c19fe001ebc20747f5f59ed612",
-    "2dbb1c3703d90367c2d4475adb86a0e57c1d8c6ebe5f698f53baa7ec27465088",
+    "51f1d22f147ffe0657d2688818a6302c698e781bdb6380c23ef725df337f80ba",
+    "3b6833cb44dd4be607f38ad84c7325c9048a07008d1af4baf93bcca99511fa6f",
+    "4e8f80d69dccb7dc9ace4acc870f3f3dd7fa0b047e05dac91a12d298716798d8",
 ];

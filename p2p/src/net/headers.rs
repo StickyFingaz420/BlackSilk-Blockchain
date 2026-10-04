@@ -1050,7 +1050,7 @@ mod tests {
     async fn idle_network(edit: impl FnOnce(&mut crate::NetConfig)) -> crate::Network {
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }
@@ -1398,7 +1398,7 @@ mod tests {
         // Two headers on the genesis, one per request.
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }
@@ -1417,6 +1417,7 @@ mod tests {
                 difficulty: t.difficulty,
                 tx_root: [0; 32],
                 nonce: k,
+                ..Default::default()
             };
             g.accept(h, u64::MAX / 2).unwrap();
             loop {
@@ -1461,7 +1462,7 @@ mod tests {
         // A header that breaks a rule (difficulty), on the genesis.
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }
@@ -1480,6 +1481,7 @@ mod tests {
             difficulty: t.difficulty + 5,
             tx_root: [0; 32],
             nonce: 0,
+            ..Default::default()
         };
         let addr = NetAddr::parse("1.2.3.4:5").unwrap();
         let verify = |inner: Arc<Inner>| {
@@ -1524,6 +1526,7 @@ mod tests {
             difficulty: 1,
             tx_root: [0; 32],
             nonce: n,
+            ..Default::default()
         };
         // A refused header, accepted inside a batch that is not live.
         inner.clock().note_future_refusal(header(1).id(nid), 900);
@@ -1591,7 +1594,7 @@ mod tests {
         };
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }
@@ -1610,6 +1613,7 @@ mod tests {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce,
+            ..Default::default()
         };
         let (tip, side) = (child(1), child(2));
         // Sends one header and waits until the worker has taken it up.

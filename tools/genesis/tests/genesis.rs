@@ -24,7 +24,9 @@ fn kat_inputs() -> GenesisInputs {
 /// final testnet id).
 const KAT_DIGEST: &str = "5081810a27720a228d4620fd4d69d67d55b5b894d87642f49a1186e5049340a9";
 const KAT_NONCE: u64 = 0x220a_7227_0a81_8150;
-const KAT_GENESIS_ID: &str = "6c86579e89b300c41c7163f1515f4f09880a4d019cdce34e4f45b0c2d089d6c8";
+/// The 172-byte header's genesis id (output-root), recomputed by
+/// `tools/vectors/output_mmr.py` ("tools/genesis KAT").
+const KAT_GENESIS_ID: &str = "5961167276e545b8c57da9fb7ad90b965c5a510dfb796424708e5eac98a18f8a";
 
 #[test]
 fn known_answer_bitcoin_block_0() {
@@ -92,6 +94,9 @@ fn all_genesis_fields_are_fixed() {
     assert_eq!(h.height, 0);
     assert_eq!(h.prev_id, [0; 32]);
     assert_eq!(h.tx_root, [0; 32]);
+    assert_eq!(h.output_count, 0);
+    assert_eq!(h.output_root, [0; 32]);
+    assert_eq!(h.px_root, blacksilk_consensus::genesis::EMPTY_PX_ROOT);
     assert_eq!(h.timestamp, i.timestamp);
     assert_eq!(h.difficulty, i.difficulty);
     assert_eq!(h.nonce, derive_genesis_nonce(i.network_id, 0, &i.btc_hash));
@@ -103,6 +108,10 @@ fn all_genesis_fields_are_fixed() {
     assert_eq!(
         (t.version, t.height, t.prev_id, t.tx_root),
         (h.version, h.height, h.prev_id, h.tx_root)
+    );
+    assert_eq!(
+        (t.output_count, t.output_root, t.px_root),
+        (h.output_count, h.output_root, h.px_root)
     );
 }
 

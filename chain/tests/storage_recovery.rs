@@ -18,10 +18,30 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+thread_local! {
+    /// The body of every block this test built, by id: the output range a
+    /// template on a branch extends (B-OMR) needs the bodies the manager
+    /// does not hold (headers sent alone, bodies dropped as invalid).
+    static BUILT: std::cell::RefCell<std::collections::HashMap<Hash, Vec<Transaction>>> =
+        Default::default();
+}
+
+/// Records `b`'s body ([`BUILT`]) and returns it.
+fn remember(b: Block) -> Block {
+    let id = b.id(params().network_id);
+    BUILT.with(|m| m.borrow_mut().insert(id, b.txs.clone()));
+    b
+}
+
+/// The body of a block this test built.
+fn known_body(id: &Hash) -> Option<Vec<Transaction>> {
+    BUILT.with(|m| m.borrow().get(id).cloned())
+}
+
 /// Zero hash: meets any difficulty.
 struct ZeroPow;
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         [0; 32]
     }
 }
@@ -70,6 +90,7 @@ impl Miner {
         .unwrap();
         let txs = vec![Transaction::Coinbase(cb)];
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&txs);
         let header = BlockHeader {
             version: HEADER_VERSION,
             height: t.height,
@@ -80,8 +101,11 @@ impl Miner {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
-        Block { header, txs }
+        remember(Block { header, txs })
     }
 
     /// Builds (without submitting) `n` blocks on `parent`, using `m` for the
@@ -91,7 +115,7 @@ impl Miner {
         let mut out = Vec::new();
         let mut p = parent;
         for _ in 0..n {
-            let t = m.template_on(&p).unwrap();
+            let t = m.template_on_with(&p, &known_body).unwrap();
             let b = self.build(&t, None, tag);
             m.submit_block(b.clone(), b.header.timestamp)
                 .expect("valid block");
@@ -396,15 +420,15 @@ fn replay_skips_descendants_of_an_invalid_block_stored_before_it() {
         let mut m = open_file(&path);
         let main = miner.mine_on(&mut m, g, 5, 0);
         // Side branch from height 3: X (over-claims its reward), Y, Z.
-        let tx = m.template_on(&id(&main[2])).unwrap();
+        let tx = m.template_on_with(&id(&main[2]), &known_body).unwrap();
         let x = miner.build(&tx, Some(tx.reward + 1), 7);
         // Y and Z extend X; their templates come from X's header, accepted
         // first (header-first sync).
         m.accept_headers(&[x.header], x.header.timestamp).unwrap();
-        let ty = m.template_on(&id(&x)).unwrap();
+        let ty = m.template_on_with(&id(&x), &known_body).unwrap();
         let y = miner.build(&ty, None, 7);
         m.accept_headers(&[y.header], y.header.timestamp).unwrap();
-        let tz = m.template_on(&id(&y)).unwrap();
+        let tz = m.template_on_with(&id(&y), &known_body).unwrap();
         let z = miner.build(&tz, None, 7);
         m.accept_headers(&[z.header], z.header.timestamp).unwrap();
         assert_eq!(m.header_height(), 6, "the branch's headers are heavier");
@@ -441,7 +465,7 @@ fn siblings_stored_before_their_parent_replay_in_storage_order() {
         let mut m = open_file(&path);
         let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
         m.accept_headers(&headers, headers[4].timestamp).unwrap();
-        let t = m.template_on(&id(&blocks[4])).unwrap();
+        let t = m.template_on_with(&id(&blocks[4]), &known_body).unwrap();
         let a = miner.build(&t, None, 1);
         let b = miner.build(&t, None, 2);
         // B's header arrives first; A's body is stored first.

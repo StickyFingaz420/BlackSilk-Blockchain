@@ -256,7 +256,7 @@ mod tests {
     /// Meets any difficulty: the tests here are about claimed work only.
     struct ZeroPow;
     impl PowFunction for ZeroPow {
-        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
             [0; 32]
         }
     }
@@ -279,6 +279,7 @@ mod tests {
             difficulty: t.difficulty,
             tx_root: tx_root(&[[tag; 32]]),
             nonce: 0,
+            ..Default::default()
         }
     }
 

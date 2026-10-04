@@ -24,6 +24,18 @@ use crate::header::BlockHeader;
 /// The domain string of the nonce derivation.
 pub const NONCE_DOMAIN: &[u8] = b"BlackSilk/genesis-nonce/v1";
 
+/// The root of the empty PX commitment tree (`empty[32]` of docs/px.md §5)
+/// in the header encoding (eight little-endian 32-bit words): the `px_root`
+/// of every genesis header, whose body is empty (rule B-PXR). The consensus
+/// crate does not compute Poseidon2; `blacksilk-tx` checks this constant
+/// against `blacksilk_px::state::State::new().root()`, and
+/// `px/tests/data/hk_vectors.txt` (`empty.32`, from the independent script
+/// `tools/vectors/poseidon2_hk.py`) holds the same value.
+pub const EMPTY_PX_ROOT: Hash = [
+    0x0f, 0xf2, 0xbc, 0x46, 0x2d, 0xc1, 0xec, 0x54, 0x8e, 0xbf, 0x53, 0x5c, 0x01, 0x3e, 0x06, 0x05,
+    0x26, 0xe7, 0xd8, 0x41, 0xea, 0xfe, 0x11, 0x6c, 0x75, 0xf9, 0xcf, 0x06, 0xfd, 0x3f, 0x99, 0x0f,
+];
+
 /// A network id reserved for test vectors (the known answers here, in
 /// `tools/genesis` and in the consensus manifest's samples). Never a
 /// network's id, so a known answer never collides with a real genesis
@@ -71,7 +83,9 @@ impl GenesisSpec {
 
     /// The genesis header. Every field but the nonce is fixed: `version` (the
     /// first epoch's header version), height 0, zero parent, the empty body's
-    /// root (zero, docs/blocks.md §3), the announced timestamp and difficulty.
+    /// root (zero, docs/blocks.md §3), the announced timestamp and difficulty,
+    /// no outputs (count 0, the empty range's zero root) and the empty PX
+    /// tree's root ([`EMPTY_PX_ROOT`]).
     pub fn header(&self, version: u32) -> BlockHeader {
         BlockHeader {
             version,
@@ -80,6 +94,9 @@ impl GenesisSpec {
             timestamp: self.timestamp,
             difficulty: self.difficulty,
             tx_root: [0; 32],
+            output_count: 0,
+            output_root: [0; 32],
+            px_root: EMPTY_PX_ROOT,
             nonce: self.nonce(),
         }
     }

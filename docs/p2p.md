@@ -271,7 +271,7 @@ an oversized list is a protocol violation.
 | 4 | `GetAddr` | — | answered once per connection, to inbound peers only (§9) |
 | 5 | `Addr` | `varint n`, `n × AddrEntry` | n ≤ 1000; each address ≤ 512 bytes |
 | 6 | `GetHeaders` | `varint n`, `n × id` (locator), `stop id` | n ≤ 64 |
-| 7 | `Headers` | `varint n`, `n × 100-byte header` | n ≤ 2000 |
+| 7 | `Headers` | `varint n`, `n × 172-byte header` | n ≤ 2000 |
 | 8 | `GetBlocks` | `varint n`, `n × id` | n ≤ 128 |
 | 9 | `Block` | `varint len`, block bytes | len ≤ `MAX_BLOCK_BYTES` (blocks.md §4) |
 | 10 | `NotFound` | `varint n`, `n × id` | n ≤ 128 |

@@ -444,7 +444,7 @@ write in progress):
 
 | File | Content | Privacy note |
 |---|---|---|
-| `blocks.dat` | append-only block log (format 2: bound to the network id and genesis), including the operator's `--invalidate-block` and `--reconsider-block` verdicts; the node replays it at start (blocks.md §8) | public chain data, plus your verdicts and the side branches this node stored; it does not mark which blocks this node mined |
+| `blocks.dat` | append-only block log (format 3: bound to the network id and genesis), including the operator's `--invalidate-block` and `--reconsider-block` verdicts; the node replays it at start (blocks.md §8) | public chain data, plus your verdicts and the side branches this node stored; it does not mark which blocks this node mined |
 | `blocks.dat.damaged-<time>` | the region `--repair-store` moved aside (§9) | as `blocks.dat` |
 | `originated.json` | **the id of every transaction this node originated** (sent to its RPC `/tx`), with the height it was relayed for, kept about 2 190 blocks (about 3 days on testnet), at most 10 000 (p2p.md §8.1) | **a plaintext list of your own transactions**: anyone who reads it links them to this node, deterministically. Never share it, never put it in a backup or synced folder you do not control, and delete it before you hand the data directory to anyone (after the last entry has expired, the node no longer needs it) |
 | `peers.json` | the address table (p2p.md §9), including the secret key that places addresses into buckets | your contact graph, and the key lets a reader aim addresses at your buckets. Private |

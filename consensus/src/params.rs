@@ -178,7 +178,8 @@ impl ChainParams {
     ///   (`height - seed_height > lag`); a lag of 0 would let the key be the
     ///   parent itself, known only once the parent exists (RTW1-10).
     /// - `D0 ≥ 1`, and the genesis header is well formed: height 0, zero parent
-    ///   and body root, difficulty `D0`, the first epoch's header version, and
+    ///   and body root, no outputs (count 0, zero output root), the empty PX
+    ///   tree's root, difficulty `D0`, the first epoch's header version, and
     ///   the nonce derived from the committed beacon ([`Self::genesis_spec`]): a
     ///   pasted nonce that disagrees with its beacon is refused.
     ///   The schedule's own ordering is checked when it is built
@@ -223,6 +224,9 @@ impl ChainParams {
         if g.height != 0
             || g.prev_id != [0; 32]
             || g.tx_root != [0; 32]
+            || g.output_count != 0
+            || g.output_root != [0; 32]
+            || g.px_root != crate::genesis::EMPTY_PX_ROOT
             || g.difficulty != self.initial_difficulty
             || g.version != self.epoch_at(0).header_version
             || g.nonce != self.genesis_spec().nonce()
@@ -458,12 +462,13 @@ mod tests {
 
     /// Testnet v3 before its launch: id `0x0001_D673`, the placeholder genesis
     /// time and nonce 0 (no beacon). Recomputed independently from the spec
-    /// (Python `hashlib.blake2b`, docs/reviews/v3-consensus-changes.md
-    /// #fingerprint-v3). The launch commit changes it with the beacon.
+    /// (Python `hashlib.blake2b`, `tools/vectors/output_mmr.py`; the 172-byte
+    /// header of docs/reviews/v3-consensus-changes.md#output-root). The
+    /// launch commit changes it with the beacon.
     const TESTNET_GENESIS_ID: &str =
-        "08b9e7c994bf8329fb710dd374af20e5450839e7cdaa6f2b6a05fd772cc96bcf";
+        "b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0";
     const REGTEST_GENESIS_ID: &str =
-        "087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7";
+        "3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141";
 
     #[test]
     fn networks_are_distinct() {

@@ -129,7 +129,7 @@ impl ChainManager {
         if persist {
             // The header is in the tree, so its seed is defined; the hash is
             // cached from header validation (computed again only if not).
-            let header_bytes = block.header.to_bytes();
+            let header_bytes = block.header.pow_blob(self.params.network_id);
             let seed = self
                 .headers
                 .seed_id_for(block.header.prev_id, block.header.height);
@@ -287,7 +287,7 @@ mod tests {
 
     struct ZeroPow;
     impl PowFunction for ZeroPow {
-        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
             [0; 32]
         }
     }
@@ -325,6 +325,7 @@ mod tests {
             .unwrap();
             let txs = vec![Transaction::Coinbase(cb)];
             let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+            let (output_count, output_root) = t.outputs_after(&txs);
             let header = BlockHeader {
                 version: HEADER_VERSION,
                 height: t.height,
@@ -332,6 +333,9 @@ mod tests {
                 timestamp: t.min_timestamp.max(genesis_time + 120 * t.height),
                 difficulty: t.difficulty,
                 tx_root: tx_root(&ids),
+                output_count,
+                output_root,
+                px_root: t.px_root,
                 nonce,
             };
             let b = Block { header, txs };

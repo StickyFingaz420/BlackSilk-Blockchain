@@ -49,6 +49,7 @@ fn next_block(m: &ChainManager, keys: &WalletKeys, rng: &mut ChaCha20Rng) -> Blo
     let txs = vec![Transaction::Coinbase(cb)];
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
     let parent_time = m.tip_header().timestamp;
+    let (output_count, output_root) = t.outputs_after(&txs);
     let header = BlockHeader {
         version: t.version,
         height: t.height,
@@ -57,6 +58,9 @@ fn next_block(m: &ChainManager, keys: &WalletKeys, rng: &mut ChaCha20Rng) -> Blo
         difficulty: t.difficulty,
         tx_root: tx_root(&ids),
         nonce: 0,
+        output_count,
+        output_root,
+        px_root: t.px_root,
     };
     Block { header, txs }
 }

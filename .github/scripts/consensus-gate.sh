@@ -45,6 +45,7 @@ is_consensus_path() {
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
     tx/src/validate.rs | tx/src/px.rs | tx/src/params.rs) return 0 ;;
     tx/src/types.rs | tx/src/codec.rs | tx/src/state.rs) return 0 ;;
+    tx/src/mmr.rs) return 0 ;; # the output range of the headers (output-root)
     zkvm/src/prove.rs | node/src/fingerprint.rs | px/src/fingerprint.rs) return 0 ;;
     node/src/fingerprint_fixture.txt) return 0 ;;
     node/src/px_fixture.bin | node/src/px_fixture.txt) return 0 ;;

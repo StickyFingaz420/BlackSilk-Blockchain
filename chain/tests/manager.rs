@@ -27,6 +27,46 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+thread_local! {
+    /// The body of every block this test built, by id: the output range a
+    /// template on a branch extends (B-OMR) needs the bodies the manager
+    /// does not hold (headers sent alone, bodies dropped as invalid).
+    static BUILT: std::cell::RefCell<std::collections::HashMap<Hash, Vec<Transaction>>> =
+        Default::default();
+}
+
+/// Records `b`'s body ([`BUILT`]) and returns it.
+fn remember(b: Block) -> Block {
+    let id = b.id(params().network_id);
+    BUILT.with(|m| m.borrow_mut().insert(id, b.txs.clone()));
+    BLOB_HEIGHTS
+        .lock()
+        .unwrap()
+        .insert(b.header.pow_blob(params().network_id), b.header.height);
+    b
+}
+
+/// The height of every block this test process built, by mining blob: the
+/// PoW test doubles see only the blob (docs/consensus.md §3).
+static BLOB_HEIGHTS: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<[u8; blacksilk_consensus::POW_BLOB_SIZE], u64>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// The height of the block whose mining blob is `blob` (built by this test).
+fn blob_height(blob: &[u8]) -> u64 {
+    let key: [u8; blacksilk_consensus::POW_BLOB_SIZE] = blob.try_into().expect("a mining blob");
+    *BLOB_HEIGHTS
+        .lock()
+        .unwrap()
+        .get(&key)
+        .expect("a block this test built")
+}
+
+/// The body of a block this test built.
+fn known_body(id: &Hash) -> Option<Vec<Transaction>> {
+    BUILT.with(|m| m.borrow().get(id).cloned())
+}
+
 /// Zero hash: meets any difficulty. Counts calls to show replay skips PoW,
 /// and records the hot RandomX keys it is given.
 #[derive(Default)]
@@ -35,7 +75,7 @@ struct ZeroPow {
     hot: std::sync::Mutex<Vec<Vec<Hash>>>,
 }
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         self.calls.fetch_add(1, Ordering::SeqCst);
         [0; 32]
     }
@@ -89,6 +129,7 @@ impl Miner {
         let mut all = vec![Transaction::Coinbase(cb)];
         all.extend(txs);
         let ids: Vec<Hash> = all.iter().map(Transaction::hash).collect();
+        let (output_count, output_root) = t.outputs_after(&all);
         let header = BlockHeader {
             version: HEADER_VERSION,
             height: t.height,
@@ -99,8 +140,11 @@ impl Miner {
             difficulty: t.difficulty,
             tx_root: tx_root(&ids),
             nonce,
+            output_count,
+            output_root,
+            px_root: t.px_root,
         };
-        Block { header, txs: all }
+        remember(Block { header, txs: all })
     }
 
     fn mine_tip(&mut self, m: &mut ChainManager) -> Block {
@@ -296,12 +340,14 @@ fn transactions_survive_reorgs_via_the_mempool() {
     let g_a = m.generated();
 
     // Branch B: two coinbase-only blocks on the same parent overtake A1.
-    let tb1 = m.template_on(&fork_parent).unwrap();
+    let tb1 = m.template_on_with(&fork_parent, &known_body).unwrap();
     let b1 = miner.build(&tb1, vec![], None, 1);
     let now = b1.header.timestamp;
     let s = m.submit_block(b1.clone(), now).unwrap();
     assert!(!s.on_best_chain, "equal work: first seen stays");
-    let tb2 = m.template_on(&b1.id(params().network_id)).unwrap();
+    let tb2 = m
+        .template_on_with(&b1.id(params().network_id), &known_body)
+        .unwrap();
     let b2 = miner.build(&tb2, vec![], None, 1);
     let now = b2.header.timestamp;
     let s = m.submit_block(b2, now).unwrap();
@@ -328,7 +374,7 @@ fn invalid_side_branch_body_is_rejected_when_it_would_win() {
     let parent = m.tip_id();
     let a1 = miner.mine_tip(&mut m);
     // B1 over-claims its reward; its header is valid, so it is stored as a side branch.
-    let tb1 = m.template_on(&parent).unwrap();
+    let tb1 = m.template_on_with(&parent, &known_body).unwrap();
     let b1 = miner.build(&tb1, vec![], Some(tb1.reward + 1), 7);
     let now = b1.header.timestamp;
     assert!(
@@ -336,7 +382,9 @@ fn invalid_side_branch_body_is_rejected_when_it_would_win() {
         "side branch body not checked yet"
     );
     // B2 would make branch B heavier: connecting B1 fails, B is invalidated, A stays.
-    let tb2 = m.template_on(&b1.id(params().network_id)).unwrap();
+    let tb2 = m
+        .template_on_with(&b1.id(params().network_id), &known_body)
+        .unwrap();
     let b2 = miner.build(&tb2, vec![], None, 7);
     let now = b2.header.timestamp;
     let r = m.submit_block(b2, now);
@@ -366,7 +414,9 @@ fn restart_replays_the_store_without_recomputing_pow() {
         m.submit_tx(Transaction::from(tx)).unwrap();
         miner.mine_tip(&mut m);
         // A side branch block is stored too.
-        let side = m.template_on(&m.headers().main_id_at(70).unwrap()).unwrap();
+        let side = m
+            .template_on_with(&m.headers().main_id_at(70).unwrap(), &known_body)
+            .unwrap();
         let s = miner.build(&side, vec![], None, 9);
         let now = s.header.timestamp;
         m.submit_block(s, now).unwrap();
@@ -516,7 +566,7 @@ fn heavier_header_branch_without_bodies_keeps_the_current_chain() {
     let mut parent = fork;
     let mut side = Vec::new();
     for i in 0..5 {
-        let t = m.template_on(&parent).unwrap();
+        let t = m.template_on_with(&parent, &known_body).unwrap();
         let b = miner.build(&t, vec![], None, 100 + i);
         parent = b.id(params().network_id);
         m.accept_headers(&[b.header], b.header.timestamp).unwrap();
@@ -578,7 +628,7 @@ fn the_summary_flags_a_tip_off_the_best_header_chain_and_calls_tip_listeners() {
     let mut parent = m.headers().main_id_at(2).unwrap();
     let mut side = Vec::new();
     for i in 0..5 {
-        let t = m.template_on(&parent).unwrap();
+        let t = m.template_on_with(&parent, &known_body).unwrap();
         let b = miner.build(&t, vec![], None, 100 + i);
         parent = id(&b);
         m.accept_headers(&[b.header], b.header.timestamp).unwrap();
@@ -681,7 +731,7 @@ fn pow_jobs_use_seeds_from_the_batch() {
     let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
     let (_, jobs) = dst.pow_jobs(&headers).expect("extends genesis");
     for (h, (seed, bytes)) in headers.iter().zip(&jobs) {
-        assert_eq!(bytes, &h.to_bytes());
+        assert_eq!(bytes, &h.pow_blob(params().network_id));
         let sh = seed_height(h.height, 2048, 64);
         assert_eq!(
             *seed,
@@ -775,7 +825,7 @@ fn the_pow_cache_key_includes_the_seed() {
     use blacksilk_chain::manager::CachedPow;
     let pow = Arc::new(ZeroPow::default());
     let cache = CachedPow::new(pow.clone());
-    let bytes = [5u8; blacksilk_consensus::HEADER_SIZE];
+    let bytes = [5u8; blacksilk_consensus::POW_BLOB_SIZE];
     let (seed_a, seed_b) = ([1u8; 32], [2u8; 32]);
     cache.pow_hash(&seed_a, &bytes);
     assert_eq!(pow.calls.load(Ordering::SeqCst), 1);
@@ -1244,7 +1294,7 @@ fn mempool_revalidation_cost_per_transaction() {
     }
     assert_eq!(m.mempool().len(), n);
     // An empty block: connecting it revalidates the whole pool.
-    let t = m.template_on(&m.tip_id()).unwrap();
+    let t = m.template_on_with(&m.tip_id(), &known_body).unwrap();
     let empty = miner.build(&t, vec![], None, 7);
     let now = empty.header.timestamp;
     let start = std::time::Instant::now();
@@ -1287,12 +1337,12 @@ fn revalidation_after_an_extension_agrees_with_full_validation() {
     m.submit_tx(loses.clone()).unwrap();
 
     // A block with the rival (not from the pool), then more plain blocks.
-    let t = m.template_on(&m.tip_id()).unwrap();
+    let t = m.template_on_with(&m.tip_id(), &known_body).unwrap();
     let b = miner.build(&t, vec![rival], Some(t.reward + fee), 3);
     let now = b.header.timestamp;
     m.submit_block(b, now).unwrap();
     for _ in 0..3 {
-        let t = m.template_on(&m.tip_id()).unwrap();
+        let t = m.template_on_with(&m.tip_id(), &known_body).unwrap();
         let b = miner.build(&t, vec![], None, 4);
         let now = b.header.timestamp;
         m.submit_block(b, now).unwrap();
@@ -1349,7 +1399,7 @@ fn mine_real(
     let mut out = Vec::new();
     let mut p = parent;
     for _ in 0..n {
-        let t = m.template_on(&p).unwrap();
+        let t = m.template_on_with(&p, &known_body).unwrap();
         let mut b = miner.build(&t, vec![], None, tag);
         let parent_time = m.headers().header(&p).unwrap().timestamp;
         b.header.timestamp = t.min_timestamp.max(parent_time + 10);
@@ -1384,14 +1434,14 @@ fn reference_hashes(jobs: &[(Hash, BlockHeader)]) -> HashMap<(Hash, HeaderBytes)
         let cache = blacksilk_randomx::Cache::new(&seed);
         let mut vm = blacksilk_randomx::Vm::light(&cache);
         for (s, h) in jobs.iter().filter(|(s, _)| *s == seed) {
-            let bytes = h.to_bytes();
+            let bytes = h.pow_blob(params().network_id);
             out.insert((*s, bytes), vm.hash(&bytes));
         }
     }
     out
 }
 
-type HeaderBytes = [u8; blacksilk_consensus::HEADER_SIZE];
+type HeaderBytes = [u8; blacksilk_consensus::POW_BLOB_SIZE];
 
 /// Every header of `jobs` has a cached PoW hash under its expected seed, equal
 /// to the reference RandomX hash. A manager that validated (or replayed) a
@@ -1403,7 +1453,7 @@ fn assert_pow_under_expected_seeds(
     what: &str,
 ) {
     for (seed, h) in jobs {
-        let bytes = h.to_bytes();
+        let bytes = h.pow_blob(params().network_id);
         assert_eq!(
             m.pow_cache().lookup(seed, &bytes),
             Some(reference[&(*seed, bytes)]),
@@ -1569,8 +1619,8 @@ impl Recheck {
 }
 
 impl PowFunction for Recheck {
-    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
-        let height = BlockHeader::from_bytes(header).unwrap().height;
+    fn pow_hash(&self, _: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
+        let height = blob_height(header);
         self.heights.lock().unwrap().push(height);
         if Some(height) == self.forged {
             [0xee; 32]
@@ -1705,8 +1755,8 @@ struct SeedPow {
 }
 
 impl PowFunction for SeedPow {
-    fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
-        let height = BlockHeader::from_bytes(header).unwrap().height;
+    fn pow_hash(&self, seed: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
+        let height = blob_height(header);
         self.seen.lock().unwrap().push((height, *seed));
         let mut out = [0u8; 32];
         for (k, chunk) in out.chunks_mut(8).enumerate() {
@@ -1762,7 +1812,7 @@ fn rt_the_store_check_passes_a_healthy_store_across_the_network_key_switch() {
         // A stored block with an invalid body (an inflated coinbase) on a
         // side fork: stored after its header was validated, refused on
         // its body (deterministically again at every replay).
-        let t = m.template_on(&ids[2120]).unwrap();
+        let t = m.template_on_with(&ids[2120], &known_body).unwrap();
         let mut bad = miner.build(&t, vec![], Some(t.reward * 1000), 9);
         bad.header.timestamp = t.min_timestamp.max(bad.header.timestamp);
         // On a side branch its body is stored and validated only if the
@@ -1774,7 +1824,7 @@ fn rt_the_store_check_passes_a_healthy_store_across_the_network_key_switch() {
         let mut parent = ids[2040];
         let mut side_ids = HashMap::new();
         for _ in 0..100 {
-            let t = m.template_on(&parent).unwrap();
+            let t = m.template_on_with(&parent, &known_body).unwrap();
             let b = miner.build(&t, vec![], None, 2);
             let now = b.header.timestamp;
             m.submit_block(b.clone(), now).expect("side block");

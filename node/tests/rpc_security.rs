@@ -40,7 +40,7 @@ struct CountingPow {
 }
 
 impl PowFunction for CountingPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if let Some(c) = self.chain.get() {
             if c.try_lock().is_err() {
@@ -783,6 +783,7 @@ fn block_on(m: &ChainManager, parent: &Hash, seed: u64) -> Block {
     .unwrap();
     let txs = vec![Transaction::Coinbase(cb)];
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    let (output_count, output_root) = t.outputs_after(&txs);
     let header = BlockHeader {
         version: t.version,
         height: t.height,
@@ -793,6 +794,9 @@ fn block_on(m: &ChainManager, parent: &Hash, seed: u64) -> Block {
         difficulty: t.difficulty,
         tx_root: tx_root(&ids),
         nonce: seed,
+        output_count,
+        output_root,
+        px_root: t.px_root,
     };
     Block { header, txs }
 }

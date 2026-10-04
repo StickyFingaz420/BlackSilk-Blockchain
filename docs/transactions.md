@@ -612,6 +612,8 @@ Monero's ledger model (no output-key rule at all) plus Carrot's within-transacti
 | B6 | Block weight ≤ block weight limit (economics spec). A PX or deploy transaction with `n > 0` v1 inputs and `k` hidden outputs weighs `max_weight(n, k)` (§8.4), the weight bound of its v1 part, so its CLSAGs are paid in the same meter as a transfer's; without v1 inputs it weighs 0 (testnet v3, reviews/v3-consensus-changes.md#r12-2). PX and deploy transactions also count, in full, against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5), and the deploys' bytes to at most `MAX_DEPLOY_BLOCK_BYTES = 1 MiB` of it (testnet v3). A valid block therefore holds at most ⌊600 000 / 656⌋ = 914 v1 inputs of all kinds. |
 | B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted (so its one-time keys are distinct; they may repeat keys of other transactions or the chain, §8.2). |
 | B8 | PX tree capacity: the block's PX output commitments, one leaf each, fit in the PX commitment tree (`size + leaves ≤ 2^32`, px.md §5; `BlockError::PxTreeFull`). Testnet v3 (reviews/v3-consensus-changes.md#tree-capacity). Validation is a superset of every condition under which applying a block fails, so a valid block always applies. |
+| B-OMR | The header commits to the v1 output set: `output_count` = the parent's `output_count` + the block's outputs (coinbase included), and `output_root` = the root of the parent's output range with the block's outputs appended in block order, each with its height and coinbase flag (consensus.md §7.1; `BlockError::OutputCountMismatch`, `OutputRootMismatch`). Testnet v3 (reviews/v3-consensus-changes.md#output-root). |
+| B-PXR | The header's `px_root` is the PX commitment tree's root after the block's PX output commitments are appended in block order (px.md §5; `BlockError::PxRootMismatch`), the root the block adds to the root window. Testnet v3 (reviews/v3-consensus-changes.md#output-root). |
 
 **Evaluation order of block validation** (`validate_block_transactions_cached`; policy,
 not consensus: every rule is a pure check, so the order decides only which error an
@@ -621,7 +623,7 @@ invalid block reports and how much work precedes it, never the verdict):
 |---|---|---|
 | 1 | B1, B2, B7 (coinbase) | trivial |
 | 2 | Per-transaction structure: T1, T3–T8, T10 shape, T11 (including `D ≠ identity`), PX and deploy structure | cheap |
-| 3 | B5, B6, B8, B3 | hashing, sums |
+| 3 | B5, B-OMR, B6, B8, B-PXR, B3 | hashing (one hash per output, up to 33 Poseidon2 permutations per PX commitment), sums |
 | 4 | T9 balances (every kind) | one multi-scalar sum per transaction |
 | 5 | PX proofs decoded strictly (PX5, first step), unless already verified by this node | a few ms per proof |
 | 6 | C2, PX1–PX4, PX6 (the validity window, for every PX transaction, whether or not its proof was verified before), contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |
@@ -1001,8 +1003,11 @@ e2e ring tests count the requests too. The endpoint stays for tools.
   index of each scanned block's first output must continue the index exactly (RT-D1
   F1): a node that misstates it is refused, and can no longer make the wallet discard
   its scanned range and backfill it. The exception is the *first* scanned block, the
-  restore point. At the restore its `first_output` is the restoring node's word, checked
-  only to be at least its height − 1, and 0 for block 1 (RT-D1b N2). It is then pinned
+  restore point. Since output-root its `first_output`, like every block's, is fixed by
+  the block's own header: `first_output + outputs(block) == header.output_count` (rule
+  B-OMR), checked on every block the wallet indexes, so it is no longer the restoring
+  node's word (RT-D1b N2, closed); the older shape checks (at least height − 1, and 0
+  for block 1) stay. It is then pinned
   with the block id (`RestorePoint`, RT-D1b N1): a rescan that reaches the restore point
   again (a reorganization deeper than the kept window, or one forced by a node lying in
   the single-header reorganization probe) must find the same block at the same position,
@@ -1020,10 +1025,15 @@ e2e ring tests count the requests too. The endpoint stays for tools.
   may have lied; restore again from a trusted node. A wallet scanned from the genesis
   derives every position and every height itself.
 - *Backfill* (below the restore height). Fetched once with `/outputs`, as the whole
-  range `0 .. start`, and checked only for shape against consensus facts before it is
-  stored: no output at height 0 (the genesis body is empty), every height `1..=synced`
-  present with at least one coinbase output (every coinbase has at least one), heights
-  non-decreasing and none above the synced block. A backfill that fails is not stored.
+  range `0 .. start`, and verified before it is stored (38 W11, output-root): the
+  backfill followed by the indexed outputs must have the output range the synced
+  block's header commits to (`output_count`, `output_root`; rule B-OMR, consensus.md
+  §7.1), which fixes every key, commitment, height, coinbase flag and position, and
+  so the backfill alone is the chain's range before the restore point (a range's
+  prefix is fixed by the whole). The shape check against consensus facts stays: no
+  output at height 0 (the genesis body is empty), every height `1..=synced` present
+  with at least one coinbase output, heights non-decreasing and none above the synced
+  block. A backfill that fails either check is not stored.
 - *Old wallet files* (written before the index existed, no block synced since). The
   synced block is fetched again from `/blocks`, checked against the wallet's own block
   id and `tx_root`; its `first_output` must agree with the global indices of the
@@ -1035,14 +1045,12 @@ after a restore with no `sync` in between (the spend's own scan does not backfil
 spend then fetches the backfill just before `/tx`, and warns. Run `sync` after `restore`
 before spending; the CLI says so.
 
-**Residual (F38-2; 38 W11, P1).** Below the restore height the node chooses the output
-keys, commitments and heights. The shape check catches a gap, a stale tail or a block
-without a coinbase output, not a consistent fabrication, so that node still chooses the
-older part of the distribution and of the decoy pool. The restoring node also chooses
-where the restore point's outputs start, so it can shift every global index from there
-on consistently; only a later honest node detects it (RT-D1b N2; a header commitment is
-under research). Verifying the backfill (38 W11) is P1. Until then, restore from your
-own node, or restore from the genesis; the CLI warns at `restore`.
+**Closed by output-root (F38-2, 38 W11, RT-D1b N2).** Before the headers committed to
+the output set, the node chose the keys, commitments and heights below the restore
+height (checked only for shape) and where the restore point's outputs start. Both are
+now verified against the header chain (above): a node can withhold the backfill but
+not alter, reorder or shift it. What remains is the header chain's own trust: a
+restore checks it from the genesis (blocks.md §10), with sampled proof of work.
 
 **Forced rescans (RT-D1b N4, RT-D1c M3).** The reorganization probe reads one header per
 height without proof of work, so a node can force a rescan back to the restore point at

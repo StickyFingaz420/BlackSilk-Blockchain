@@ -180,6 +180,7 @@ pub fn next_block(m: &ChainManager, seed: u64, nonce: u64) -> Block {
     let mut txs = vec![Transaction::Coinbase(cb)];
     txs.extend(t.txs.iter().cloned());
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    let (output_count, output_root) = t.outputs_after(&txs);
     let header = BlockHeader {
         version: HEADER_VERSION,
         height: t.height,
@@ -190,6 +191,9 @@ pub fn next_block(m: &ChainManager, seed: u64, nonce: u64) -> Block {
         difficulty: t.difficulty,
         tx_root: tx_root(&ids),
         nonce,
+        output_count,
+        output_root,
+        px_root: t.px_root,
     };
     Block { header, txs }
 }

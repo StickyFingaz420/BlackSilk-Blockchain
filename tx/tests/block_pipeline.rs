@@ -74,6 +74,12 @@ impl ChainView for Counting<'_> {
     fn px_tree_size(&self) -> u64 {
         self.inner.px_tree_size()
     }
+    fn px_root_after(&self, leaves: &[Digest]) -> Option<Digest> {
+        self.inner.px_root_after(leaves)
+    }
+    fn output_frontier(&self) -> blacksilk_tx::mmr::OutputFrontier {
+        self.inner.output_frontier()
+    }
 }
 
 /// A PX transaction spending the miner's output `real` into the PX pool

@@ -31,6 +31,10 @@ xmrig sources: master @ b2ca72480c58d197e18c885d9fc1a0c8d517e60a, copies in ./sr
 ## Recommendation
 Option C: PoW input = 47-byte mining blob:
   [0..7]  constant tag b"BSilk/1"
-  [7..39] mining_hash = Blake2b-256("BlackSilk/mining-hash" || network_id u32 LE || header_bytes[0..164])
+  [7..39] mining_hash = H32("mining-hash", network_id u32 LE || header_bytes[0..164])
+          (implemented: Blake2b-256 over u8(24) || "BlackSilk/v1/mining-hash" || network_id ||
+          header[0..164], the project's tag encoding; the normative text is docs/consensus.md §3)
   [39..47] header.nonce.to_le_bytes()   (xmrig iterates 39..43; server extranonce in 43..47)
+A pool rebuilds the header's nonce from a share as `nonce = (extranonce << 32) | xmrig_nonce`
+(both little-endian u32 halves: bytes 39..43 are the low half, 43..47 the high half).
 Header layout: keep omr's (nonce last). Stratum only (no Monero daemon RPC emulation).

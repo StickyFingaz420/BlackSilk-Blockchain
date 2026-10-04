@@ -32,10 +32,11 @@ pub fn seed_height(height: u64, epoch: u64, lag: u64) -> u64 {
     }
 }
 
-/// The PoW hash function. Production code uses [`RandomXPow`]; the trait exists so
+/// The PoW hash function of a mining blob (`BlockHeader::pow_blob`,
+/// docs/consensus.md §3). Production code uses [`RandomXPow`]; the trait exists so
 /// that chain-logic tests can run thousands of blocks quickly.
 pub trait PowFunction: Send + Sync {
-    fn pow_hash(&self, seed: &Hash, header_bytes: &[u8]) -> Hash;
+    fn pow_hash(&self, seed: &Hash, blob: &crate::PowBlob) -> Hash;
 
     /// The RandomX keys the chain needs now and next (at most [`HOT_SEEDS`];
     /// `blacksilk_chain::sync_policy::hot_seeds`): their caches are kept built
@@ -576,7 +577,7 @@ impl<C: Send + Sync + 'static> SeedCache<C> {
 /// background, other keys share a bounded side slot, and at most
 /// [`MAX_CACHES`] caches are ever in memory.
 ///
-/// The hash is `Vm::light(&Cache::new(seed)).hash(header_bytes)` whatever the
+/// The hash is `Vm::light(&Cache::new(seed)).hash(blob)` whatever the
 /// cache state (`consensus/tests/seed_cache.rs` compares it with fresh caches
 /// across key switches).
 pub struct RandomXPow {
@@ -632,9 +633,9 @@ impl Default for RandomXPow {
 }
 
 impl PowFunction for RandomXPow {
-    fn pow_hash(&self, seed: &Hash, header_bytes: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &crate::PowBlob) -> Hash {
         let cache = self.cache(seed);
-        Vm::light(&cache).hash(header_bytes)
+        Vm::light(&cache).hash(blob)
     }
 
     fn set_hot_seeds(&self, seeds: &[Hash]) {

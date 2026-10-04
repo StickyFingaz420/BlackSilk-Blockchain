@@ -399,6 +399,8 @@ struct Miner<N: Node, B: ContextBuilder<Ctx = PowContext>> {
     /// Templates abandoned because the node's tip moved (tests).
     abandoned: u64,
     payout: Address,
+    /// The network's id: the mining blob commits to it (docs/consensus.md §3).
+    network_id: u32,
     hedge: [u8; 32],
     rng: ChaCha20Rng,
     threads: usize,
@@ -479,6 +481,7 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
         let (found, hashes) = search(
             ctx,
             &block.header,
+            self.network_id,
             nonce_start,
             self.threads,
             u64::MAX,
@@ -640,6 +643,7 @@ fn run(args: Args) -> Result<(), Fatal> {
         tips: Some(watcher.signal()),
         abandoned: 0,
         payout,
+        network_id: blacksilk_consensus::ChainParams::for_network(net).network_id,
         hedge,
         rng,
         threads,
@@ -728,6 +732,9 @@ mod tests {
                     reward: t.reward,
                     fees: t.fees,
                     txs: t.txs.iter().map(|tx| hex::encode(tx.encode())).collect(),
+                    output_count: t.outputs.count(),
+                    output_peaks: t.outputs.peaks().iter().map(hex::encode).collect(),
+                    px_root: hex::encode(t.px_root),
                 },
                 next_seed_id: next.map(hex::encode),
             })
@@ -816,6 +823,7 @@ mod tests {
             tips: None,
             abandoned: 0,
             payout: keys.address(SubaddressIndex::PRIMARY),
+            network_id: ChainParams::regtest().network_id,
             hedge: [7; 32],
             rng,
             threads: 1,
@@ -916,6 +924,7 @@ mod tests {
             tips: None,
             abandoned: 0,
             payout: m.payout,
+            network_id: m.network_id,
             hedge: m.hedge,
             rng: m.rng,
             threads: 1,

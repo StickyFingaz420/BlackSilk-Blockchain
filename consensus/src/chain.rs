@@ -588,7 +588,9 @@ impl HeaderChain {
     /// branch at its height, meets `difficulty`.
     fn pow_meets(&self, header: &BlockHeader, difficulty: u64) -> bool {
         let seed = self.seed_id_for(header.prev_id, header.height);
-        let pow_hash = self.pow.pow_hash(&seed, &header.to_bytes());
+        let pow_hash = self
+            .pow
+            .pow_hash(&seed, &header.pow_blob(self.params.network_id));
         check_hash(&pow_hash, difficulty)
     }
 
@@ -681,7 +683,7 @@ mod tests {
     /// blocks. Test-only; production code always uses `RandomXPow`.
     struct TestPow;
     impl PowFunction for TestPow {
-        fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, blob: &crate::PowBlob) -> Hash {
             H::new().chain(seed).chain(blob).finish()
         }
     }
@@ -705,9 +707,13 @@ mod tests {
             difficulty: c.required_difficulty(parent),
             tx_root: tx_root(&[[tag; 32]]),
             nonce: 0,
+            ..Default::default()
         };
         let seed = c.seed_id_for(parent, h.height);
-        while !check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), h.difficulty) {
+        while !check_hash(
+            &TestPow.pow_hash(&seed, &h.pow_blob(c.params().network_id)),
+            h.difficulty,
+        ) {
             h.nonce += 1;
         }
         h
@@ -922,7 +928,10 @@ mod tests {
         let seed = c.seed_id_for(tip, h.height);
         let found = (0..100_000).any(|_| {
             h.nonce += 1;
-            !check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), h.difficulty)
+            !check_hash(
+                &TestPow.pow_hash(&seed, &h.pow_blob(c.params().network_id)),
+                h.difficulty,
+            )
         });
         assert!(found);
         assert_eq!(c.validate(&h, now), Err(HeaderError::InsufficientWork));
@@ -936,7 +945,11 @@ mod tests {
     /// fail it (`want = false`) under the seed of its parent's branch.
     fn grind(c: &HeaderChain, mut h: BlockHeader, difficulty: u64, want: bool) -> BlockHeader {
         let seed = c.seed_id_for(h.prev_id, h.height);
-        while check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), difficulty) != want {
+        while check_hash(
+            &TestPow.pow_hash(&seed, &h.pow_blob(c.params().network_id)),
+            difficulty,
+        ) != want
+        {
             h.nonce += 1;
         }
         h
@@ -1322,7 +1335,7 @@ mod tests {
     /// Counts proof-of-work evaluations.
     struct CountingPow(std::sync::atomic::AtomicUsize);
     impl PowFunction for CountingPow {
-        fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, blob: &crate::PowBlob) -> Hash {
             self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             TestPow.pow_hash(seed, blob)
         }

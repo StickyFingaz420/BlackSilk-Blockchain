@@ -1618,3 +1618,30 @@ Every external citation was verified against its primary source (res-freeze.md �
   the stratum server and a tested patch exist. It will be made openly, as AI-assisted
   work on behalf of the project. A pinned xmrig build is planned for the testnet because
   upstream merge latency has been long.
+
+## output-root (Lead, 2026-10-04)
+
+- **Decision:** v3 block headers commit to the v1 output set, Grin-style: `output_count`
+  (LE64, cumulative outputs after the block) and `output_root` (a Merkle mountain range
+  over every output in global-index order, leaf = `H32("output-mmr/leaf", one_time_key ‖
+  commitment ‖ LE64 height ‖ u8 coinbase)`, peaks bagged with the count). New body rule
+  B-OMR after B5; a mismatch makes the block invalid with its descendants (the body
+  matching `tx_root` is the block's own).
+- **PX root: included** in the same revision (`px_root`, rule B-PXR after B8), after
+  evaluation: one field, one `root_after` per block in validation, nothing in the miner
+  (the coinbase appends no PX commitment, so the node computes it for the template's
+  transactions), and it removes the PX backfill's trust in one check. A later header
+  revision would cost another reset and re-pin.
+- **No header-only bound** on `output_count`: it would duplicate body-rule constants in
+  the header crate and reject nothing the body check does not.
+- Header 100 → 172 bytes, nonce at 164; every genesis id moves (testnet `b16090df…`).
+  Record: docs/reviews/v3-consensus-changes.md#output-root. The wallet checks (each
+  block's `first_output` against `output_count`, the output backfill against the
+  synced header, the PX backfill against `px_root`) land as a separate commit, merged
+  after the wallet-distribution branch.
+- **Mining blob (same revision, Lead decision after the xmrig research):** the header
+  layout stays (nonce last, 164..172); the PoW input becomes a derived 47-byte blob
+  `"BSilk/1" ‖ H32("mining-hash", LE32(network_id) ‖ header[0..164]) ‖ LE64(nonce)`,
+  nonce at byte 39 where stock xmrig writes its RandomX nonce (xmrig iterates 39..43, a
+  pool's extranonce is 43..47). The block id stays the full header's hash. The revision
+  id becomes `OMR:header-output-mmr-px-root-and-mining-blob` (one revision).

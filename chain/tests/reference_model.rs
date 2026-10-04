@@ -60,11 +60,31 @@ use std::collections::{BTreeSet, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
 
+thread_local! {
+    /// The body of every block this test built, by id: the output range a
+    /// template on a branch extends (B-OMR) needs the bodies the manager
+    /// does not hold (headers sent alone, bodies dropped as invalid).
+    static BUILT: std::cell::RefCell<std::collections::HashMap<Hash, Vec<Transaction>>> =
+        Default::default();
+}
+
+/// Records `b`'s body ([`BUILT`]) and returns it.
+fn remember(b: Block) -> Block {
+    let id = b.id(params().network_id);
+    BUILT.with(|m| m.borrow_mut().insert(id, b.txs.clone()));
+    b
+}
+
+/// The body of a block this test built.
+fn known_body(id: &Hash) -> Option<Vec<Transaction>> {
+    BUILT.with(|m| m.borrow().get(id).cloned())
+}
+
 // ---------------------------------------------------------------- set-up
 
 struct ZeroPow;
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         [0; 32]
     }
 }
@@ -115,7 +135,9 @@ fn build_block(
     keys: &WalletKeys,
     nonce: u64,
 ) -> Block {
-    let t = src.template_on(parent).expect("known parent");
+    let t = src
+        .template_on_with(parent, &known_body)
+        .expect("known parent");
     let mut rng = ChaCha20Rng::seed_from_u64(nonce ^ 0xb10c);
     let fees: u64 = txs.iter().map(Transaction::fee).sum();
     let cb = build_coinbase(
@@ -131,6 +153,7 @@ fn build_block(
     let mut all = vec![Transaction::Coinbase(cb)];
     all.extend(txs);
     let ids: Vec<Hash> = all.iter().map(Transaction::hash).collect();
+    let (output_count, output_root) = t.outputs_after(&all);
     let header = BlockHeader {
         version: t.version,
         height: t.height,
@@ -141,9 +164,12 @@ fn build_block(
         difficulty: t.difficulty,
         tx_root: tx_root(&ids),
         nonce,
+        output_count,
+        output_root,
+        px_root: t.px_root,
     };
     assert_eq!(header.version, HEADER_VERSION);
-    Block { header, txs: all }
+    remember(Block { header, txs: all })
 }
 
 /// A trunk of coinbase-only blocks and transfers spending its first

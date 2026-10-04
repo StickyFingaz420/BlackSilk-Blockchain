@@ -1,4 +1,5 @@
-//! In-memory transaction state: the global output set, spent key images and
+//! In-memory transaction state: the global output set and its Merkle
+//! mountain range (rule B-OMR), spent key images and
 //! used one-time keys, the PX state (tree, root window, nullifiers, pool), the
 //! private-contract registry and the PX record log, with per-block undo for
 //! reorganizations.
@@ -6,6 +7,7 @@
 //! This is the reference implementation of [`ChainView`]. The node's persistent
 //! store must behave identically. It is also what the tests use.
 
+use crate::mmr::{self, OutputFrontier, OutputMmr};
 use crate::types::{Hash, Transaction};
 use crate::validate::{ChainView, OutputRecord, PxProgram};
 use blacksilk_crypto::Point;
@@ -44,6 +46,9 @@ pub struct RegisteredFunction {
 #[derive(Default)]
 pub struct MemoryChain {
     outputs: Vec<OutputRecord>,
+    /// The output Merkle mountain range over `outputs` (B-OMR): every node,
+    /// so the frontier after any applied block is a lookup.
+    output_mmr: OutputMmr,
     key_images: HashSet<[u8; 32]>,
     blocks: Vec<BlockUndo>,
     px: PxState,
@@ -120,6 +125,25 @@ impl MemoryChain {
 
     pub fn output_count(&self) -> u64 {
         self.outputs.len() as u64
+    }
+
+    /// The output range's frontier after the block at `height` (count and
+    /// peaks; rule B-OMR): what a child of that block extends. `None` above
+    /// the tip.
+    pub fn output_frontier_after(&self, height: u64) -> Option<OutputFrontier> {
+        let next = height.checked_add(1)?;
+        let count = match self.blocks.get(usize::try_from(next).ok()?) {
+            Some(b) => b.first_output as u64,
+            None if next == self.next_height() => self.outputs.len() as u64,
+            None => return None,
+        };
+        self.output_mmr.frontier_at(count)
+    }
+
+    /// The output range's root over every output (the tip header's
+    /// `output_root`).
+    pub fn output_root(&self) -> Hash {
+        self.output_mmr.root()
     }
 
     /// Global index of the first output created at `height`.
@@ -279,6 +303,12 @@ impl MemoryChain {
                 _ => {}
             }
             for key in tx.output_keys() {
+                self.output_mmr.push(mmr::leaf(
+                    key.one_time_key.bytes(),
+                    key.commitment.bytes(),
+                    height,
+                    tx.is_coinbase(),
+                ));
                 self.outputs.push(OutputRecord {
                     key,
                     height,
@@ -306,6 +336,7 @@ impl MemoryChain {
         // Outputs are records by global index; one-time keys may repeat
         // across them (D8 option B), and no key set is kept.
         self.outputs.truncate(undo.first_output);
+        self.output_mmr.truncate(undo.first_output as u64);
         for ki in &undo.key_images {
             self.key_images.remove(ki);
         }
@@ -374,6 +405,14 @@ impl ChainView for MemoryChain {
 
     fn px_tree_size(&self) -> u64 {
         self.px.size()
+    }
+
+    fn px_root_after(&self, leaves: &[Digest]) -> Option<Digest> {
+        self.px.root_after(leaves)
+    }
+
+    fn output_frontier(&self) -> OutputFrontier {
+        self.output_mmr.frontier()
     }
 }
 
@@ -512,6 +551,86 @@ mod tests {
         assert!(!c.px_is_recent_root(&root));
         assert!(!c.px_nullifier_spent(&nf));
         assert_eq!((c.px_pool(), c.px_tree_size()), (0, 0));
+    }
+
+    /// The genesis header's `px_root` (a consensus constant, the consensus
+    /// crate computes no Poseidon2) is the PX state's root before any block.
+    #[test]
+    fn the_genesis_px_root_is_the_empty_trees() {
+        assert_eq!(
+            crate::px::digest_bytes(&MemoryChain::new().px().root()),
+            blacksilk_consensus::genesis::EMPTY_PX_ROOT
+        );
+    }
+
+    /// The consensus crate's tagged hash (the mining hash of the PoW input)
+    /// follows the crypto crate's tag convention and tag name.
+    #[test]
+    fn the_mining_hash_tag_is_the_crypto_crates() {
+        use blacksilk_consensus::header::MINING_HASH_TAG;
+        use blacksilk_crypto::hash::{h32, tags, DOMAIN_PREFIX};
+        assert_eq!(blacksilk_consensus::hash::DOMAIN_PREFIX, DOMAIN_PREFIX);
+        assert_eq!(MINING_HASH_TAG, tags::MINING_HASH);
+        let h = blacksilk_consensus::BlockHeader {
+            height: 9,
+            nonce: 77,
+            ..Default::default()
+        };
+        let nid = 0x00DE_B06Eu32;
+        assert_eq!(
+            h.mining_hash(nid),
+            h32(
+                tags::MINING_HASH,
+                &[
+                    &nid.to_le_bytes(),
+                    &h.to_bytes()[..blacksilk_consensus::NONCE_OFFSET]
+                ]
+            )
+        );
+    }
+
+    /// B-OMR state: the range after every applied height equals a
+    /// recomputation over the outputs of the blocks up to it, before and
+    /// after undoing blocks; nothing above the tip.
+    #[test]
+    fn the_output_range_follows_the_blocks_and_their_undo() {
+        use crate::builder::{build_coinbase, Payment};
+        use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(77);
+        let (keys, _) = WalletKeys::generate(&mut rng);
+        let mut c = MemoryChain::new();
+        c.apply_block(&[]).unwrap(); // genesis
+        let mut blocks: Vec<Vec<Transaction>> = vec![vec![]];
+        for h in 1..=9u64 {
+            let payouts: Vec<Payment> = (0..1 + h % 4)
+                .map(|i| Payment {
+                    address: keys.address(SubaddressIndex::new(0, i as u32)),
+                    amount: 10 + i,
+                })
+                .collect();
+            let cb = build_coinbase(h, &payouts, &keys.hedge_secret(), &mut rng).unwrap();
+            let txs = vec![Transaction::Coinbase(cb)];
+            c.apply_block(&txs).unwrap();
+            blocks.push(txs);
+        }
+        let check = |c: &MemoryChain, blocks: &[Vec<Transaction>]| {
+            let mut f = OutputFrontier::new();
+            for (h, txs) in blocks.iter().enumerate() {
+                f.append_block(h as u64, txs);
+                assert_eq!(c.output_frontier_after(h as u64), Some(f.clone()), "{h}");
+            }
+            assert_eq!(c.output_frontier_after(blocks.len() as u64), None);
+            assert_eq!(c.output_root(), f.root());
+            assert_eq!(c.output_count(), f.count());
+            assert_eq!(ChainView::output_frontier(c), f);
+        };
+        check(&c, &blocks);
+        for _ in 0..4 {
+            assert!(c.undo_block());
+            blocks.pop();
+            check(&c, &blocks);
+        }
     }
 
     #[test]
