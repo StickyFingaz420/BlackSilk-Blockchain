@@ -17,7 +17,7 @@ use crate::limits::{BAN_SECS, BAN_THRESHOLD};
 use crate::socks5;
 use blacksilk_consensus::ChainParams;
 use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream};
@@ -213,6 +213,7 @@ pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener, onion:
                 id,
                 kill,
                 released: false,
+                local: stream.local_addr().ok(),
             }
         };
         let _ = stream.set_nodelay(true);
@@ -301,6 +302,8 @@ pub(super) struct HandshakeSlot {
     id: u64,
     pub(super) kill: Arc<Notify>,
     released: bool,
+    /// The local endpoint the connection was accepted on (its trickle key).
+    pub(super) local: Option<SocketAddr>,
 }
 
 impl HandshakeSlot {

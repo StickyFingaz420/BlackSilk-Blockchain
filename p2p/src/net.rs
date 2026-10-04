@@ -40,6 +40,7 @@ mod relay;
 mod serve_tx;
 mod state;
 mod stem;
+mod trickle;
 mod tx_requests;
 
 use crate::addr::NetAddr;
@@ -151,6 +152,7 @@ fn new_inner(
         px_global: crate::limits::TokenBucket::new(2.0, 10.0),
         block_requests: HashMap::new(),
         tx_tracker: Default::default(),
+        inbound_trickle: Default::default(),
         owed: HashMap::new(),
         recent_rejects: VecDeque::new(),
         recent_rejects_set: HashSet::new(),

@@ -11,6 +11,7 @@ use super::peers::{
 };
 use super::serve_tx::{ReplyQueue, SERVE_TX_FRAMES};
 use super::state::{owed_key, shuffle, unix_now, Inner, Peer, OWED_IDS, OWED_WINDOW};
+use super::trickle::TrickleKey;
 use super::tx_requests::Actions;
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
@@ -360,6 +361,13 @@ pub(super) async fn run_connection<S>(
                 addr_known,
                 inv_queue: Vec::new(),
                 next_inv: now,
+                trickle: inbound.then(|| {
+                    TrickleKey::inbound(
+                        &addr,
+                        via_tor || kind == ConnKind::OnionInbound,
+                        slot.as_ref().and_then(|s| s.local),
+                    )
+                }),
                 announced_to: HashSet::new(),
                 known_txs: HashSet::new(),
                 recent_inv: VecDeque::new(),

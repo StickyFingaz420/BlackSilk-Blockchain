@@ -145,12 +145,28 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
         let mut too_slow = Vec::new();
         {
             let mut st = inner.state();
+            // The inbound identities whose shared timer fired: all their
+            // peers are released in this pass (`trickle`).
+            let fired = {
+                let State {
+                    peers,
+                    inbound_trickle,
+                    rng,
+                    ..
+                } = &mut *st;
+                let live = peers.values().filter_map(|p| p.trickle);
+                inbound_trickle.fire(live, now, inner.cfg.trickle_inbound, rng)
+            };
             let ids: Vec<PeerId> = st.peers.keys().copied().collect();
             for pid in ids {
                 let nonce = st.rng.next_u64();
                 let mut rng = ChaCha20Rng::seed_from_u64(st.rng.next_u64());
                 let p = st.peers.get_mut(&pid).expect("listed");
-                if !p.inv_queue.is_empty() && now >= p.next_inv {
+                let due = match &p.trickle {
+                    Some(key) => fired.contains(key),
+                    None => now >= p.next_inv,
+                };
+                if !p.inv_queue.is_empty() && due {
                     let mut queue = std::mem::take(&mut p.inv_queue);
                     // Every flush in a fresh random order (RT4): the order
                     // ids were queued in says nothing to the peer.
@@ -435,8 +451,9 @@ mod tests {
         (r, w)
     }
 
-    /// A queued transaction announcement waits for the peer's trickle delay
-    /// (exponential, mean `trickle_inbound`): with a mean of 10^6 s nothing is
+    /// A queued transaction announcement waits for the trickle (an inbound
+    /// peer: its network's shared timer, exponential intervals of mean
+    /// `trickle_inbound`, `trickle`): with a mean of 10^6 s nothing is
     /// sent in the next half second of ticks, whatever is queued (a delay
     /// below it has probability about 5·10^-7).
     #[tokio::test]
@@ -679,11 +696,13 @@ mod tests {
     #[tokio::test]
     async fn queued_announcements_go_out_in_messages_of_at_most_500_ids() {
         assert_eq!(crate::message::MAX_INV, 500);
-        let net = idle_network(|_| {}).await;
+        // An inbound peer: released by the shared inbound timer (mean 50 ms).
+        let net = idle_network(|c| c.trickle_inbound = Duration::from_millis(50)).await;
         let (mut r, _w) = raw_peer(&net).await;
         {
             let mut st = net.inner.state();
             let p = st.peers.values_mut().next().unwrap();
+            assert!(p.inbound && p.trickle.is_some());
             p.inv_queue = (0..501u32)
                 .map(|i| {
                     let mut h = [0x55; 32];
@@ -691,7 +710,6 @@ mod tests {
                     h
                 })
                 .collect();
-            p.next_inv = Instant::now();
         }
         let mut sizes = Vec::new();
         while sizes.iter().sum::<usize>() < 501 {
