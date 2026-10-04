@@ -246,29 +246,40 @@ impl std::error::Error for WalletError {}
 /// The first block the wallet scanned (its restore point), pinned (RT-D1b
 /// N1): a rescan that reaches it again must find the same block at the same
 /// position, or, for another block there, the backfill below it is
-/// discarded.
+/// discarded (only under a header check, RT-D1c M1).
+///
+/// `id` is `None` for a position-only pin, derived from the output index of
+/// a wallet file written before the pin existed whose block id at the
+/// restore point is no longer kept (RT-D1c M2): the position must then
+/// match whatever block is there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct RestorePoint {
     height: u64,
     #[serde(with = "hex_id")]
-    id: Hash,
+    id: Option<Hash>,
     first_output: u64,
 }
 
 mod hex_id {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(id: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex::encode(id))
+    pub fn serialize<S: Serializer>(id: &Option<[u8; 32]>, s: S) -> Result<S::Ok, S::Error> {
+        match id {
+            Some(id) => s.serialize_some(&hex::encode(id)),
+            None => s.serialize_none(),
+        }
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<[u8; 32]>, D::Error> {
         use serde::de::Error;
-        let s = String::deserialize(d)?;
-        hex::decode(&s)
-            .ok()
-            .and_then(|v| v.try_into().ok())
-            .ok_or_else(|| D::Error::custom("restore point id"))
+        Option::<String>::deserialize(d)?
+            .map(|s| {
+                hex::decode(&s)
+                    .ok()
+                    .and_then(|v| v.try_into().ok())
+                    .ok_or_else(|| D::Error::custom("restore point id"))
+            })
+            .transpose()
     }
 }
 

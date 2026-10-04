@@ -255,6 +255,8 @@ impl Wallet {
             .collect::<Result<_, _>>()?;
         w.checked_through = p.checked_through;
         w.restore_point = p.restore_point;
+        // A file written before the pin: pinned from its index (RT-D1c M2).
+        w.derive_restore_point();
         w.key_ids = p
             .key_ids
             .iter()

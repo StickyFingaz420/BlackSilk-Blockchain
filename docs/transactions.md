@@ -1008,7 +1008,14 @@ e2e ring tests count the requests too. The endpoint stays for tools.
   the single-header reorganization probe) must find the same block at the same position,
   or it is refused, and the backfill below it is kept, since the block id commits to the
   chain below it. Another block there is a real reorganization below the restore point,
-  and the backfill is discarded and fetched again (RT-D1b N3). A later node whose
+  and the backfill is discarded and fetched again (RT-D1b N3), but only under the header
+  check: every rewind below the restore point turns on the restore's header check from
+  the genesis for the rescan, and without it another block there is refused (RT-D1c M1:
+  a node could otherwise relink the real blocks under new ids without new proof of work
+  and pass them off as a reorganization). A wallet file written before the pin is pinned
+  when loaded, or at its first rewind below the restore point, from its own index: the
+  position, with the block id while it is still kept, else by position only, in which
+  case any block there must start at that position (RT-D1c M2). A later node whose
   positions contradict the stored ones gets an explicit error: the node used for restore
   may have lied; restore again from a trusted node. A wallet scanned from the genesis
   derives every position and every height itself.
@@ -1037,12 +1044,16 @@ on consistently; only a later honest node detects it (RT-D1b N2; a header commit
 under research). Verifying the backfill (38 W11) is P1. Until then, restore from your
 own node, or restore from the genesis; the CLI warns at `restore`.
 
-**Follow-up (RT-D1b N4).** The reorganization probe reads one header per height without
-proof of work, so a node can force a rescan back to the restore point at no cost. The
-pin makes such a rescan harmless for output positions, and a base id taken from a lying
-header is dropped when the restore point turns out not to extend it, so the next sync
-rebuilds it instead of failing forever. The cost of the rescan itself (a re-download
-from the restore point) is not limited yet.
+**Forced rescans (RT-D1b N4, RT-D1c M3).** The reorganization probe reads one header per
+height without proof of work, so a node can force a rescan back to the restore point at
+no cost to itself. The pin makes such a rescan harmless for output positions, a base id
+taken from a lying header is dropped when the restore point turns out not to extend it
+(so the next sync rebuilds it instead of failing forever), and the rescan is checked
+from the genesis. The bandwidth bound is per `sync` call: at most one walk-back and
+rescan from the restore point (the blocks from there, the header chain from the genesis)
+and one PX backfill (the commitment and contract lists, and the blocks they name); the
+output backfill is not fetched again unless the restore point changed. A node can repeat
+this at every sync; nothing rate-limits it yet.
 
 The decoy draws come from an
 operating-system-seeded RNG, not the hedged stream (F38-5, not implemented): a cloned

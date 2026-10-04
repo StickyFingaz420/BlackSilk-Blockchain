@@ -292,6 +292,16 @@ impl Wallet {
         if height < self.restore_height {
             self.px.tree = None;
         }
+        if height < self.first_scanned() {
+            // The restore point is scanned again: pinned first, if an older
+            // file has no pin yet (RT-D1c M2), and with the header chain
+            // checked from the genesis (RT-D1c M1): the walk-back that led
+            // here read single headers without proof of work, so a node can
+            // force it, and the blocks it then serves must carry real work.
+            self.derive_restore_point();
+            self.restore_check = true;
+            self.checked_through = None;
+        }
         self.outputs.retain(|o| o.height <= height);
         for o in &mut self.outputs {
             if o.spent_height.is_some_and(|h| h > height) {
@@ -461,10 +471,18 @@ impl Wallet {
                     })?;
                     c.flush().map_err(bad)?;
                     let (_, last) = c.last();
-                    if self
-                        .block_ids
-                        .get(&synced)
-                        .is_some_and(|ours| *ours != last)
+                    // Below the restore point the wallet's id is the PX
+                    // backfill's base, itself a node's word and rebuilt from
+                    // this check's ids when the backfill runs (after a
+                    // rescan from the restore point, RT-D1c M1): a header
+                    // chain from the genesis that ends elsewhere is a
+                    // reorganization below the restore point, not a lie.
+                    let rebuilt = synced < self.first_scanned() && self.px.tree.is_none();
+                    if !rebuilt
+                        && self
+                            .block_ids
+                            .get(&synced)
+                            .is_some_and(|ours| *ours != last)
                     {
                         return Err(WalletError::BadNodeData(
                             "the node's headers do not end at the wallet's last block".into(),
@@ -888,7 +906,7 @@ impl Wallet {
         if height == self.first_scanned() {
             self.restore_point = Some(RestorePoint {
                 height,
-                id,
+                id: Some(id),
                 first_output,
             });
         }
@@ -915,6 +933,28 @@ impl Wallet {
             "block {height}: this node places its first output at {theirs}, the wallet's \
              output index at {ours}.{restored}"
         ))
+    }
+
+    /// Pins the restore point from the output index when no pin exists (a
+    /// file written before it, RT-D1c M2): the global index of the first
+    /// indexed output of the restore point, with its block id if still
+    /// kept, else position only. Nothing if the index does not reach it.
+    pub(super) fn derive_restore_point(&mut self) {
+        if self.restore_point.is_some() {
+            return;
+        }
+        let height = self.first_scanned();
+        let start = self.index.start();
+        // The index holds whole blocks (`push_block`), so the first entry of
+        // that height is the block's first output.
+        let Some(offset) = self.index.iter().position(|e| e.height == height) else {
+            return;
+        };
+        self.restore_point = Some(RestorePoint {
+            height,
+            id: self.block_ids.get(&height).copied(),
+            first_output: start + offset as u64,
+        });
     }
 
     /// The first block the wallet scans: its restore point.
@@ -966,13 +1006,27 @@ impl Wallet {
             )));
         }
         match &self.restore_point {
-            Some(p) if p.height == height && p.id == *id => {
+            // The same block, or a position-only pin (RT-D1c M2: no id to
+            // tell a reorganization from a lie, so the position must hold).
+            Some(p) if p.height == height && p.id.is_none_or(|pid| pid == *id) => {
                 if first_output != p.first_output {
                     return contradicted(p.first_output);
                 }
                 Ok(false)
             }
-            Some(p) if p.height == height => Ok(true),
+            // Another block at the restore point: a reorganization below it,
+            // believed only under the header check, whose proof of work a
+            // node cannot fake by relinking the real blocks (RT-D1c M1).
+            Some(p) if p.height == height => {
+                if self.verifies_headers() {
+                    Ok(true)
+                } else {
+                    Err(WalletError::BadNodeData(format!(
+                        "block {height}: another block at the wallet's restore point, \
+                         without a header check; refused (sync again)"
+                    )))
+                }
+            }
             _ => Ok(false),
         }
     }

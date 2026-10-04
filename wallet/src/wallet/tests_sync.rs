@@ -2094,30 +2094,25 @@ fn a_forced_rescan_cannot_shift_the_restore_point() {
     let index = w.index.clone();
 
     // The probe's phase 1: the lying reorganization probe walks the wallet
-    // back to its restore point (that sync may fail later on: the probe
-    // also lies in the single header of the PX backfill). Nothing is
-    // fetched with `/outputs`.
+    // back to its restore point, and the same sync rescans from there
+    // (header-checked from the genesis since RT-D1c M1). Without a shift
+    // the backfill is kept: nothing is fetched with `/outputs`.
     let node = evil(&chain, 40, 0, true);
-    let _ = w.sync(&node);
-    assert!(w.synced_height() < 40, "walked back");
-    assert_eq!(node.output_calls.get(), 0);
-    // A rescan without a shift: the backfill is kept, nothing is fetched.
-    let node = evil(&chain, 40, 0, false);
     assert_eq!(w.sync(&node).unwrap(), 120);
     assert_eq!(node.output_calls.get(), 0, "the backfill is kept");
     assert_eq!(w.index, index);
     assert_eq!(own_indices(&w), before);
 
-    // Phase 1 again, then phase 2 (the shift): refused, nothing shifted.
-    let _ = w.sync(&evil(&chain, 40, 0, true));
-    assert!(w.synced_height() < 40, "walked back");
-    let node = evil(&chain, 40, 5, false);
-    assert!(w.sync(&node).is_err());
+    // The walk-back with the shift: refused at the restore point.
+    let node = evil(&chain, 40, 5, true);
+    let e = w.sync(&node).unwrap_err().to_string();
+    assert!(e.contains("restore again from a trusted node"), "{e}");
     assert_eq!(node.output_calls.get(), 0);
     assert!(
         own_indices(&w).iter().all(|i| before.contains(i)),
         "no shifted index"
     );
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
     assert_eq!(w.sync(&honest).unwrap(), 120);
     assert_eq!(own_indices(&w), before);
 
@@ -2198,5 +2193,216 @@ fn a_reorganization_below_the_restore_point_replaces_the_backfill() {
     assert_ne!(w.index.get(0).unwrap().one_time_key, first_a);
     assert_eq!(w.index.cumulative(122).unwrap(), honest_distribution(&b));
     // The restore point is pinned to chain b's block 40.
-    assert_eq!(w.restore_point.unwrap().id, b.id(40));
+    assert_eq!(w.restore_point.unwrap().id, Some(b.id(40)));
+}
+
+/// The red team's relinking node (RT-D1c): the real transactions from block
+/// `from` on, in blocks with the nonce flipped and `prev_id` rechained (new
+/// ids, no new proof of work), first outputs shifted by `k`, the backfill
+/// fabricated as `Evil`'s.
+struct Relink<'a> {
+    inner: Evil<'a>,
+    blocks: Vec<(u64, blacksilk_chain::block::Block)>,
+}
+
+fn relink(chain: &MockChain, from: u64, k: u64, lie_ids: bool) -> Relink<'_> {
+    let nid = chain.params.network_id;
+    let mut prev = chain.id(from - 1);
+    let mut blocks = Vec::new();
+    for h in from..=chain.height() {
+        let mut b = chain.blocks[h as usize].clone();
+        b.header.nonce ^= 1;
+        b.header.prev_id = prev;
+        prev = b.id(nid);
+        blocks.push((h, b));
+    }
+    Relink {
+        inner: evil(chain, from, k, lie_ids),
+        blocks,
+    }
+}
+
+impl NodeApi for Relink<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        self.inner.info()
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        let mut r = self.inner.blocks(from, count)?;
+        let nid = self.inner.chain.params.network_id;
+        for e in &mut r.blocks {
+            if let Some((_, b)) = self.blocks.iter().find(|(h, _)| *h == e.height) {
+                e.id = hex::encode(b.id(nid));
+                e.hex = hex::encode(b.encode());
+            }
+        }
+        Ok(r)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        let mut r = self.inner.headers(from, count)?;
+        let bytes: Vec<u8> = (from..from + count)
+            .flat_map(|h| match self.blocks.iter().find(|(bh, _)| *bh == h) {
+                Some((_, b)) => b.header.to_bytes().to_vec(),
+                None => self
+                    .inner
+                    .chain
+                    .blocks
+                    .get(h as usize)
+                    .map(|b| b.header.to_bytes().to_vec())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        if !self.inner.lie_ids.get() {
+            r.headers = hex::encode(bytes);
+        }
+        Ok(r)
+    }
+    fn distribution(&self, t: u64) -> Result<rpc::Distribution, String> {
+        self.inner.distribution(t)
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        self.inner.outputs(i)
+    }
+    fn submit_tx(&self, t: &[u8]) -> Result<rpc::SubmitResult, String> {
+        self.inner.submit_tx(t)
+    }
+    fn px_commitments(&self, f: u64) -> Result<rpc::PxCommitments, String> {
+        self.inner.px_commitments(f)
+    }
+    fn px_contracts(&self, f: u64) -> Result<rpc::PxContracts, String> {
+        self.inner.px_contracts(f)
+    }
+}
+
+/// Proof of work that only the given headers meet: the real chain's, not a
+/// relinked copy's (the regtest `ZeroPow` accepts every header).
+struct KnownPow(std::collections::HashSet<Vec<u8>>);
+
+impl PowFunction for KnownPow {
+    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+        if self.0.contains(header) {
+            [0; 32]
+        } else {
+            [0xff; 32]
+        }
+    }
+}
+
+fn known_pow(chain: &MockChain) -> Arc<dyn PowFunction> {
+    Arc::new(KnownPow(
+        chain
+            .blocks
+            .iter()
+            .map(|b| b.header.to_bytes().to_vec())
+            .collect(),
+    ))
+}
+
+/// RT-D1c M1 (the red team's P6 probe): after a forced walk-back, a node
+/// serves the real blocks relinked under new ids (no new proof of work)
+/// with a shift, hoping the pin takes them for a reorganization below the
+/// restore point. The walk-back turns the header check on, so the relinked
+/// headers fail it; and without the header check another block at the
+/// restore point is refused outright.
+#[test]
+fn a_relinked_chain_after_a_forced_rescan_needs_real_work() {
+    // Blocks faster than the target: the difficulty exceeds 1, so a header
+    // without work fails the check.
+    let mut chain = MockChain::new(91);
+    chain.spacing = 1;
+    chain.reward = 1_000_000_000_000;
+    for _ in 0..120 {
+        chain.mine(&wallet().primary(), 0);
+    }
+    assert!(chain.blocks[40].header.difficulty > 1);
+    let mut w = rt_restored(40);
+    w.set_header_pow(known_pow(&chain));
+    let honest = Spy::new(&chain, vec![]);
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert!(!w.verifies_headers(), "caught up: the restore check is off");
+    let before = own_indices(&w);
+    let pin = w.restore_point;
+    // One sync: the lying probe walks the wallet back, and the relinked
+    // blocks with the shift are served.
+    let node = relink(&chain, 40, 5, true);
+    assert!(w.sync(&node).is_err());
+    assert!(w.verifies_headers(), "the rescan is header-checked");
+    assert_eq!(node.inner.output_calls.get(), 0);
+    assert!(w.synced_height() < 40);
+    assert_eq!(w.restore_point, pin);
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+
+    // The reset branch itself, without the header check: refused.
+    w.rewind(39);
+    w.restore_check = false;
+    assert!(!w.verifies_headers());
+    let node = relink(&chain, 40, 0, false);
+    let e = w.sync(&node).unwrap_err().to_string();
+    assert!(e.contains("without a header check"), "{e}");
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
+    assert_eq!(w.restore_point, pin);
+}
+
+/// RT-D1c P9 (and N3 under M1): another block at the restore point, under
+/// the header check (`ZeroPow` accepts the relinked copy, standing for a
+/// real reorganization at the restore point), replaces the backfill.
+#[test]
+fn another_block_at_the_restore_point_under_the_header_check_resets() {
+    let mut a = rich_chain(94);
+    let mut w = rt_restored(40);
+    w.sync(&Spy::new(&a, vec![])).unwrap();
+    a.mine(&wallet().primary(), 0);
+    let node = relink(&a, 40, 0, true);
+    assert_eq!(w.sync(&node).unwrap(), 121);
+    assert!(
+        node.inner.output_calls.get() > 0,
+        "the backfill is fetched again"
+    );
+    assert_ne!(w.restore_point.unwrap().id, Some(a.id(40)));
+    assert!(w.index.cumulative(121).is_ok());
+}
+
+/// RT-D1c M2 (the red team's P7 probe) and P8: a wallet file written
+/// before the pin is pinned when loaded (with the block id while it is
+/// kept, else by position only), and a forced rescan cannot shift it; the
+/// pin survives a save and load.
+#[test]
+fn a_file_without_a_pin_is_pinned_on_load() {
+    let chain = rich_chain(92);
+    let mut w = rt_restored(40);
+    w.sync(&Spy::new(&chain, vec![])).unwrap();
+    let before = own_indices(&w);
+    let pin = w.restore_point.unwrap();
+    assert_eq!(pin.id, Some(chain.id(40)));
+    let reload = |w: &Wallet| {
+        let mut w = Wallet::from_json(&w.to_json()).unwrap();
+        w.set_header_pow(Arc::new(ZeroPow));
+        w.set_allow_stale_tip(true);
+        w
+    };
+    // P8: persisted.
+    assert_eq!(reload(&w).restore_point, Some(pin));
+    // M2: derived on load, with the id while it is kept...
+    w.restore_point = None;
+    assert_eq!(reload(&w).restore_point, Some(pin));
+    // ...and by position only once it is not.
+    w.block_ids.remove(&40);
+    let mut w = reload(&w);
+    assert_eq!(w.restore_point, Some(RestorePoint { id: None, ..pin }));
+    let e = w.sync(&evil(&chain, 40, 5, true)).unwrap_err().to_string();
+    assert!(e.contains("restore again from a trusted node"), "{e}");
+    assert!(own_indices(&w).iter().all(|i| before.contains(i)));
+    // The honest block at the same position passes, and the pin gets its id.
+    assert_eq!(w.sync(&Spy::new(&chain, vec![])).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+    assert_eq!(w.restore_point, Some(pin));
+
+    // At the first rewind below the restore point, for a pinless wallet.
+    w.restore_point = None;
+    w.rewind(39);
+    assert_eq!(
+        w.restore_point.map(|p| p.first_output),
+        Some(pin.first_output)
+    );
 }
