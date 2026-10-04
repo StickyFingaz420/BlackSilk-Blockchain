@@ -1,0 +1,49 @@
+# cargo-deny policy for tools/tpgate, the third-party gate's checker: its own
+# workspace and Cargo.lock (RT-TPGATE3), so the main deny.toml does not cover
+# it. The same rules as the main and fuzz policies, for this small graph.
+# CI: job `deny` (RT-TPGATE4).
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+
+[licenses]
+allow = ["Apache-2.0", "MIT"]
+confidence-threshold = 0.93
+unused-allowed-license = "warn"
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "deny"
+multiple-versions-include-dev = true
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+
+[bans.build]
+# The same build scripts the main deny.toml reviewed, at the same versions.
+allow-build-scripts = [
+    "proc-macro2@1.0.95",  # rustc version probe, cfgs
+    "serde@1.0.229",       # rustc version probe
+    "serde_core@1.0.229",  # rustc version probe
+    "serde_json@1.0.151",  # cfgs
+    "zmij@1.0.23",         # rustc version probe, cfgs
+]
+executables = "deny"
+interpreted = "deny"
+enable-builtin-globs = true
+include-dependencies = true
+include-archives = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

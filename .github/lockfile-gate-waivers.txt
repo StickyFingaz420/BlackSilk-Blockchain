@@ -1,0 +1,9 @@
+# Published commits that change a lockfile without naming every added or
+# changed crate (lockfile-gate.sh). One per line: <full sha> <reason>. Only
+# commits within the waiver horizon (gate-range.sh) can be waived. Reviewed
+# like the gate itself (a consensus path).
+# RT-TPGATE2 (2026-10-04) extended the gate from Cargo.lock and fuzz/Cargo.lock
+# to every Cargo.lock; this commit created contracts/Cargo.lock and
+# contracts/fuzz/Cargo.lock when the frozen contract crate moved to its own
+# workspace, with crates already locked by the root workspace before the move.
+53839359ab25be320db2621f09805cd59eee5eaf none: predates RT-TPGATE2; creates contracts/Cargo.lock and contracts/fuzz/Cargo.lock for the frozen Wasm contract crate moved out of the workspace (D22, W29-2/3); the gate then covered only Cargo.lock and fuzz/Cargo.lock.

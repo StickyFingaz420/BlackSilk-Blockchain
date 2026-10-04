@@ -1,35 +1,60 @@
 #!/usr/bin/env bash
 # Lockfile-diff gate (F48-3, decisions "Agent 48").
 #
-# A commit that changes Cargo.lock or fuzz/Cargo.lock must name, in its commit
-# message, every crate it adds or moves to another version, so no dependency
-# enters the graph unseen (a `cargo update` side effect, a new transitive
-# crate). A crate counts as named when its name appears as a whole word
-# (letters, digits, '_' and '-'); case is ignored. Removals need no mention.
+# A commit that changes any Cargo.lock must name, in its commit
+# message, every crate it adds, moves to another version or moves to another
+# source, so no dependency enters the graph unseen (a `cargo update` side
+# effect, a new transitive crate, a registry crate swapped for a path copy or a
+# git fork at the same version: RT-PXDET finding 1). A crate's source is its
+# `source = ` line; a crate without one (a path crate, e.g. a [patch] copy in
+# third_party/) counts as source "path". A new `checksum` at the same name,
+# version and source counts as a change too (RT-TPGATE). A crate counts as named when its name
+# appears as a whole word (letters, digits, '_' and '-'); case is ignored.
+# Removals need no mention.
+#
+# A published commit that broke the rule cannot be amended; it may be listed
+# in .github/lockfile-gate-waivers.txt ("<full sha> <reason>"), which applies
+# only within the waiver horizon (gate-range.sh). Adding a line is a reviewed
+# change of the gate.
 #
 # For a merge, "added" means: in the merged lockfile but in none of the
 # parents' lockfiles (the merge resolved the lock differently from every side).
 #
 # Usage: lockfile-gate.sh [BASE [HEAD]]   (range rules: gate-range.sh)
+#        lockfile-gate.sh --selftest      (fixture repository; needs git)
 # Exit: 0 pass, 1 a commit does not name its lockfile changes, 2 usage error.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=gate-range.sh
 source "$here/gate-range.sh"
 
-LOCKFILES=(Cargo.lock fuzz/Cargo.lock)
-
-# "name version" lines of a lockfile at a commit (nothing if it has none).
-lock_pairs() {
-  git show "$1:$2" 2>/dev/null | tr -d '\r' | awk '
-    /^\[\[package\]\]/ { if (n != "") print n, v; n = ""; v = ""; next }
-    /^\[/ { if (n != "") print n, v; n = ""; v = ""; next }
-    /^name = "/ { n = $3; gsub(/"/, "", n) }
-    /^version = "/ { v = $3; gsub(/"/, "", v) }
-    END { if (n != "") print n, v }' | sort -u
+# Every lockfile in the repository (RT-TPGATE2): the Cargo.lock files a commit
+# changes relative to its first parent (or all of them in a root commit).
+changed_lockfiles() {
+  local c="$1"
+  if git rev-parse -q --verify "$c^1" >/dev/null; then
+    git -c core.quotepath=false diff --name-only --no-renames "$c^1" "$c"
+  else
+    git -c core.quotepath=false ls-tree -r --name-only "$c"
+  fi | grep -E '(^|/)Cargo[.]lock$' || true
 }
 
-# The crate names whose "name version" pair is new in commit $1's lockfile $2.
+# "name version source checksum" lines of a lockfile at a commit (nothing if it has
+# none); a package without a `source` line has source "path".
+lock_pairs() {
+  git show "$1:$2" 2>/dev/null | tr -d '\r' | awk '
+    function emit() { if (n != "") print n, v, (s == "" ? "path" : s), (k == "" ? "-" : k); n = ""; v = ""; s = ""; k = "" }
+    /^\[\[package\]\]/ { emit(); next }
+    /^\[/ { emit(); next }
+    /^name = "/ { n = $3; gsub(/"/, "", n) }
+    /^version = "/ { v = $3; gsub(/"/, "", v) }
+    /^source = "/ { s = $3; gsub(/"/, "", s) }
+    /^checksum = "/ { k = $3; gsub(/"/, "", k) }
+    END { emit() }' | sort -u
+}
+
+# The crate names whose "name version source checksum" tuple is new in commit $1's
+# lockfile $2.
 new_names() {
   local c="$1" f="$2" p tmp
   tmp="$(mktemp)"
@@ -58,7 +83,7 @@ main() {
   for c in $commits; do
     n=$((n + 1))
     local words="" missing="" required=""
-    for f in "${LOCKFILES[@]}"; do
+    for f in $(changed_lockfiles "$c"); do
       touches "$c" "$f" || continue
       if [ -z "$words" ]; then
         words="$(git log -1 --format=%B "$c" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9_-' '\n' | sort -u)"
@@ -73,17 +98,99 @@ main() {
     flagged=$((flagged + 1))
     local subject
     subject="$(git log -1 --format='%h %s' "$c")"
+    local waiver
+    waiver=""
+    [ -z "$missing" ] || waiver="$(gate_waiver "${LOCKFILE_GATE_WAIVERS:-$here/../lockfile-gate-waivers.txt}" "$(git rev-parse "$c")")"
     if [ -z "$missing" ]; then
       echo "ok   $subject: names$required"
+    elif [ -n "$waiver" ]; then
+      echo "waived $subject"
+      echo "     (.github/lockfile-gate-waivers.txt) $waiver"
     else
       bad=1
       gate_annotate "lockfile change not named in the commit message: $subject" \
         "Added or changed crates missing from the message: $missing
-List every added or re-versioned crate by name (.github/scripts/lockfile-gate.sh)."
+List every added, re-versioned, re-sourced or re-checksummed crate by name (.github/scripts/lockfile-gate.sh)."
     fi
   done
   echo "lockfile-gate: $n commits checked, $flagged add or change locked crates, $([ "$bad" = 0 ] && echo pass || echo FAIL)"
   return "$bad"
 }
 
-main "$@"
+# A fixture repository: one commit per case on top of a cut-over commit; each
+# case runs the gate on its own commit only (BASE = its parent).
+selftest() {
+  local t bad=0 self
+  self="$here/lockfile-gate.sh"
+  t="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$t'" RETURN
+  (
+    set -e
+    cd "$t"
+    git init -q -b main .
+    git config user.email selftest@invalid
+    git config user.name selftest
+    git config commit.gpgsign false
+    git config core.autocrlf false
+    lock() { # name version [source]: a one-package lockfile
+      printf 'version = 4\n\n[[package]]\nname = "%s"\nversion = "%s"\n' "$1" "$2" > Cargo.lock
+      [ -z "${3:-}" ] || printf 'source = "%s"\nchecksum = "%s"\n' "$3" "${4:-00}" >> Cargo.lock
+      printf '\n[[package]]\nname = "other"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' >> Cargo.lock
+    }
+    reg="registry+https://github.com/rust-lang/crates.io-index"
+    lock foo 1.0.0 "$reg"; git add Cargo.lock; git commit -q -m cutover
+    git tag cutover
+    c() { git add Cargo.lock; git commit -q -m "$1"; git tag "$2"; }
+    lock foo 1.0.0;                      c "patch a crate"              src-unnamed
+    lock foo 1.0.0 "$reg";               c "back to the registry: foo"  src-named
+    lock foo 1.0.0 "git+https://example.invalid/foo#abc"; c "fork"      git-unnamed
+    lock foo 1.0.0 "$reg";               c "registry foo again"         git-back-named
+    lock foo 1.0.1 "$reg";               c "bump"                       ver-unnamed
+    lock foo 1.0.2 "$reg";               c "bump FOO"                   ver-named
+    lock foo 1.0.2 "$reg" 11;            c "same version, new checksum" sum-unnamed
+    lock foo 1.0.2 "$reg" 22;            c "foo checksum"               sum-named
+    printf 'version = 4\n' > Cargo.lock; c "drop everything"            removal
+    mkdir -p sub/ws
+    cp Cargo.lock sub/ws/Cargo.lock; git add sub; git commit -q -m "empty nested lock"; git tag nested-empty
+    lock bar 2.0.0 "$reg"; mv Cargo.lock sub/ws/Cargo.lock; git add sub; git commit -q -m "nested"; git tag nested-unnamed
+    lock bar 2.0.1 "$reg"; mv Cargo.lock sub/ws/Cargo.lock; git add sub; git commit -q -m "nested bar"; git tag nested-named
+  ) > /dev/null || { echo "lockfile-gate selftest: fixture setup failed"; return 1; }
+  local case want got
+  for case in src-unnamed:1 src-named:0 git-unnamed:1 git-back-named:0 ver-unnamed:1 ver-named:0 sum-unnamed:1 sum-named:0 removal:0 nested-empty:0 nested-unnamed:1 nested-named:0; do
+    want="${case#*:}"
+    case="${case%%:*}"
+    if (cd "$t" && GATE_CUTOVER="$(git rev-parse cutover)" bash "$self" "$case^" "$case") > /dev/null 2>&1; then got=0; else got=$?; fi
+    if [ "$got" = "$want" ]; then
+      echo "selftest ok   $case (exit $got)"
+    else
+      echo "selftest FAIL $case: expected exit $want, got $got"
+      bad=1
+    fi
+  done
+  # Waivers: one within the horizon (ver-unnamed) applies, one after it
+  # (nested-unnamed) does not.
+  (cd "$t" && printf '%s none: selftest\n%s none: selftest\n' "$(git rev-parse ver-unnamed)" \
+    "$(git rev-parse nested-unnamed)" > waivers.txt)
+  for case in ver-unnamed:0 nested-unnamed:1; do
+    want="${case#*:}"
+    case="${case%%:*}"
+    if (cd "$t" && GATE_CUTOVER="$(git rev-parse cutover)" GATE_WAIVER_HORIZON="$(git rev-parse ver-unnamed)" \
+      LOCKFILE_GATE_WAIVERS="$t/waivers.txt" bash "$self" "$case^" "$case") > /dev/null 2>&1; then got=0; else got=$?; fi
+    if [ "$got" = "$want" ]; then
+      echo "selftest ok   waiver $case (exit $got)"
+    else
+      echo "selftest FAIL waiver $case: expected exit $want, got $got"
+      bad=1
+    fi
+  done
+  echo "lockfile-gate selftest: $([ "$bad" = 0 ] && echo pass || echo FAIL)"
+  return "$bad"
+}
+
+if [ "${1:-}" = "--selftest" ]; then
+  [ "$#" = 1 ] || gate_die "usage: lockfile-gate.sh --selftest"
+  selftest
+else
+  main "$@"
+fi

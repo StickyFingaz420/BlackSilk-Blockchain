@@ -26,3 +26,35 @@ bec93ff3cfd3bd379773f7becdf1f64e4e921f26 none: predates RTFP3-10; the template g
 23be5a1f3e72258eb003b489b37ce78f2646c995 none: predates RTFP3-10; operator invalidation in chain/src/manager/ (a node-local operator command, W3-35b).
 db37a54aef808ac991ad5c56d64467056a23f10a none: predates RTFP3-10; latched template gate and operator verdicts in chain/src/manager/ (RTW3-1/7/8/11).
 0f55067540fd49891e5cd88c0a393cdda639ba53 none: predates RTFP3-10; an operator-invalidated block refused at header time in chain/src/manager/ (S5b, node-local).
+# RT-TPGATE (2026-10-04) extended the path list to the commit gates, their
+# waiver file and .cargo/ configuration. The commits below touched those
+# paths before they were consensus paths; each reason is the commit's own
+# subject. Neither changes a consensus rule (CI scripts only).
+7ef3585e95715dea917c7c28f6352dd92c722ad2 none: predates RT-TPGATE; introduces the CI commit gates (consensus-path trailer, lockfile diff, Unicode scan, F48-3); CI scripts only.
+84f68b1cf55a065795c121ee66c2a3e9b6504c81 none: predates RT-TPGATE; adds the waiver file and its reader to consensus-gate.sh; CI scripts only.
+# RT-TPGATE2 (2026-10-04) extended the path list to the CI workflows, the release
+# and guest build scripts, the Dockerfile, the lockfile waiver file and
+# tools/tpgate. The commits below touched those paths before they were
+# consensus paths; each reason is the commit's own subject and the paths it
+# touched. They were reviewed at their merge and were not re-reviewed for
+# consensus effect here. All are ancestors of the waiver horizon.
+097114a99696110322c6416787ef1cbba2bcd9de none: predates RT-TPGATE2; guests: refuse cargo config overrides, pin the toolchain manifest, CI-1 design (W5) (.github/scripts/guests-reproduce.sh, zkvm/guests/build.sh, zkvm/guests/reproduce.sh).
+19f669025e10b33627535ce397e0efc30567954a none: predates RT-TPGATE2; p2p: RT3-TM2P2P fixes (late answers, size-aware timeouts, parallel by time, epochs, node-wide pauses, answers queue, pong timing, network classes) (.github/workflows/ci.yml).
+2ed1ac84a16fa379e2787f0d8ea958b2a71e5b9d none: predates RT-TPGATE2; ci: shard the overflow job; exclude PX-proving test binaries whole (.github/workflows/ci.yml).
+48d3d1f3e51e3146fbaed0f49b95f72ce41f3a70 none: predates RT-TPGATE2; Merge branch 'w4-stateful' into rebuild/core (stateful fuzz harnesses; RT-STATEFUL accepted) (.github/workflows/ci.yml).
+53839359ab25be320db2621f09805cd59eee5eaf none: predates RT-TPGATE2; contracts, fuzz: freeze the Wasm contract engine outside the workspace (D22 "D-freeze", W29-2, W29-3) (.github/workflows/ci.yml).
+5da354ba58025ecb5c6aeb89b0f9a4a1b68c81bf none: predates RT-TPGATE2; guests: toolchain-manifest lookup no longer dies of SIGPIPE on Linux (zkvm/guests/build.sh).
+7deb9e88572174d88f6fd53bf948899fff35aa1f none: predates RT-TPGATE2; ci: pin Linux runners to ubuntu-24.04 (.github/workflows/ci.yml).
+995943bf120ca900e45c4a71a4772aac3f463340 none: predates RT-TPGATE2; docs, ci: STATUS.md as the single status source, doc-lint job, doc truth fixes (47 W47-1, W47-2, W47-8; 29 W29-4) (.github/workflows/ci.yml).
+a3ab5f2303c8cebf6e08055ac2b10608e6707389 none: predates RT-TPGATE2; Merge branch 'w4-guard' into rebuild/core (release-binary guard, path remap, -Brepro; RT-GUARD accepted) (.github/workflows/ci.yml).
+b2b234264e0aab880734de35f2569c3ebf0ca29a none: predates RT-TPGATE2; ci: report hangs instead of silent cancellation (run 113) (.github/workflows/ci.yml).
+cfe27625e2cf3a335b89962e32746c6e751e34ee none: predates RT-TPGATE2; deny, ci, docs: supply-chain enforcement for both workspaces (W3-44) (.github/workflows/ci.yml).
+d519e96db46da34bfbd4aba9437d30a33446e4a6 none: predates RT-TPGATE2; ci: run the consensus gate's self-test before the gate (RT-FP3 follow-up) (.github/workflows/ci.yml).
+d6ff63d70427674a8d3985ec8e45eefe144ba52f none: predates RT-TPGATE2; ci: run tools/check-test-features.sh in the gates job (W4-GUARD, RT-GUARD) (.github/workflows/ci.yml).
+f61596500335f55860730a33251fe810a3d0c8fe none: predates RT-TPGATE2; p2p: transaction request tracker, fair serving budget, fail-closed torn heights (RT2-TM2P2P) (.github/workflows/ci.yml).
+f7d07347fd56eb22617a970e397d1887808cad05 none: predates RT-TPGATE2; ci: all branches and testnet tags, concurrency, Node 24 checkout, deny/gates jobs, arm64 guests (.github/workflows/ci.yml).
+# RT-TPGATE3 (2026-10-04) made every .gitattributes a consensus path; the commits
+# below changed the root .gitattributes before that (CI/attribute lines only).
+5c0bfab71f09e7cb3dab67cf22264a8c7e8656db none: predates RT-TPGATE3; p2p tests: the rest of admission.rs after RT-MUTD (reject caches, the node-wide bucket, relayers) (.gitattributes).
+7c44051128a22bb4e6d7e58db6389f69093b2e5d none: predates RT-TPGATE3; labnet: RT-LAB follow-up (F3 logs, F4 checks, F5 metrics) (.gitattributes).
+d5c20f74ec2337cfd01f54af6b3dbf2a5226d517 none: predates RT-TPGATE3; node: golden PX fixture round-trip, more ciphertext probes, binary attribute, STATUS (.gitattributes).

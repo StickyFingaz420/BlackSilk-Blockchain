@@ -288,6 +288,7 @@ jobs:
         run: |
           cargo audit --ignore RUSTSEC-2024-0436
           cargo audit --file fuzz/Cargo.lock --ignore RUSTSEC-2024-0436
+          cargo audit --file tools/tpgate/Cargo.lock
 
   # Supply-chain policy (S1, dossier 44; W3-44): cargo-deny over the main and
   # fuzz workspaces (deny.toml, fuzz/deny.toml): advisories incl. unsound,
@@ -319,6 +320,11 @@ jobs:
         if: success() || failure()
         working-directory: fuzz
         run: cargo deny --locked check -D warnings
+      # tools/tpgate is its own workspace (RT-TPGATE3/4): tools/tpgate/deny.toml.
+      - name: cargo deny (tools/tpgate, the third-party gate's checker)
+        if: success() || failure()
+        working-directory: tools/tpgate
+        run: cargo deny --locked check -D warnings
       - name: No unreviewed *-sys crates; no C in build scripts (per release target)
         if: success() || failure()
         shell: bash
@@ -337,31 +343,36 @@ jobs:
   # Commit gates (F48-3, decisions "Agent 48"), over the commits this event
   # adds after the cut-over commit in .github/scripts/gate-range.sh:
   # - commits touching consensus paths carry a Consensus-Change: trailer;
-  # - commits changing Cargo.lock or fuzz/Cargo.lock name the crates they add
-  #   or re-version;
+  # - commits changing any Cargo.lock name the crates they add,
+  #   re-version or re-source (a registry crate swapped for a path or git copy);
+  # - every third_party/ crate is the published crate plus its allow-listed
+  #   patch and file manifest (third_party/patches/, pins in
+  #   third_party/PRISTINE.sha256), and nothing redirects a crate elsewhere;
   # - no invisible or bidirectional Unicode in tracked text files;
   # - every test-only feature is marked (tools/check-test-features.sh).
   # The SHAs come in through env, never interpolated into the script.
-  gates:
+  # The gates' own self-tests and the checker's unit tests: this commit's code
+  # (RT-TPGATE4: in a job of its own, so nothing it does can reach the trusted
+  # verdicts in the `gates` job; no cache is shared).
+  gates-selftest:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    env:
-      GATE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-      GATE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-          # The gates walk the history back to the cut-over commit.
-          fetch-depth: 0
-      - name: Consensus-path trailer gate (self-test first)
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Gate self-tests and tools/tpgate tests (this commit's code)
+        env:
+          RUSTUP_TOOLCHAIN: "1.98.1"
         run: |
           bash .github/scripts/consensus-gate.sh --selftest
-          bash .github/scripts/consensus-gate.sh "$GATE_BASE" "$GATE_HEAD"
-      - name: Lockfile-diff gate
-        if: success() || failure()
-        run: bash .github/scripts/lockfile-gate.sh "$GATE_BASE" "$GATE_HEAD"
+          bash .github/scripts/lockfile-gate.sh --selftest
+          bash .github/scripts/third-party-gate.sh --selftest
+          cd "$RUNNER_TEMP" && cargo test --locked --manifest-path "$GITHUB_WORKSPACE/tools/tpgate/Cargo.toml"
       - name: Invisible and bidirectional Unicode scan
         if: success() || failure()
         run: bash .github/scripts/unicode-scan.sh
@@ -370,6 +381,95 @@ jobs:
       - name: Test-only features are marked
         if: success() || failure()
         run: bash tools/check-test-features.sh
+
+  # The verdicts (RT-TPGATE3/4). This job runs NO code from the commit under
+  # test: the checkout is data. The gate scripts, the waiver files, the cargo
+  # config pins and tools/tpgate come from a TRUSTED revision, extracted to a
+  # fresh temporary directory outside the checkout; tpgate is built there in a
+  # fresh target directory with its working directory outside the checkout.
+  # The trusted revision:
+  # - a push to rebuild/core (the protected branch): the previous rebuild/core
+  #   head (`before`; on a forced push, its merge base with the new head);
+  # - any other event: the merge base of the commit with origin/rebuild/core
+  #   (origin/rebuild/core itself when the commit descends from it). A commit
+  #   already on rebuild/core is judged by rebuild/core's own gate.
+  # If that revision has no gate yet, origin/rebuild/core's copy is used; if
+  # neither has one (bootstrap), this commit's copies run, with a warning. A
+  # commit that changes a gate is judged by the old gate. This workflow file
+  # itself comes from the commit under test (SECURITY.md); the
+  # pull_request_target workflow gates-trusted.yml runs the base branch's.
+  gates:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GATE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      GATE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          # The gates walk the history back to the cut-over commit, and the
+          # trusted revision needs origin/rebuild/core.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Trusted revision and gate copy
+        run: |
+          set -euo pipefail
+          tip="$(git rev-parse -q --verify refs/remotes/origin/rebuild/core || true)"
+          [ -n "$tip" ] || { echo "::error title=Trusted gates::origin/rebuild/core is not in the checkout"; exit 1; }
+          head="$(git rev-parse "$GATE_HEAD")"
+          cands=()
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/rebuild/core ]; then
+            if [ -n "${GATE_BASE//0/}" ] && git cat-file -e "$GATE_BASE^{commit}" 2>/dev/null; then
+              cands+=("$(git merge-base "$GATE_BASE" "$head")")
+            else
+              echo "::error title=Trusted gates::push to rebuild/core without a previous head in the clone"; exit 1
+            fi
+          else
+            cands+=("$(git merge-base "$head" "$tip")" "$tip")
+          fi
+          src=""
+          for c in "${cands[@]}"; do
+            if git cat-file -e "$c:.github/scripts/third-party-gate.sh" 2>/dev/null &&
+              git cat-file -e "$c:tools/tpgate/Cargo.lock" 2>/dev/null; then src="$c"; break; fi
+          done
+          if [ -z "$src" ]; then
+            src="$head"
+            echo "::warning title=Gate bootstrap::neither ${cands[*]} has the third-party gate and a standalone tools/tpgate; this commit's own gate copies run (trusted from the next commit on)"
+          fi
+          t="$(mktemp -d)"
+          for p in .github/scripts .github/consensus-gate-waivers.txt .github/lockfile-gate-waivers.txt \
+            .github/cargo-config.sha256 tools/tpgate; do
+            if git cat-file -e "$src:$p" 2>/dev/null; then git archive "$src" -- "$p" | tar -x -C "$t"; fi
+          done
+          echo "Trusted gate copy from $src in $t"
+          echo "TRUSTED=$t" >> "$GITHUB_ENV"
+      - name: Consensus-path trailer gate (trusted)
+        run: |
+          # Workflow commands stay off while commit data is printed (RT-TPGATE5).
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$TRUSTED/.github/scripts/consensus-gate.sh" "$GATE_BASE" "$GATE_HEAD" || rc=$?
+          echo "::$tok::"; exit "$rc"
+      - name: Lockfile-diff gate (trusted)
+        if: success() || failure()
+        run: |
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$TRUSTED/.github/scripts/lockfile-gate.sh" "$GATE_BASE" "$GATE_HEAD" || rc=$?
+          echo "::$tok::"; exit "$rc"
+      # RT-PXDET finding 1, RT-TPGATE/2/3/4: third_party/ = published crate +
+      # reviewed diff, and every crate resolves to a member, third_party/ or
+      # crates.io. Downloads the pristine crates from static.crates.io.
+      - name: Third-party patch gate (trusted)
+        if: success() || failure()
+        env:
+          RUSTUP_TOOLCHAIN: "1.98.1"
+        run: |
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$TRUSTED/.github/scripts/third-party-gate.sh" || rc=$?
+          echo "::$tok::"; exit "$rc"
 
   # Documentation lint (dossier 47 W47-8, decisions "Agent 47"): forbidden
   # claims, retired identifiers, broken relative links and copied digests

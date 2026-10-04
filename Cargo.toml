@@ -25,7 +25,9 @@ members = [
 # research crate (decision D22 "D-freeze", ADR-28-1: PX is the only consensus
 # contract platform): its own workspace and Cargo.lock, like `fuzz`, so the Wasm
 # engine is in no build, lockfile or binary of this workspace (contracts/README.md).
-exclude = ["legacy", "research", "third_party", "fuzz", "contracts"]
+# `tools/tpgate`, the third-party gate's checker, is its own workspace too, so CI
+# can build it from a trusted revision outside the checkout (RT-TPGATE3).
+exclude = ["legacy", "research", "third_party", "fuzz", "contracts", "tools/tpgate"]
 
 [profile.release]
 opt-level = 3

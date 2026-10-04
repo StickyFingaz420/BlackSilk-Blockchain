@@ -1,0 +1,7 @@
+# Files under third_party/ that may contain NUL or other control bytes
+# (third-party-gate.sh check_bytes). One per line: <path from the repo root>
+# then the reason. Each must be inside a third_party/<crate>/ directory and,
+# because its bytes would otherwise reach the patch file, unchanged from the
+# published crate. Adding a line is a reviewed change (a consensus path).
+third_party/p3-batch-stark/tests/fixtures/batch_stark_circle_v1.postcard  upstream test fixture (postcard-serialized proof), unchanged from p3-batch-stark 0.7.0
+third_party/p3-batch-stark/tests/fixtures/batch_stark_two_adic_v1.postcard  upstream test fixture (postcard-serialized proof), unchanged from p3-batch-stark 0.7.0

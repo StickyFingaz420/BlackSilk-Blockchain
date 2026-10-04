@@ -31,7 +31,15 @@ source "$here/gate-range.sh"
 # RTFP3-10 added the v1 cryptography, the transaction types, codec and
 # state, the chain manager, the PX prover, state and tree, RandomX, the
 # patched Plonky3 crates and the fingerprint fixture; commits before it that
-# touch them without a trailer are in the waiver file.
+# touch them without a trailer are in the waiver file. RT-TPGATE added the
+# commit gates themselves, their waiver file and every .cargo/ configuration
+# (cargo honours [patch], [paths] and [source] there); the commits before it
+# that touch them are in the waiver file too. RT-TPGATE2 added the CI
+# workflows, the release and guest build scripts, the Dockerfile, the
+# lockfile waiver file and tools/tpgate (waived likewise, and only within the
+# waiver horizon, gate-range.sh). RT-TPGATE3 added every .gitattributes (it
+# decides how git and GitHub show third_party/ changes) and the cargo
+# configuration pins.
 is_consensus_path() {
   case "$1" in
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
@@ -44,6 +52,13 @@ is_consensus_path() {
     px/*.elf | px/*.id) return 0 ;;
     px/src/prove.rs | px/src/state.rs | px/src/tree.rs) return 0 ;;
     crypto/* | randomx/* | third_party/*) return 0 ;;
+    .github/scripts/consensus-gate.sh | .github/scripts/gate-range.sh) return 0 ;;
+    .github/scripts/lockfile-gate.sh | .github/scripts/third-party-gate.sh) return 0 ;;
+    .github/consensus-gate-waivers.txt | .github/lockfile-gate-waivers.txt) return 0 ;;
+    .cargo/* | */.cargo/* | tools/tpgate/*) return 0 ;;
+    .gitattributes | */.gitattributes | .github/cargo-config.sha256) return 0 ;;
+    .github/workflows/* | tools/release-build.sh | deploy/docker/Dockerfile) return 0 ;;
+    zkvm/guests/build.sh | zkvm/guests/reproduce.sh | .github/scripts/guests-reproduce.sh) return 0 ;;
   esac
   return 1
 }
@@ -165,17 +180,7 @@ valid_trailer() {
 # line is a reviewed change, like changing the path list above; the gate
 # prints every waived commit.
 waiver_for() {
-  local f="$here/../consensus-gate-waivers.txt" sha rest
-  [ -f "$f" ] || return 0
-  while IFS=' ' read -r sha rest; do
-    sha="${sha%$'\r'}"
-    rest="${rest%$'\r'}"
-    case "$sha" in '' | '#'*) continue ;; esac
-    if [ "$sha" = "$1" ]; then
-      printf '%s\n' "$rest"
-      return 0
-    fi
-  done <"$f"
+  gate_waiver "$here/../consensus-gate-waivers.txt" "$1"
 }
 
 # The record-citation rules on a fixture record.
@@ -202,6 +207,10 @@ selftest() {
     echo "selftest: an empty reason passed"
     bad=1
   fi
+  # RT-TPGATE5: commit data in an annotation cannot start a workflow command.
+  v="$(GITHUB_ACTIONS=true GATE_CMD_TOKEN=tok gate_annotate $'s::x,\n::add-mask::t' $'m\n::add-mask::y' 2>/dev/null | sed -n 1,3p)"
+  [ "$v" = $'::tok::\n::error title=s%3A%3Ax%2C%0A%3A%3Aadd-mask%3A%3At::m%0A::add-mask::y\n::stop-commands::tok' ] ||
+    { echo "selftest: annotation escaping or command bracketing broken"; bad=1; }
   echo "consensus-gate selftest: $([ "$bad" = 0 ] && echo pass || echo FAIL)"
   return "$bad"
 }

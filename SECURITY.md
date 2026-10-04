@@ -51,7 +51,54 @@ node, miner, wallet or tools, and BlackSilk's own crates forbid `unsafe` code.
 Dependencies do contain `unsafe` internally (docs/reviews/unsafe-inventory.md).
 The rules, checked by the CI job `deny` on every push and weekly:
 - crates come from crates.io only, with the checksums in the committed `Cargo.lock`
-  files, and every CI build uses `--locked`;
+  files, and every CI build uses `--locked`; the one exception is the patched copies
+  in `third_party/` (`[patch.crates-io]`), and CI checks that each is the published
+  crate (sha256 pinned in `third_party/PRISTINE.sha256`) plus exactly its
+  allow-listed diff and file manifest in `third_party/patches/`, and that no lockfile,
+  manifest or `.cargo/` configuration redirects a crate anywhere else (dependency
+  identity from `cargo metadata`, checked by `tools/tpgate`), and that no file there
+  holds control bytes outside `third_party/BINARY-ALLOWLIST`
+  (`.github/scripts/third-party-gate.sh`, third_party/README.md). Its check for
+  code that reaches outside the diff (`include*!`, `path`, `..`, build scripts) is a
+  lint, not a guarantee. The allow-list
+  certifies itself: a commit that changes a patched crate can regenerate its patch
+  in the same commit. The gate only makes that change exact and visible. The
+  control is human review of every `third_party/` diff. Required review of
+  `third_party/`, `.cargo/`, the gate scripts, `tools/tpgate` and the CI workflow
+  (CODEOWNERS plus branch protection)
+  is a repository setting for the owner, and is not configured by this
+  repository. The verdicts run gate code from a trusted revision, so a commit that
+  changes a gate is judged by the old one:
+  - ci.yml's `gates` job runs no code from the commit under test. It extracts the
+    gate scripts, waiver files, cargo config pins and `tools/tpgate` from the
+    trusted revision into a fresh temporary directory and builds there. The trusted
+    revision is the previous rebuild/core head for a push to rebuild/core, and
+    otherwise the merge base with origin/rebuild/core. The commit's own self-tests
+    run in a separate job (`gates-selftest`).
+  - On `pull_request` and `push`, GitHub runs the ci.yml of the commit under test,
+    so a pull request can change or skip that job. That is an inherent limit of
+    those events.
+  - `.github/workflows/gates-trusted.yml` runs on `pull_request_target`, from the
+    base branch's workflow and code. It checks out the pull request's head only as
+    data, with a read-only token, no secrets, no cache, and no build or self-test
+    of the pull request's code.
+  - Making `gates-trusted` and ci.yml's `gates` required status checks, with branch
+    protection on rebuild/core and main, is a repository setting for the owner. It
+    is not configured by this repository.
+  - Push access to rebuild/core equals trust: whatever lands there becomes the
+    trusted gate. The control is branch protection with required pull-request
+    review, which the owner sets.
+
+  What the identity check (`tools/tpgate`) cannot see:
+  - cargo makes any path crate under a workspace root a member automatically. A
+    verbatim copy of a published crate committed there under another name is
+    accepted, as visible first-party code. Only review notices that it is a copy.
+  - the standalone `zkvm/sdk` is read as TOML, not through cargo. It may have no
+    dependencies, no build script and no `[lib]` path, but `#[path]` attributes and
+    `include!` in its own source are not checked. Like every first-party file, they
+    are seen only in review.
+  - cargo configuration outside the repository (`CARGO_HOME`, parent directories),
+    environment variables and `--config` flags;
 - no known vulnerable, unsound, unmaintained (except the reviewed exceptions listed
   in `deny.toml`) or yanked crate (`deny.toml`, `fuzz/deny.toml`);
 - no C toolchain or C-library binding crate, no build script that compiles native
@@ -60,8 +107,9 @@ The rules, checked by the CI job `deny` on every push and weekly:
 - hazardous-material APIs (deterministic ML-KEM encapsulation, single-round AES)
   only in the crates reviewed for them (`.github/scripts/hazmat-policy.sh`);
 - a second version of a crate, a new licence or a new source fails until reviewed;
-- a commit that changes a lockfile names every crate it adds or re-versions
-  (`.github/scripts/lockfile-gate.sh`).
+- a commit that changes any tracked lockfile names every crate it adds, re-versions, moves
+  to another source (such as a registry crate replaced by a path or git copy at the
+  same version) or locks with another checksum (`.github/scripts/lockfile-gate.sh`).
 
 A new dependency needs a recorded decision before it is added; the verdicts, the
 reasons, and what was and was not reviewed are in docs/reviews/dependency-review.md.

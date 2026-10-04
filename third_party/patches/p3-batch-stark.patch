@@ -1,0 +1,39 @@
+diff -a -ruN --strip-trailing-cr a/src/prover.rs b/src/prover.rs
+--- a/src/prover.rs
++++ b/src/prover.rs
+@@ -342,7 +342,7 @@
+     // Each instance's quotient chunks are independent, so compute them in
+     // parallel. `quotient_values` already parallelises over rows; with many
+     // instances this fills the cores that a single instance leaves idle.
+-    let per_instance: Vec<InstanceQuotient<SC>> = (0..n_instances)
++    let per_instance: Vec<(Vec<Domain<SC>>, Vec<RowMajorMatrix<Val<SC>>>, usize)> = (0..n_instances)
+         .into_par_iter()
+         .map(|i| {
+             let _air_span = info_span!("compute quotient", air_idx = i).entered();
+@@ -436,10 +436,24 @@
+             let chunk_mats = quotient_domain.split_evals(n_chunks, q_flat);
+             let chunk_domains = quotient_domain.split_domains(n_chunks);
+ 
+-            // Compute low-degree extensions of each chunk for commitment.
++            (chunk_domains, chunk_mats, n_chunks)
++        })
++        .collect();
++
++    // BlackSilk patch (third_party/README.md, finding PXDET-1): compute the
++    // low-degree extensions of the quotient chunks **sequentially, in instance
++    // order**. Under zero knowledge `get_quotient_ldes` draws its hiding
++    // randomness from the PCS's one shared RNG; upstream called it inside the
++    // parallel loop above, so which instance received which random values
++    // depended on thread scheduling, and the proof bytes and length were not
++    // a function of (witness, RNG seed). Each instance still draws exactly the
++    // values upstream draws for it, now in a fixed order; the LDEs themselves
++    // stay parallel inside the DFT.
++    let per_instance: Vec<InstanceQuotient<SC>> = per_instance
++        .into_iter()
++        .map(|(chunk_domains, chunk_mats, n_chunks)| {
+             let evals = chunk_domains.iter().zip(chunk_mats).map(|(d, m)| (*d, m));
+             let ldes = pcs.get_quotient_ldes(evals, n_chunks);
+-
+             (chunk_domains, ldes)
+         })
+         .collect();

@@ -1,0 +1,92 @@
+name: gates-trusted
+
+# The commit gates' verdicts for a pull request, from the BASE branch's code
+# (RT-TPGATE4/5). On pull_request_target this workflow file, the gate
+# scripts, the waiver files, the cargo config pins and tools/tpgate all come
+# from the base revision; the pull request's head commit is checked out into
+# a separate directory as data only. Nothing from the pull request is built
+# or run: no self-tests, no cargo build of its code, no cache. Workflow
+# commands are stopped while the gates print commit data. The pull request's
+# own code is tested by ci.yml (`gates-selftest`), whose workflow file comes
+# from the pull request itself (SECURITY.md).
+#
+# Making this check and ci.yml's `gates` job required status checks, with
+# branch protection on rebuild/core and main, is a repository setting for the
+# owner (SECURITY.md); this file does not change it.
+
+on:
+  pull_request_target:
+    # `edited`: a retargeted base branch changes the trusted revision.
+    types: [opened, synchronize, reopened, edited]
+
+# Read-only token; the job uses no secrets.
+permissions:
+  contents: read
+
+concurrency:
+  group: gates-trusted-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verdicts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      # The base revision: the only code this job runs.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+      # The pull request's head commit, exactly the one the range ends at, as
+      # data: the gates walk its history.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      # Bootstrap (the base has no gate yet) is a warning only for other base
+      # branches; a pull request into rebuild/core or main fails without one.
+      - name: Base revision has the gates
+        id: has
+        run: |
+          if [ -f trusted/.github/scripts/third-party-gate.sh ] && [ -f trusted/tools/tpgate/Cargo.lock ]; then
+            echo "gates=yes" >> "$GITHUB_OUTPUT"
+          elif [ "$BASE_REF" = rebuild/core ] || [ "$BASE_REF" = main ]; then
+            echo "::error title=Trusted gates::the base revision of a pull request into $BASE_REF has no third-party gate or standalone tools/tpgate"
+            exit 1
+          else
+            echo "::warning title=Gate bootstrap::the base revision has no third-party gate or standalone tools/tpgate yet; no trusted verdict"
+            echo "gates=no" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Consensus-path trailer gate (base code)
+        if: steps.has.outputs.gates == 'yes'
+        working-directory: pr
+        run: |
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$GITHUB_WORKSPACE/trusted/.github/scripts/consensus-gate.sh" "$BASE_SHA" "$HEAD_SHA" || rc=$?
+          echo "::$tok::"; exit "$rc"
+      - name: Lockfile-diff gate (base code)
+        if: steps.has.outputs.gates == 'yes' && (success() || failure())
+        working-directory: pr
+        run: |
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$GITHUB_WORKSPACE/trusted/.github/scripts/lockfile-gate.sh" "$BASE_SHA" "$HEAD_SHA" || rc=$?
+          echo "::$tok::"; exit "$rc"
+      - name: Third-party patch gate (base code)
+        if: steps.has.outputs.gates == 'yes' && (success() || failure())
+        working-directory: pr
+        env:
+          RUSTUP_TOOLCHAIN: "1.98.1"
+        run: |
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$GITHUB_WORKSPACE/trusted/.github/scripts/third-party-gate.sh" || rc=$?
+          echo "::$tok::"; exit "$rc"
