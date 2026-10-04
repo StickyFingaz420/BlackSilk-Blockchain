@@ -25,20 +25,26 @@
 #      exact bytes, CRs and data files included, that step 4 normalizes;
 #   6. the crate's working tree equals the index (nothing modified or
 #      untracked), so what cargo builds is what steps 4 and 5 checked;
-#   7. no added line of the patch uses include!, include_str!, include_bytes!,
-#      #[path or a ../ path (code or data pulled from outside the reviewed
-#      diff), and the patch has no "Binary files" line.
-#   Stale allow-list entries (a patch, manifest or pin without its crate) fail.
+#   7. the patch has no "Binary files" line and adds or changes no build.rs;
+#      an escape lint rejects added lines with an include*! macro, a path
+#      attribute or `path =` key, a `..` path segment or a build/proc-macro/
+#      links key. The lint is a reviewer aid, not a guarantee;
+#   8. every tracked file under third_party/ (patches and pins included) has
+#      no NUL or other control byte (DEL too) except TAB, LF and CR, so git and GitHub
+#      always show its changes as text; except the files
+#      third_party/BINARY-ALLOWLIST names with a reason.
+#   Stale allow-list entries (a patch, manifest, pin or binary entry without
+#   its file) fail.
 #
-# B. Resolution (ground truth: every tracked Cargo.lock):
-#   - every `source` is exactly the crates.io registry (no git, no other
-#     registry);
-#   - every package without a source (a path crate) is a third_party/ crate
-#     or a BlackSilk crate (name blacksilk-* or guest-*);
-#   - a workspace that locks a third_party/ crate's name at its version locks
-#     the patched path copy, never the registry original;
-#   - no tracked Cargo.toml outside third_party/<name>/ declares a package
-#     named like a third_party/ crate (so the path copy can only be that one).
+# B. Dependency identity, by tools/tpgate (Rust; cargo's own view, parsed as
+#    JSON and TOML, failing closed): for every tracked Cargo.lock's workspace,
+#    `cargo metadata --no-deps --offline` gives the members and their declared
+#    dependencies. No member is named like a third_party/ crate; every path
+#    dependency is a member (of any workspace), a standalone crate listed in
+#    STANDALONE below (no dependencies allowed) or third_party/<its name>; no
+#    third_party/ crate is aliased by a rename; every source is crates.io;
+#    every sourceless Cargo.lock entry is a member or third_party/ crate; no
+#    workspace locks a patched version from the registry.
 #
 # C. Cargo files (every tracked Cargo.toml and .cargo/config[.toml]), with
 #    comments and multi-line strings skipped and quotes and spaces removed from
@@ -188,8 +194,10 @@ crates() {
   return 0
 }
 
-# patch_rules CRATE PATCH: 0 when the patch has no opaque binary hunk and no
-# added line that reaches outside the reviewed diff.
+# patch_rules CRATE PATCH: 0 when the patch has no opaque binary hunk, adds no
+# build script, and no added line trips the escape lint. The lint is a
+# reviewer aid, not a guarantee: code can reach outside the diff in ways no
+# regular expression sees (third_party/README.md).
 patch_rules() {
   local crate="$1" p="$2" hit
   if grep -q '^Binary files ' "$p"; then
@@ -197,19 +205,59 @@ patch_rules() {
       "The diff of third_party/$crate has a 'Binary files ... differ' line; every change must be reviewable text."
     return 1
   fi
-  hit="$(grep -a -n -E '^\+([^+]|\+[^+]|\+\+[^ ]|$)' "$p" |
-    grep -a -E 'include!|include_str!|include_bytes!|#!?\[[[:space:]]*path|\.\./' | head -1 || true)"
+  hit="$(grep -a -n -E '^(diff .* b/(.*/)?build\.rs|\+\+\+ b/(.*/)?build\.rs)$' "$p" | head -1 || true)"
   if [ -n "$hit" ]; then
-    annotate "third-party crate $crate: patch reaches outside the reviewed diff" \
-      "third_party/patches/$crate.patch adds include!/include_str!/include_bytes!/#[path] or a ../ path (line ${hit%%:*}). Not allowed in a patched crate (third_party/README.md)."
+    annotate "third-party crate $crate: build script changed" \
+      "third_party/patches/$crate.patch adds or changes a build.rs (line ${hit%%:*}); a patched crate may not run build code."
     return 1
   fi
+  # Added lines only ("+", not the "+++ " file header).
+  hit="$(grep -a -n -E '^\+([^+]|\+[^+]|\+\+[^ ]|$)' "$p" |
+    grep -a -E 'include[A-Za-z0-9_]*[[:space:]]*!|#!?[[:space:]]*\[.*path|(^|[^A-Za-z0-9_])path[[:space:]]*=|(^|["/\])\.\.($|["/\])|^[0-9]+:\+[[:space:]]*(build|proc-macro|links)[[:space:]]*=' |
+    head -1 || true)"
+  if [ -n "$hit" ]; then
+    annotate "third-party crate $crate: patch trips the escape lint" \
+      "third_party/patches/$crate.patch line ${hit%%:*} adds an include*! macro, a path attribute or key, a .. path segment or a build/proc-macro/links key. Not allowed in a patched crate (third_party/README.md)."
+    return 1
+  fi
+}
+
+# check_bytes ROOT: every tracked file under third_party/ is control-free text
+# (no NUL or other C0/DEL byte except TAB, LF and CR), so git and GitHub show
+# every change as a text diff; except the files third_party/BINARY-ALLOWLIST
+# names (path and reason), which must exist.
+check_bytes() {
+  local root="$1" bad=0 meta path sha n allow
+  allow="$root/third_party/BINARY-ALLOWLIST"
+  [ -f "$allow" ] || { annotate "third-party gate: no BINARY-ALLOWLIST" "third_party/BINARY-ALLOWLIST is missing."; return 1; }
+  tr -d '\r' < "$allow" | awk '!/^#/ && NF { print $1 }' > "$WORK/binary-allow"
+  while IFS= read -r path; do
+    git -C "$root" ls-files --error-unmatch -- "$path" > /dev/null 2>&1 || {
+      annotate "third-party gate: stale BINARY-ALLOWLIST entry" "third_party/BINARY-ALLOWLIST names $path, which is not a tracked file."
+      bad=1
+    }
+    case "$path" in third_party/*/*) ;; *)
+      annotate "third-party gate: BINARY-ALLOWLIST outside a crate" "$path: only files inside a third_party/<crate>/ directory may be binary."
+      bad=1 ;;
+    esac
+  done < "$WORK/binary-allow"
+  while IFS=$'\t' read -r meta path; do
+    read -r _ sha _ <<< "$meta"
+    n="$(git -C "$root" cat-file blob "$sha" | tr -d '\011\012\015\040-\176\200-\377' | head -c 1 | wc -c)"
+    [ "$n" = 0 ] && continue
+    grep -Fqx -- "$path" "$WORK/binary-allow" && continue
+    annotate "third-party gate: control bytes in $path" \
+      "$path has a NUL or other control byte, so git and GitHub may show it and its patch as binary. Remove it, or list the file in third_party/BINARY-ALLOWLIST with the reason (a reviewed change)."
+    bad=1
+  done < <(git -C "$root" -c core.quotepath=false ls-files -s -- third_party)
+  return "$bad"
 }
 
 # check_tree ROOT: section A. 0 when every crate matches its allow-list.
 check_tree() {
   local root="$1" tp="$1/third_party" bad=0 crate exp act first n p line dirty
   [ -f "$tp/PRISTINE.sha256" ] || { annotate "third-party gate: no PRISTINE.sha256" "third_party/PRISTINE.sha256 is missing."; return 1; }
+  check_bytes "$root" || bad=1
   n=0
   for crate in $(crates "$root"); do
     n=$((n + 1))
@@ -280,59 +328,37 @@ check_tree() {
   return "$bad"
 }
 
-# lock_packages FILE: "name version source" per package ("path" when sourceless).
-lock_packages() {
-  tr -d '\r' < "$1" | awk '
-    function emit() { if (n != "") print n, v, (s == "" ? "path" : s); n = ""; v = ""; s = "" }
-    /^\[/ { emit(); next }
-    /^name = "/ { n = $3; gsub(/"/, "", n) }
-    /^version = "/ { v = $3; gsub(/"/, "", v) }
-    /^source = "/ { s = $3; gsub(/"/, "", s) }
-    END { emit() }'
-}
+# Path crates outside every workspace that path dependencies may name
+# (blacksilk-tpgate --standalone: no dependency tables allowed). Changing this
+# list is a reviewed change of the gate.
+STANDALONE=(zkvm/sdk)
 
-# check_resolution ROOT: section B.
-check_resolution() {
-  local root="$1" bad=0 lock name ver src crate cver m pn
-  local -a tp
-  mapfile -t tp < <(crates "$root")
+# check_identity ROOT: section B, by tools/tpgate (cargo metadata + Cargo.lock,
+# parsed as TOML and JSON, fail closed). Built from this checkout; cargo
+# metadata runs --no-deps --offline. RUSTUP_TOOLCHAIN defaults to the
+# installed stable so zkvm/guests' pinned toolchain is never installed.
+check_identity() {
+  local root="$1" here_root out rc lock
+  local -a roots=()
+  here_root="$(git rev-parse --show-toplevel)"
   while IFS= read -r lock; do
-    while read -r name ver src; do
-      if [ "$src" = path ]; then
-        case " ${tp[*]} " in *" $name "*) continue ;; esac
-        case "$name" in blacksilk-* | guest-*) continue ;; esac
-        annotate "third-party gate: unexpected path crate in $lock" \
-          "$name $ver has no source (a path crate) but is neither a third_party/ crate nor a BlackSilk crate."
-        bad=1
-      elif [ "$src" != "$REGISTRY" ]; then
-        annotate "third-party gate: non-crates.io source in $lock" "$name $ver comes from $src; only crates.io is allowed."
-        bad=1
-      else
-        for crate in "${tp[@]}"; do
-          [ "$name" = "$crate" ] || continue
-          cver="$(toml_package_field "$root/third_party/$crate/Cargo.toml" version)"
-          if [ "$ver" = "$cver" ]; then
-            annotate "third-party gate: $lock bypasses third_party/$crate" \
-              "$lock locks $name $ver from crates.io, but third_party/$crate patches that version; add the [patch.crates-io] line to that workspace."
-            bad=1
-          fi
-        done
-      fi
-    done < <(lock_packages "$root/$lock")
+    roots+=("$(dirname "$lock")")
   done < <(git -C "$root" ls-files -- Cargo.lock '*/Cargo.lock')
-  # No other tracked manifest may define a third_party crate's package name.
-  while IFS= read -r m; do
-    case "$m" in third_party/*/Cargo.toml) [ "${m#third_party/*/}" = Cargo.toml ] && continue ;; esac
-    pn="$(toml_package_field "$root/$m" name)"
-    [ -n "$pn" ] || continue
-    for crate in "${tp[@]}"; do
-      if [ "$pn" = "$crate" ]; then
-        annotate "third-party gate: second copy of $crate" "$m declares package $pn; the only allowed copy is third_party/$crate."
-        bad=1
-      fi
-    done
-  done < <(git -C "$root" -c core.quotepath=false ls-files -- Cargo.toml '*/Cargo.toml')
-  return "$bad"
+  [ "${#roots[@]}" -gt 0 ] || { annotate "third-party gate: no Cargo.lock" "No tracked Cargo.lock under $root."; return 1; }
+  local -a sa=()
+  local s
+  for s in "${STANDALONE[@]}"; do
+    [ -f "$root/$s/Cargo.toml" ] && sa+=("$s")
+  done
+  rc=0
+  out="$(cd "$here_root" && RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}" \
+    cargo run -q --locked -p blacksilk-tpgate -- "$root" "${roots[@]}" ${sa[@]+--standalone "${sa[@]}"} 2>&1)" || rc=$?
+  if [ "$rc" = 0 ]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  annotate "third-party gate: dependency identity (tools/tpgate)" "$out"
+  return 1
 }
 
 # toml_events KIND PREFIX: a TOML file on stdin; prints one line per problem.
@@ -489,6 +515,15 @@ selftest() {
     f="$(src1 "$1")"; printf 'const X: &str = include_str!("../../secret");\n' >> "$f"
     git -C "$1" add -A; write_allowlist "$1" "$crate" > /dev/null
   }
+  regen() { git -C "$1" add -A; write_allowlist "$1" "$crate" > /dev/null; }
+  tamper_nul_patchfile() { printf '\000\n' >> "$1/third_party/patches/$crate.patch"; }
+  tamper_nul_readme() { printf '\001\n' >> "$1/third_party/README.md"; }
+  tamper_binary_stale() { printf 'third_party/%s/no-such.bin  test\n' "$crate" >> "$1/third_party/BINARY-ALLOWLIST"; }
+  tamper_include_spaced() { printf 'const X: &str = include_str !("x");\n' >> "$(src1 "$1")"; regen "$1"; }
+  tamper_cfg_attr_path() { printf '#[cfg_attr(all(), path = "x.rs")]\nmod m;\n' >> "$(src1 "$1")"; regen "$1"; }
+  tamper_dotdot() { printf 'const P: &str = "..";\n' >> "$(src1 "$1")"; regen "$1"; }
+  tamper_build_rs() { printf 'fn main() {}\n' > "$1/third_party/$crate/build.rs"; regen "$1"; }
+  tamper_build_key() { sed -i.bak 's/^build = false/build = "b.rs"/' "$1/third_party/$crate/Cargo.toml"; rm -f "$1/third_party/$crate/Cargo.toml.bak"; regen "$1"; }
   run_case clean 0
   run_case edit 1
   run_case unstaged 1 nostage
@@ -502,25 +537,51 @@ selftest() {
   run_case stale 1
   run_case crlf 1
   run_case mode 1
-  run_case nul_regen 0
+  run_case nul_regen 1
+  run_case nul_patchfile 1
+  run_case nul_readme 1
+  run_case binary_stale 1
+  run_case include_spaced 1
+  run_case cfg_attr_path 1
+  run_case dotdot 1
+  run_case build_rs 1
+  run_case build_key 1
   run_case nul_then_edit 1
   run_case include 1
 
-  # B and C: synthetic workspaces.
+  # An allow-listed binary file passes the byte check (it must also be
+  # unchanged from the published crate, or its bytes reach the patch file).
+  t="$WORK/st-binary-allowed"
+  fixture_repo "$t"
+  mkdir -p "$t/third_party/c/tests"
+  printf 'x\000y' > "$t/third_party/c/tests/fixture.bin"
+  printf '# path  reason\nthird_party/c/tests/fixture.bin  selftest fixture\n' > "$t/third_party/BINARY-ALLOWLIST"
+  git -C "$t" add -A
+  if check_bytes "$t" > "$WORK/st.log" 2>&1; then
+    echo "selftest ok   binary_allowlisted (exit 0)"
+  else
+    echo "selftest FAIL binary_allowlisted"; sed 's/^/  /' "$WORK/st.log"; bad=1
+  fi
+
+  # B and C: synthetic workspaces, checked by tools/tpgate and the text scan.
   local reg="$REGISTRY" n=0
+  pkg() { # DIR NAME [EXTRA]: a crate with a library target
+    mkdir -p "$1/src"; : > "$1/src/lib.rs"
+    printf '[package]\nname = "%s"\nversion = "%s"\nedition = "2021"\n%s' "$2" "${4:-0.1.0}" "${3:-}" > "$1/Cargo.toml"
+  }
   res_case() { # NAME EXPECT(0|1) SETUP-FN
     n=$((n + 1))
     t="$WORK/rs-$n"
     fixture_repo "$t"
-    mkdir -p "$t/third_party/p3-x"
-    printf '[package]\nname = "p3-x"\nversion = "1.0.0"\n' > "$t/third_party/p3-x/Cargo.toml"
-    printf '[workspace]\nmembers = ["a"]\n\n[patch.crates-io]\np3-x = { path = "third_party/p3-x" }\n' > "$t/Cargo.toml"
-    mkdir -p "$t/a"
-    printf '[package]\nname = "blacksilk-a"\nversion = "0.1.0"\n' > "$t/a/Cargo.toml"
+    pkg "$t/third_party/p3-x" p3-x "" 1.0.0
+    printf '[workspace]\nmembers = ["a"]\nresolver = "2"\n\n[patch.crates-io]\np3-x = { path = "third_party/p3-x" }\n' > "$t/Cargo.toml"
+    pkg "$t/a" blacksilk-a
     printf 'version = 4\n\n[[package]]\nname = "blacksilk-a"\nversion = "0.1.0"\n\n[[package]]\nname = "p3-x"\nversion = "1.0.0"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\nsource = "%s"\nchecksum = "00"\n' "$reg" > "$t/Cargo.lock"
     "$3" "$t"
     git -C "$t" add -A
-    if { check_resolution "$t" && check_cargo_files "$t"; } > "$WORK/st.log" 2>&1; then r=0; else r=1; fi
+    r=0
+    check_identity "$t" > "$WORK/st.log" 2>&1 || r=1
+    check_cargo_files "$t" >> "$WORK/st.log" 2>&1 || r=1
     if [ "$r" = "$2" ]; then
       echo "selftest ok   $1 (exit $r)"
     else
@@ -536,7 +597,26 @@ selftest() {
   s_pathrogue() { addlock "$1" serde-fork 1.0.0; }
   s_bypass() { addlock "$1" p3-x 1.0.0 "$reg"; }
   s_bypass_othver() { addlock "$1" p3-x 0.9.0 "$reg"; }
-  s_dupe() { mkdir -p "$1/vendor/p3-x"; printf '[package]\nname = "p3-x"\nversion = "1.0.0"\n' > "$1/vendor/p3-x/Cargo.toml"; }
+  # A second copy as a workspace member, written without spaces.
+  s_dupe() {
+    mkdir -p "$1/vendor/p3-x/src"; : > "$1/vendor/p3-x/src/lib.rs"
+    printf "[package]\nname='p3-x'\nversion=\"1.0.0\"\nedition=\"2021\"\n" > "$1/vendor/p3-x/Cargo.toml"
+    setroot "$1" $'[workspace]\nmembers = ["a", "vendor/p3-x"]\nresolver = "2"\n\n[patch.crates-io]\np3-x = { path = "third_party/p3-x" }'
+  }
+  # p3-x = { package = "blacksilk-fri", path = "../evil" }: a renamed path copy.
+  s_rename() {
+    pkg "$1/evil" blacksilk-fri
+    pkg "$1/a" blacksilk-a $'[dependencies]\np3-x = { package = "blacksilk-fri", path = "../evil" }\n'
+    addlock "$1" blacksilk-fri 0.1.0
+  }
+  # An ordinary path dependency on a crate outside every workspace (cargo makes
+  # a path crate under the workspace root a member, unless excluded).
+  s_outside() {
+    setroot "$1" $'[workspace]\nmembers = ["a"]\nexclude = ["vendor"]\nresolver = "2"\n\n[patch.crates-io]\np3-x = { path = "third_party/p3-x" }'
+    pkg "$1/vendor/util" blacksilk-util
+    pkg "$1/a" blacksilk-a $'[dependencies]\nblacksilk-util = { path = "../vendor/util" }\n'
+    addlock "$1" blacksilk-util 0.1.0
+  }
   s_spaced() { setroot "$1" $'[ patch.crates-io ]\np3-x = { path = "vendor/p3-x" }'; }
   s_quoted() { setroot "$1" $'["patch".crates-io]\np3-x = { path = "vendor/p3-x" }'; }
   s_bare() { setroot "$1" $'[patch]\ncrates-io.p3-x = { path = "vendor/p3-x" }'; }
@@ -553,14 +633,16 @@ selftest() {
   s_cfg_paths() { mkdir -p "$1/.cargo"; printf 'paths = ["vendor/p3-x"]\n' > "$1/.cargo/config.toml"; }
   s_cfg_source() { mkdir -p "$1/a/.cargo"; printf '[source.crates-io]\nreplace-with = "v"\n' > "$1/a/.cargo/config.toml"; }
   s_cfg_patch() { mkdir -p "$1/.cargo"; printf '[patch.crates-io]\np3-x = { path = "third_party/p3-x" }\n' > "$1/.cargo/config"; }
-  s_cfg_ok() { mkdir -p "$1/.cargo"; printf '[build]\ntarget = "x"\n[target.x]\nrustflags = ["-C", "a"]\n' > "$1/.cargo/config.toml"; }
+  s_cfg_ok() { mkdir -p "$1/.cargo"; printf '[alias]\nxt = "test"\n[target.x]\nrustflags = ["-C", "a"]\n' > "$1/.cargo/config.toml"; }
   res_case "resolution clean" 0 s_clean
   res_case "lock: git source" 1 s_git
   res_case "lock: other registry" 1 s_altreg
   res_case "lock: unknown path crate" 1 s_pathrogue
   res_case "lock: registry copy of a patched crate" 1 s_bypass
   res_case "lock: other version of a patched crate" 0 s_bypass_othver
-  res_case "second manifest named like a patched crate" 1 s_dupe
+  res_case "member named like a patched crate (no spaces)" 1 s_dupe
+  res_case "renamed path copy of a patched crate" 1 s_rename
+  res_case "path dependency outside every workspace" 1 s_outside
   res_case "manifest: [ patch.crates-io ]" 1 s_spaced
   res_case "manifest: [\"patch\".crates-io]" 1 s_quoted
   res_case "manifest: [patch] + dotted key" 1 s_bare
@@ -595,7 +677,7 @@ main() {
     "")
       local bad=0
       check_cargo_files "$root" || bad=1
-      check_resolution "$root" || bad=1
+      check_identity "$root" || bad=1
       [ "$bad" = 1 ] || echo "ok   lockfiles, manifests and .cargo/ configs: crates.io or third_party/ only"
       check_tree "$root" || bad=1
       exit "$bad"

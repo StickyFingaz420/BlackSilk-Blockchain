@@ -423,6 +423,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "blacksilk-tpgate"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "blacksilk-tx"
 version = "0.1.0"
 dependencies = [

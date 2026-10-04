@@ -1,0 +1,15 @@
+[package]
+name = "blacksilk-tpgate"
+version = "0.1.0"
+edition = "2021"
+description = "Dependency-identity check for the third-party patch gate (.github/scripts/third-party-gate.sh): every path crate, rename and lockfile entry resolves to a workspace member, a third_party/ crate or crates.io"
+publish = false
+
+[[bin]]
+name = "blacksilk-tpgate"
+path = "src/main.rs"
+
+# Only crates already in Cargo.lock (no new dependency).
+[dependencies]
+serde_json = "1.0"
+toml = "0.8"

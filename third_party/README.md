@@ -4,7 +4,7 @@ These are copies of published crates with a minimal, reviewed change, used throu
 `[patch.crates-io]` in the workspace `Cargo.toml`. Each entry records what changed, why,
 and when to remove it.
 
-## CI check: published crate + allow-listed diff (RT-PXDET finding 1, RT-TPGATE)
+## CI check: published crate + allow-listed diff (RT-PXDET finding 1, RT-TPGATE, RT-TPGATE2)
 
 `.github/scripts/third-party-gate.sh` (CI job `gates`) checks every crate directory
 here (a directory with a `Cargo.toml`) against what it claims to be:
@@ -25,29 +25,60 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
   the crate, hashed from the committed (index) bytes. It pins what the diff
   normalizes: line endings, data files and file modes. The crate's working tree must
   equal the index (nothing modified or untracked).
-- No added line of a patch may use `include!`, `include_str!`, `include_bytes!`,
-  `#[path` or a `../` path, which would pull code or data from outside the reviewed
-  diff. No current patch does.
-- Stale entries fail: a patch, manifest or pin without its crate directory.
-- Resolution, from every tracked `Cargo.lock` (root, `fuzz/`, `contracts/`,
-  `contracts/fuzz/`, `zkvm/guests/`):
-  - every `source` is crates.io;
-  - every path crate is a crate here or a BlackSilk crate (`blacksilk-*`, `guest-*`);
-  - a workspace that locks a crate here at its version locks the patched copy;
-  - no other tracked `Cargo.toml` names a package like a crate here.
+- Escape lint, a reviewer aid and not a guarantee:
+  - no "Binary files" line in a patch, and no added or changed `build.rs`;
+  - no added line with an `include*!` macro (spaces allowed), a `path` attribute or
+    `path =` key, a `..` path segment, or a `build`, `proc-macro` or `links` key.
+  - Code can still reach outside the diff in ways no regular expression sees (a
+    `concat!` of path pieces, for example). Review is what catches those.
+  - No current patch trips the lint.
+- Control bytes: every tracked file under `third_party/` (patches and pins included)
+  must be free of NUL and the other control bytes (DEL too) except TAB, LF and CR. With a NUL
+  in its first 8,000 bytes, git and GitHub show a file and its patch only as "Bin".
+  - The exceptions are the files named in `BINARY-ALLOWLIST`, each with its reason;
+    adding one is a reviewed change.
+  - An allow-listed file must be unchanged from the published crate, or its bytes
+    reach the patch file, which may not contain them.
+  - `.gitattributes` sets `third_party/** diff`, so every change shows as text.
+- Stale entries fail: a patch, manifest, pin or binary entry without its file.
+- Dependency identity, by `tools/tpgate` (Rust, built from this checkout; it uses
+  only crates already in `Cargo.lock` and fails closed on anything it cannot parse):
+  - It runs `cargo metadata --no-deps --offline` for every tracked `Cargo.lock`'s
+    workspace (root, `fuzz/`, `contracts/`, `contracts/fuzz/`, `zkvm/guests/`). That
+    gives cargo's own list of members and their declared dependencies, with renames
+    and paths. It also parses each `Cargo.lock` as TOML.
+  - No member is named like a crate here.
+  - Every path dependency is one of: a member (of any workspace), a standalone crate
+    in the gate's `STANDALONE` list (today `zkvm/sdk`, which may have no
+    dependencies), or `third_party/<its own name>`.
+  - No crate here is aliased by a rename.
+  - Every source is crates.io.
+  - Every sourceless `Cargo.lock` entry is a member or a crate here.
+  - No workspace locks a patched version from the registry.
+  - The gate sets `RUSTUP_TOOLCHAIN` (default `stable`; CI uses 1.98.1), so
+    `zkvm/guests`' pinned toolchain is never installed for this.
 - Cargo files: in every tracked `Cargo.toml` and `.cargo/config[.toml]`, no table or
   key starting with `patch`, `replace`, `paths` or `source` (configs also
   `registries`, `registry`), however quoted, spaced or dotted. The only exception is
   a workspace root's exact `[patch.crates-io]`, whose entries must each be
   `<name> = { path = "<to root>third_party/<name>" }`.
-- `--selftest` runs tampered fixtures and expects each to fail. It also expects the
-  clean fixtures to pass, including an allow-listed NUL byte. The tampered fixtures:
-  - edits: an edit, a later edit after a NUL byte, a CRLF conversion, a mode change;
+- `--selftest` runs tampered fixtures and expects each to fail. It also expects
+  clean fixtures to pass, and an allow-listed binary file to pass the byte check.
+  The tampered fixtures:
+  - edits: an edit, a CRLF conversion, a mode change, an allow-listed NUL file
+    edited again;
   - files: added, removed, untracked or unstaged files, a re-added packaging file;
-  - allow-list: a wrong pin, a missing or stale patch or manifest, an `include_str!`;
-  - lockfiles: a git source, another registry, an unknown path crate, a registry copy
-    of a patched crate, a second manifest with a patched crate's name;
+  - allow-list: a wrong pin, a missing or stale patch or manifest, a stale binary
+    entry;
+  - control bytes in a source file, a patch file or the README;
+  - lint: `include_str!` and `include_str !`, a `cfg_attr` path, a `".."`, an added
+    `build.rs`, a `build =` key;
+  - identity: a git source, another registry, an unknown path crate, a registry copy
+    of a patched crate, a member named like a patched crate (written without
+    spaces), a renamed path copy, a path dependency outside every workspace;
   - cargo files: the `[patch]`, `[replace]`, `paths` and `[source]` spellings above.
+  - `tools/tpgate` has its own unit tests
+    (`cargo test -p blacksilk-tpgate`).
 
 The patch files apply with `patch -p1` inside an unpacked published crate. To
 change a patched crate: make the change and stage it (`git add`), then run
@@ -60,7 +91,7 @@ code change. Adding a crate here needs, in the same commit:
 - its `[patch.crates-io]` line in every workspace that locks it.
 
 The lockfile gate (`.github/scripts/lockfile-gate.sh`) separately requires a commit
-that moves a crate in `Cargo.lock` or `fuzz/Cargo.lock` to another source or checksum
+that moves a crate in any tracked `Cargo.lock` to another source or checksum
 to name that crate.
 
 **What this does not prove.** The allow-list certifies itself: a commit can change

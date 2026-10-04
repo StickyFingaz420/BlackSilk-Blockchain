@@ -367,10 +367,18 @@ jobs:
         run: |
           bash .github/scripts/lockfile-gate.sh --selftest
           bash .github/scripts/lockfile-gate.sh "$GATE_BASE" "$GATE_HEAD"
-      # RT-PXDET finding 1: third_party/ = published crate + reviewed diff.
-      # Downloads the pristine crates from static.crates.io.
+      # RT-PXDET finding 1, RT-TPGATE/2: third_party/ = published crate +
+      # reviewed diff, and every crate resolves to a member, third_party/ or
+      # crates.io. Downloads the pristine crates from static.crates.io and
+      # builds tools/tpgate (cargo metadata runs --no-deps --offline).
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        if: success() || failure()
+        with:
+          toolchain: "1.98.1"
       - name: Third-party patch gate (self-test first)
         if: success() || failure()
+        env:
+          RUSTUP_TOOLCHAIN: "1.98.1"
         run: |
           bash .github/scripts/third-party-gate.sh --selftest
           bash .github/scripts/third-party-gate.sh

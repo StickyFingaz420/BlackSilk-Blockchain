@@ -1,0 +1,5 @@
+# Files under third_party/ that may contain NUL or other control bytes
+# (third-party-gate.sh check_bytes). One per line: <path from the repo root>
+# then the reason. Each must be inside a third_party/<crate>/ directory and,
+# because its bytes would otherwise reach the patch file, unchanged from the
+# published crate. Adding a line is a reviewed change (a consensus path).

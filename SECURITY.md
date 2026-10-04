@@ -55,12 +55,17 @@ The rules, checked by the CI job `deny` on every push and weekly:
   in `third_party/` (`[patch.crates-io]`), and CI checks that each is the published
   crate (sha256 pinned in `third_party/PRISTINE.sha256`) plus exactly its
   allow-listed diff and file manifest in `third_party/patches/`, and that no lockfile,
-  manifest or `.cargo/` configuration redirects a crate anywhere else
-  (`.github/scripts/third-party-gate.sh`, third_party/README.md). The allow-list
+  manifest or `.cargo/` configuration redirects a crate anywhere else (dependency
+  identity from `cargo metadata`, checked by `tools/tpgate`), and that no file there
+  holds control bytes outside `third_party/BINARY-ALLOWLIST`
+  (`.github/scripts/third-party-gate.sh`, third_party/README.md). Its check for
+  code that reaches outside the diff (`include*!`, `path`, `..`, build scripts) is a
+  lint, not a guarantee. The allow-list
   certifies itself: a commit that changes a patched crate can regenerate its patch
   in the same commit. The gate only makes that change exact and visible. The
   control is human review of every `third_party/` diff. Required review of
-  `third_party/`, `.cargo/` and the gate scripts (CODEOWNERS plus branch protection)
+  `third_party/`, `.cargo/`, the gate scripts, `tools/tpgate` and the CI workflow
+  (CODEOWNERS plus branch protection)
   is a repository setting for the owner, and is not configured by this
   repository;
 - no known vulnerable, unsound, unmaintained (except the reviewed exceptions listed
@@ -71,7 +76,7 @@ The rules, checked by the CI job `deny` on every push and weekly:
 - hazardous-material APIs (deterministic ML-KEM encapsulation, single-round AES)
   only in the crates reviewed for them (`.github/scripts/hazmat-policy.sh`);
 - a second version of a crate, a new licence or a new source fails until reviewed;
-- a commit that changes a lockfile names every crate it adds, re-versions, moves
+- a commit that changes any tracked lockfile names every crate it adds, re-versions, moves
   to another source (such as a registry crate replaced by a path or git copy at the
   same version) or locks with another checksum (`.github/scripts/lockfile-gate.sh`).
 

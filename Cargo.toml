@@ -19,6 +19,7 @@ members = [
     "tools/supply-audit", # blacksilk-supply-audit: closed-set supply check (trial)
     "tools/genesis", # blacksilk-genesis: beacon-derived genesis construction and verification
     "tools/daa-sim", # blacksilk-daa-sim: difficulty-rule simulation harness (evidence, not consensus)
+    "tools/tpgate", # blacksilk-tpgate: dependency-identity check of the third-party patch gate (CI)
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
 # and the post-quantum research track. `contracts` is the frozen Wasm contract

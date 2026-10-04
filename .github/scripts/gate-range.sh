@@ -49,3 +49,36 @@ gate_annotate() {
   fi
   printf '%s\n%s\n' "$1" "$2" >&2
 }
+
+# The waiver horizon (RT-TPGATE2). A waiver (.github/consensus-gate-waivers.txt,
+# .github/lockfile-gate-waivers.txt) applies only to a commit that is an
+# ancestor of this published rebuild/core head, so a waiver can never cover a
+# commit written after it was granted. GATE_WAIVER_HORIZON overrides it
+# (fixture tests only). Moving it is a reviewed change of the gate.
+# d5c20f7: rebuild/core when the horizon was set (2026-10-04).
+GATE_WAIVER_HORIZON_DEFAULT=d5c20f74ec2337cfd01f54af6b3dbf2a5226d517
+
+# gate_waivable SHA: 0 when SHA is an ancestor of (or is) the waiver horizon.
+gate_waivable() {
+  local h="${GATE_WAIVER_HORIZON:-$GATE_WAIVER_HORIZON_DEFAULT}"
+  git cat-file -e "$h^{commit}" 2>/dev/null ||
+    gate_die "waiver horizon $h is not in this clone (use fetch-depth: 0)"
+  git merge-base --is-ancestor "$1" "$h"
+}
+
+# gate_waiver FILE SHA: prints the waiver value FILE records for SHA (lines
+# "<full sha> <value>", '#' comments), if SHA is within the horizon.
+gate_waiver() {
+  local f="$1" sha rest
+  [ -f "$f" ] || return 0
+  while IFS=' ' read -r sha rest; do
+    sha="${sha%$'\r'}"
+    rest="${rest%$'\r'}"
+    case "$sha" in '' | '#'*) continue ;; esac
+    if [ "$sha" = "$2" ]; then
+      gate_waivable "$2" || { echo "gate: waiver for $2 ignored: not an ancestor of the waiver horizon" >&2; return 0; }
+      printf '%s\n' "$rest"
+      return 0
+    fi
+  done <"$f"
+}
