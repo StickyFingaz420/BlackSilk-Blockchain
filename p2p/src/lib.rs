@@ -34,8 +34,8 @@ pub mod transport;
 
 pub use addr::NetAddr;
 pub use net::{
-    chain_access, lock_or_exit, NetConfig, NetStats, Network, PeerInfo, SharedChain,
-    POISONED_EXIT_CODE,
+    chain_access, lock_or_exit, HeaderPowBudget, NetConfig, NetStats, Network, PeerInfo,
+    SharedChain, POISONED_EXIT_CODE,
 };
 
 /// The build marker of this crate's test-only code (the stateful fuzz targets'

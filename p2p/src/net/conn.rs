@@ -395,6 +395,7 @@ pub(super) async fn run_connection<S>(
                 known_tip: theirs.tip,
                 known_work: 0,
                 announced: our_tip,
+                pow_proven: false,
             },
         );
     }

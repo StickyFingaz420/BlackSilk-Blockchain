@@ -5,9 +5,11 @@
 
 use super::blocks::schedule_downloads;
 use super::fatal;
+use super::header_budget::{HeaderLane, HeaderScheduler};
 use super::state::{
     unix_now, upgrade_reporter_key, HeaderBatch, Inner, State, UNKNOWN_UPGRADE_DISCONNECT,
 };
+use super::trickle::NetClass;
 use crate::addr::NetAddr;
 use crate::clock::{Accepted, ClockLevel};
 use crate::dandelion::PeerId;
@@ -243,11 +245,21 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
             None
         } else {
             p.headers_busy = true;
+            // Outbound peers, and inbound ones that delivered valid new
+            // headers before, go first and are not budgeted
+            // (`header_budget`). An inbound peer always has its trickle key;
+            // without one it would count as onion, the strictest class.
+            let lane = if !p.inbound || p.pow_proven {
+                HeaderLane::Trusted
+            } else {
+                HeaderLane::Inbound(p.trickle.map_or(NetClass::Onion, |k| k.class()))
+            };
             let batch = HeaderBatch {
                 peer,
                 addr: p.addr.clone(),
                 proxied: p.proxied,
                 solicited,
+                lane,
                 headers,
             };
             let key = queue_key(&batch.addr, batch.proxied);
@@ -282,7 +294,16 @@ enum HeaderOutcome {
         new_tip: bool,
         /// The cumulative work of the last header (`Peer::known_work`).
         work: u128,
+        /// The batch stored headers new to us, their proof of work verified
+        /// (`Peer::pow_proven`).
+        stored: bool,
     },
+    /// The sender is an untrusted inbound peer and the header proof-of-work
+    /// budget of its network class, or of all untrusted peers, is exhausted
+    /// (`header_budget`): dropped before (the rest of) its hashing, without
+    /// penalty and without re-requesting. Headers of chunks verified before
+    /// are kept.
+    Throttled,
     /// The batch's cumulative work would not exceed our best header chain's
     /// (and it cannot be the start of a heavier branch, `low_work`): dropped
     /// without proof of work, without penalty and without re-requesting.
@@ -350,7 +371,9 @@ fn batch_seed(hc: &HeaderChain, headers: &[BlockHeader], i: usize) -> Hash {
     }
 }
 
-/// Verifies header batches one at a time (docs/p2p.md §6):
+/// Verifies header batches one at a time (docs/p2p.md §6), trusted senders'
+/// first, then untrusted inbound ones by network class in turn
+/// (`header_budget::HeaderScheduler`):
 /// 1. every rule except proof of work, for the whole batch, before any RandomX
 ///    hash (`ChainManager::precheck_headers`); a violation the sender is
 ///    penalized for rejects the batch without any hash;
@@ -367,7 +390,20 @@ fn batch_seed(hc: &HeaderChain, headers: &[BlockHeader], i: usize) -> Hash {
 /// bounded per origin and in total (`Inner::header_queue_room`); batches of
 /// senders that left or were banned are only pre-checked.
 pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<HeaderBatch>) {
-    while let Some(mut batch) = rx.recv().await {
+    let mut queue = HeaderScheduler::default();
+    loop {
+        while let Ok(b) = rx.try_recv() {
+            queue.push(b);
+        }
+        let Some(mut batch) = queue.pop() else {
+            match rx.recv().await {
+                Some(b) => {
+                    queue.push(b);
+                    continue;
+                }
+                None => return,
+            }
+        };
         let peer = batch.peer;
         let headers = std::mem::take(&mut batch.headers);
         let full = headers.len() as u64 == MAX_HEADERS;
@@ -375,6 +411,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         let last_height = headers.last().map_or(0, |h| h.height);
         let inner2 = inner.clone();
         let addr = batch.addr.clone();
+        let lane = batch.lane;
         // Our header height after the batch is read before the peer's
         // claimed height is corrected below under the same state lock that
         // ends `headers_busy`, so the maintenance loop never sees the peer
@@ -382,7 +419,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         // (R8-15 request loops). The snapshot is published before the
         // actor answers the batch's last command, so it includes the batch.
         let result = tokio::task::spawn_blocking(move || {
-            let outcome = verify_headers(&inner2, peer, &addr, &headers);
+            let outcome = verify_headers(&inner2, peer, &addr, lane, &headers);
             let ours = inner2.summary.load().header_height;
             (outcome, ours)
         })
@@ -411,10 +448,14 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                             advanced,
                             new_tip,
                             work,
+                            stored,
                         }) => {
                             // The sender has this header (announcements,
                             // `Peer::wants_tip`).
                             p.has_header(*last_id, *work);
+                            if *stored {
+                                p.pow_proven = true;
+                            }
                             if *new_tip {
                                 p.last_new_tip = Some(Instant::now());
                             }
@@ -426,6 +467,11 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                             }
                         }
                         Ok(HeaderOutcome::LowWork) if batch.solicited => {
+                            p.height = p.height.min(ours);
+                        }
+                        // Not asked again every tick while the budget is
+                        // empty: until it announces something new.
+                        Ok(HeaderOutcome::Throttled) => {
                             p.height = p.height.min(ours);
                         }
                         // After relaying headers of a block whose body is
@@ -483,6 +529,12 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
             }
             Ok(HeaderOutcome::Failed(e)) => {
                 on_header_error(&inner, &batch, e, last_height, pending).await
+            }
+            Ok(HeaderOutcome::Throttled) => {
+                log::debug!(
+                    "peer {peer}: {count} headers up to height {last_height} not hashed: \
+                     header proof-of-work budget exhausted"
+                );
             }
             Ok(HeaderOutcome::Abandoned) => {}
             // A panic outside the actor (the PoW jobs): stop as for one in it.
@@ -589,17 +641,32 @@ fn precheck(
     })
 }
 
+/// Charges `n` hashes for `lane` to the header PoW budget (`header_budget`):
+/// `false` if the batch is to be dropped unhashed.
+fn charge(inner: &Inner, lane: HeaderLane, n: usize) -> bool {
+    inner.state().header_pow.charge(lane, n, Instant::now())
+}
+
+/// Refunds `n` hashes charged for `lane` whose result was not a proof-of-work
+/// failure the sender is penalized for.
+fn refund(inner: &Inner, lane: HeaderLane, n: usize) {
+    inner.state().header_pow.refund(lane, n, Instant::now());
+}
+
 /// Pre-check, then chunked proof of work and acceptance. Runs on a blocking
 /// thread; the chain actor runs only the cheap steps (Headers lane), never
 /// the hashing. A batch of `k` fresh chunks costs `k + 1` commands: the
 /// pre-check with the first chunk's jobs, then each chunk's acceptance with
 /// the next chunk's jobs (adjacent former lock holds merged: a schedule the
 /// lock allowed). Each command waits for at most one drain step
-/// (docs/p2p.md §10, test L7).
+/// (docs/p2p.md §10, test L7). Every chunk hashed for an untrusted `lane` is
+/// charged to the header PoW budget first and refunded unless it fails for a
+/// reason the sender is penalized for (`header_budget`).
 fn verify_headers(
     inner: &Inner,
     peer: PeerId,
     addr: &NetAddr,
+    lane: HeaderLane,
     headers: &[BlockHeader],
 ) -> HeaderOutcome {
     let now = unix_now();
@@ -671,6 +738,10 @@ fn verify_headers(
         let Some((pow, j)) = jobs.take() else {
             return HeaderOutcome::Unconnected;
         };
+        let hashes = j.len();
+        if !charge(inner, lane, hashes) {
+            return HeaderOutcome::Throttled;
+        }
         pow.compute_parallel(&j, chunk);
         let (b, part, next) = (batch.clone(), part.clone(), parts.get(k + 1).cloned());
         let Some((accepted, next_jobs, main)) = inner.chain_blocking(Lane::Headers, move |c| {
@@ -684,8 +755,16 @@ fn verify_headers(
             return HeaderOutcome::Abandoned;
         };
         match accepted {
-            Ok(n) => new += n,
-            Err((_, e)) => return HeaderOutcome::Failed(e),
+            Ok(n) => {
+                refund(inner, lane, hashes);
+                new += n;
+            }
+            Err((_, e)) => {
+                if !penalized(&e) {
+                    refund(inner, lane, hashes);
+                }
+                return HeaderOutcome::Failed(e);
+            }
         }
         note_clock(inner, peer, &batch[parts[k].clone()], false, now, ftl);
         jobs = next_jobs;
@@ -703,6 +782,10 @@ fn verify_headers(
         let Some((pow, jobs)) = jobs else {
             return HeaderOutcome::Unconnected;
         };
+        let hashes = jobs.len();
+        if !charge(inner, lane, hashes) {
+            return HeaderOutcome::Throttled;
+        }
         pow.compute_parallel(&jobs, 1);
         let b = batch.clone();
         let Some((accepted, work)) = inner.chain_blocking(Lane::Headers, move |c| {
@@ -717,6 +800,9 @@ fn verify_headers(
         }) else {
             return HeaderOutcome::Abandoned;
         };
+        if accepted.as_ref().err().is_none_or(|(_, e)| !penalized(e)) {
+            refund(inner, lane, hashes);
+        }
         match accepted {
             Err((_, e)) => {
                 if let (HeaderError::UnknownUpgrade { version }, Some(work)) = (&e, work) {
@@ -753,6 +839,7 @@ fn verify_headers(
         advanced: new > 0 || !on_main,
         new_tip: new > 0 && on_main,
         work,
+        stored: new > 0,
     }
 }
 
@@ -1264,7 +1351,9 @@ mod tests {
         let addr = NetAddr::parse("1.2.3.4:5").unwrap();
         let verify = |inner: Arc<Inner>| {
             let addr = addr.clone();
-            tokio::task::spawn_blocking(move || verify_headers(&inner, 999, &addr, &[bad]))
+            tokio::task::spawn_blocking(move || {
+                verify_headers(&inner, 999, &addr, HeaderLane::Trusted, &[bad])
+            })
         };
         // Departed (no peer 999), not banned: pre-checked, refused.
         match verify(inner.clone()).await.unwrap() {

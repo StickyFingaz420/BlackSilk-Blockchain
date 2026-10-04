@@ -143,6 +143,12 @@ pub(super) struct Peer {
     /// the snapshot our `Version` came from, so a tip that changed during
     /// the handshake is announced once the peer is registered (RT-SYNC F-B).
     pub(super) announced: Hash,
+    /// The peer delivered headers new to us whose proof of work was valid
+    /// (each such delivery is real work, or the first copy of a header the
+    /// network mined): its later batches are trusted, verified first and not
+    /// budgeted (`header_budget`, docs/p2p.md §6). Never set for junk: a
+    /// failed proof of work disconnects the peer.
+    pub(super) pow_proven: bool,
 }
 
 impl Peer {
@@ -313,6 +319,9 @@ pub(super) struct State {
     /// sender origin (`queue_key`). Bounded (docs/p2p.md §6).
     pub(super) header_queue_len: usize,
     pub(super) header_queue_origin: HashMap<NetAddr, usize>,
+    /// The proof-of-work budget of untrusted header senders
+    /// (`header_budget`, docs/p2p.md §6).
+    pub(super) header_pow: super::header_budget::PowBudget,
     /// Transactions that failed a contextual rule at tip `ctx_rejects_tip`
     /// (not verified again until the tip changes; bounded).
     pub(super) ctx_rejects: HashSet<Hash>,
@@ -442,6 +451,9 @@ pub(super) struct HeaderBatch {
     pub(super) proxied: bool,
     /// An answer to our `GetHeaders` (not a tip announcement).
     pub(super) solicited: bool,
+    /// Its queue and budget (`header_budget::HeaderLane`), fixed when it
+    /// was queued.
+    pub(super) lane: super::header_budget::HeaderLane,
     pub(super) headers: Vec<BlockHeader>,
 }
 

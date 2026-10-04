@@ -951,7 +951,7 @@ One table, deduplicated across all reports.
 | R8-5 | High (Tor) | PI | P2P | Each onion is its own group; no v3 checksum validation | s | SX2 C | open | P1 (P0-pub for Tor) | none | none |
 | R8-6 | Med–High | PI | P2P | SOCKS5 without stream isolation; one exit can MITM all clearnet peers | s,a | SX2 C/U | open | P1 | none | none |
 | R8-7 | High | CV | P2P | Stem conflict check after full `check_tx`: valid double-spend variants cost free CPU | s,t | SX2 CC (the mempool path was already safe) | fixed `12ce4cb` (`conflicting_stem_transactions_are_not_verified`) | done | policy | none |
-| R8-8 | Med–High | PI | P2P | Invalid-PoW single headers from rotating IPs cost one hash each on the single worker | s | SX2 C (gate does not cover invalid PoW) | open | P1 | none | none |
+| R8-8 | Med–High | PI | P2P | Invalid-PoW single headers from rotating IPs cost one hash each on the single worker | s | SX2 C (gate does not cover invalid PoW) | mitigated 2026-10-04: trusted-first header lanes and a node-wide budget of failed hashes (docs/p2p.md §6) | P1 | none | none |
 | R8-9 | Med–High | CV | P2P | Block download timeouts banned honest slow peers | s,t | SX2 CC | fixed `b12b024` | done | policy | none |
 | R8-10 | High (public) | PI | P2P | Outbox is 64 messages (about 605 MB); no upload budget; frame preallocation | m,s | SX2 CC (one large block suffices; receive side is lazy) | open | P1 (P0-pub) | none | none |
 | R8-11 | Med | PI | P2P | Control messages queue behind bulk blocks | s | SX2 C | open | P1 | none | none |

@@ -52,6 +52,22 @@ impl TokenBucket {
         self.tokens >= cost
     }
 
+    /// Takes `cost` tokens unconditionally: the balance may go negative,
+    /// and the debt is repaid by the refill before [`Self::has`] holds
+    /// again. For work whose cost is known only in steps (a header chunk):
+    /// the caller checks `has(1.0)` first.
+    pub fn debit(&mut self, cost: f64, now: Instant) {
+        self.refill(now);
+        self.tokens -= cost;
+    }
+
+    /// Returns `cost` tokens (work that turned out to be paid for, such as
+    /// a header whose proof of work was valid), never above `burst`.
+    pub fn credit(&mut self, cost: f64, now: Instant) {
+        self.refill(now);
+        self.tokens = (self.tokens + cost).min(self.burst);
+    }
+
     /// Takes `cost` tokens if available.
     pub fn take(&mut self, cost: f64, now: Instant) -> bool {
         self.refill(now);

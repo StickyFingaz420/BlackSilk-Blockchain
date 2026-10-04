@@ -33,6 +33,7 @@ mod conn;
 mod dispatch;
 #[cfg(feature = "test-hooks")]
 pub mod fuzzing;
+mod header_budget;
 mod headers;
 mod maintenance;
 mod peers;
@@ -56,6 +57,7 @@ use blacksilk_tx::types::Transaction;
 use blocks::block_worker;
 pub use blocks::BLOCK_WINDOW_BYTES;
 pub use config::{NetConfig, NetStats, PeerInfo};
+pub use header_budget::HeaderPowBudget;
 use headers::header_worker;
 use maintenance::{announce_loop, chain_maintenance_loop, maintenance_loop};
 use peers::{accept_loop, connect_outbound};
@@ -170,6 +172,7 @@ fn new_inner(
         next_handshake: 0,
         header_queue_len: 0,
         header_queue_origin: HashMap::new(),
+        header_pow: header_budget::PowBudget::new(&cfg.header_pow_budget),
         ctx_rejects: HashSet::new(),
         ctx_rejects_tip: [0; 32],
         tx_verifications: 0,
@@ -364,6 +367,8 @@ impl Network {
             px_global_drops: st.px_global_drops,
             tx_lane_drops: st.tx_lane_drops,
             px_global_taken: st.px_global_taken,
+            header_pow_failed: st.header_pow.failed,
+            header_pow_throttled: st.header_pow.throttled,
         }
     }
 

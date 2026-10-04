@@ -76,6 +76,9 @@ pub struct NetConfig {
     /// peers were up this long (default
     /// [`crate::connman::SEED_FALLBACK_AFTER`]).
     pub seed_fallback_after: Duration,
+    /// The proof-of-work budget for headers from untrusted inbound peers
+    /// (docs/p2p.md §6, `HeaderPowBudget`). Tests change it.
+    pub header_pow_budget: super::header_budget::HeaderPowBudget,
 }
 
 impl NetConfig {
@@ -110,6 +113,7 @@ impl NetConfig {
             ping_interval: Duration::from_secs(60),
             addr_fetch_timeout: crate::connman::ADDR_FETCH_TIMEOUT,
             seed_fallback_after: crate::connman::SEED_FALLBACK_AFTER,
+            header_pow_budget: Default::default(),
         }
     }
 }
@@ -167,4 +171,10 @@ pub struct NetStats {
     /// Node-wide PX relay tokens taken since start: PX transactions that
     /// passed every cheap check and went on to full verification.
     pub px_global_taken: u64,
+    /// Header proof-of-work hashes run for untrusted inbound peers that
+    /// failed (charged to the header PoW budget and not refunded).
+    pub header_pow_failed: u64,
+    /// Header batches of untrusted inbound peers dropped unhashed because
+    /// the header PoW budget was exhausted (docs/p2p.md §6).
+    pub header_pow_throttled: u64,
 }
