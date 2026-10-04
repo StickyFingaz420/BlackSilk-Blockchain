@@ -39,6 +39,7 @@ is_consensus_path() {
     tx/src/types.rs | tx/src/codec.rs | tx/src/state.rs) return 0 ;;
     zkvm/src/prove.rs | node/src/fingerprint.rs | px/src/fingerprint.rs) return 0 ;;
     node/src/fingerprint_fixture.txt) return 0 ;;
+    node/src/px_fixture.bin | node/src/px_fixture.txt) return 0 ;;
     chain/src/block.rs | chain/src/emission.rs | chain/src/manager/*) return 0 ;;
     px/*.elf | px/*.id) return 0 ;;
     px/src/prove.rs | px/src/state.rs | px/src/tree.rs) return 0 ;;
