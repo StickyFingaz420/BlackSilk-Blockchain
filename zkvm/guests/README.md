@@ -90,7 +90,7 @@ built at, in two ways:
 
 1. **Panic locations.** The `assert!`s in `px-core/src/hash.rs` (and an array
    bounds check there) recorded their source location,
-   `C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\px-core\src\hash.rs`,
+   `<repo>\px-core\src\hash.rs` (an absolute local Windows path),
    in `.rodata`, so in the id. The guest panic handler ignores it, but the data
    was still linked in.
 2. **Crate hashes.** `px-core` and `zkvm/sdk` are path dependencies outside this
