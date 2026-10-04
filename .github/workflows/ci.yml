@@ -368,11 +368,30 @@ jobs:
       - name: Gate self-tests and tools/tpgate tests (this commit's code)
         env:
           RUSTUP_TOOLCHAIN: "1.98.1"
+        # Each check's output is kept; a failing check's last 60 lines are
+        # also published as an annotation, which anyone can read (job logs
+        # need repository admin rights).
         run: |
-          bash .github/scripts/consensus-gate.sh --selftest
-          bash .github/scripts/lockfile-gate.sh --selftest
-          bash .github/scripts/third-party-gate.sh --selftest
-          cd "$RUNNER_TEMP" && cargo test --locked --manifest-path "$GITHUB_WORKSPACE/tools/tpgate/Cargo.toml"
+          check() {
+            local name="$1"; shift
+            local log="$RUNNER_TEMP/selftest-${name}.log"
+            if "$@" >"$log" 2>&1; then
+              cat "$log"
+            else
+              local status=$?
+              cat "$log"
+              local tail
+              tail="$(tail -n 60 "$log" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk 'BEGIN{ORS="%0A"}{print}')"
+              echo "::error title=${name} failed (exit ${status})::${tail}"
+              return 1
+            fi
+          }
+          fail=0
+          check consensus-gate-selftest bash .github/scripts/consensus-gate.sh --selftest || fail=1
+          check lockfile-gate-selftest bash .github/scripts/lockfile-gate.sh --selftest || fail=1
+          check third-party-gate-selftest bash .github/scripts/third-party-gate.sh --selftest || fail=1
+          check tpgate-tests bash -c 'cd "$RUNNER_TEMP" && cargo test --locked --manifest-path "$GITHUB_WORKSPACE/tools/tpgate/Cargo.toml"' || fail=1
+          exit "$fail"
       - name: Invisible and bidirectional Unicode scan
         if: success() || failure()
         run: bash .github/scripts/unicode-scan.sh
