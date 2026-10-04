@@ -33,13 +33,16 @@
 //! every key is used once, for one body whose tag and associated data bind
 //! `cm`, and the recipient accepts a record only if it recomputes `cm`.
 //!
-//! **Key separation (limits).** The delivery keys of an address derive from
-//! the PX spend secret `sk` and the index alone:
-//! - there is no view/spend separation: no view key from which a scanning
-//!   (watch-only) wallet could derive the delivery keys of every address
-//!   without `sk`. Exporting one address's delivery keys would not give
-//!   `sk` (the derivation is one-way), but no wallet mode does this, and such
-//!   keys would not see spends (nullifiers need `nk`);
+//! **Key separation (limits).** Under derivation 2 (`Derivation::V2`, what
+//! the wallet uses; docs/px.md §3.1) the delivery keys of address `i` derive
+//! from its range's root `ivk_k = H(IVK_RANGE, ivk ‖ k)`, with
+//! `ivk = H(IVK, sk)`, and from `i`:
+//! - one range can be disclosed without `sk` (each step is one-way): a
+//!   [`RangeViewKey`](crate::wallet::RangeViewKey) sees the range's records
+//!   and their spends, an [`IncomingViewKey`](crate::wallet::IncomingViewKey)
+//!   only the records received by its addresses. The flat derivation 1
+//!   (`Derivation::V1`: delivery keys from `sk ‖ i`, so no view key without
+//!   `sk`) is still in this library but not used by the wallet;
 //! - the derivation does not include the network: one seed gives the same PX
 //!   keys (and owner tags) on every network. Address encodings differ per
 //!   network; the keys do not.

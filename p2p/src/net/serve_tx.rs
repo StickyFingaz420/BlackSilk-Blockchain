@@ -13,9 +13,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
-/// `Tx` answers queued in one peer's control outbox or being written: at
-/// most this many frames (half the outbox; the rest stays for pongs and
-/// announcements).
+/// `Tx` answers queued in one peer's answers outbox (`ANSWERS_OUTBOX` in
+/// `conn.rs`, twice this) or being written: at most this many frames; the
+/// rest of that outbox holds their `NotFound`s. Answers no longer share the
+/// control outbox, so pongs and announcements never wait behind them.
 pub(super) const SERVE_TX_FRAMES: usize = 32;
 /// The most one answer step encodes at once (at least one transaction).
 pub(super) const SERVE_TX_BYTES: usize = MAX_RELAY_FRAME;

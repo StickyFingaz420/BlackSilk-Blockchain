@@ -55,7 +55,8 @@ const OUTBOX: usize = 64;
 /// and their `NotFound`s).
 const ANSWERS_OUTBOX: usize = 2 * SERVE_TX_FRAMES;
 
-// `GetTx` answers take at most half of it (TM2-17).
+// Kept from TM2-17, when `GetTx` answers shared the control outbox and took
+// at most half of it; they now have `ANSWERS_OUTBOX`.
 const _: () = assert!(SERVE_TX_FRAMES <= OUTBOX / 2);
 
 /// `Block` frames queued per peer; control messages are sent first (R8-11).

@@ -185,7 +185,7 @@ fn median_time_past_golden() {
 struct RecordingPow(Mutex<Vec<Hash>>);
 
 impl PowFunction for RecordingPow {
-    fn pow_hash(&self, seed: &Hash, _header: &blacksilk_consensus::PowBlob) -> Hash {
+    fn pow_hash(&self, seed: &Hash, _blob: &blacksilk_consensus::PowBlob) -> Hash {
         self.0.lock().unwrap().push(*seed);
         [0; 32] // satisfies every difficulty ≥ 1
     }
@@ -543,8 +543,10 @@ fn header_vectors_match_the_independent_file() {
 /// A RandomX known answer on a mining blob, with BlackSilk's salt
 /// (`"BlackSilk/RandomX/v1"`, #rx-salt): the sample header's blob on regtest,
 /// keyed by the regtest genesis id (the key of blocks 1..=2112). Computed by
-/// this implementation (no independent RandomX with this salt exists here);
-/// it pins the whole PoW input path: blob layout, mining hash, salt.
+/// this implementation and reproduced independently by the reference RandomX
+/// v1.2.3 with only the salt changed (freeze gate B4,
+/// docs/evidence/randomx-reference-2026-10-04/); it pins the whole PoW input
+/// path: blob layout, mining hash, salt.
 #[test]
 fn randomx_known_answer_on_a_mining_blob() {
     let sample = BlockHeader {

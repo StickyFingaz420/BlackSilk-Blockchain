@@ -20,7 +20,7 @@
 //! use blacksilk_randomx::{Cache, Vm};
 //! let cache = Cache::new(b"seed key");
 //! let mut vm = Vm::light(&cache);
-//! let hash = vm.hash(b"block header bytes");
+//! let hash = vm.hash(b"mining blob");
 //! ```
 
 #![forbid(unsafe_code)]

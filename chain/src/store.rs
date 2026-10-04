@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! file    = file header ‖ record*
-//! header  = "BSBH" ‖ LE32 version (2) ‖ LE32 network_id ‖ genesis_id (32)
+//! header  = "BSBH" ‖ LE32 version (3) ‖ LE32 network_id ‖ genesis_id (32)
 //!           ‖ LE32 crc32(the 44 bytes before)                        (48 bytes)
 //! record  = "BSR2" ‖ LE32 n ‖ LE32 crc32(LE32 n ‖ body) ‖ body       (n = |body|)
 //! body    = type (1) ‖ payload
@@ -74,7 +74,8 @@ use std::path::{Path, PathBuf};
 
 const FILE_MAGIC: &[u8; 4] = b"BSBH";
 /// Current `blocks.dat` format version (0 = legacy file without a header,
-/// 1 = untyped records, 2 = 100-byte headers or header-input PoW hashes).
+/// 1 = untyped records, 2 = 100-byte headers or header-input PoW hashes;
+/// 3 = typed records, 172-byte headers, mining-blob PoW hashes).
 pub const FORMAT_VERSION: u32 = 3;
 /// Length of the file header.
 pub const FILE_HEADER: usize = 48;
@@ -243,7 +244,8 @@ impl BlockStore for MemoryStore {
 /// The record layout of a store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Codec {
-    /// Format 2: typed records ("BSR2").
+    /// Format 3 (the current one): typed records ("BSR2"; format 2 used the
+    /// same record layout and is refused by its header version).
     Typed,
     /// Format 0 on regtest only: untyped block records ("BSB1").
     Legacy,
@@ -793,7 +795,12 @@ impl BlockStore for FileStore {
             }
             2 => {
                 return Err(corrupt(format!(
-                    "{path}: block store format version 2 (written before the 172-byte                      header and the mining-blob proof of work, or by an intermediate build                      whose stored proof-of-work hashes are of another input); this build                      reads format {FORMAT_VERSION} only and never migrates old stores. Stop                      the node, move {path} aside (or start with a fresh data directory) and                      start again to resync the chain from its peers (docs/testnet.md §4.5)"
+                    "{path}: block store format version 2 (written before the 172-byte \
+                     header and the mining-blob proof of work, or by an intermediate build \
+                     whose stored proof-of-work hashes are of another input); this build \
+                     reads format {FORMAT_VERSION} only and never migrates old stores. Stop \
+                     the node, move {path} aside (or start with a fresh data directory) and \
+                     start again to resync the chain from its peers (docs/testnet.md §4.5)"
                 )))
             }
             v => {
@@ -1924,6 +1931,9 @@ mod tests {
             other[44..48].copy_from_slice(&crc.to_le_bytes());
             let msg = bind_err(&other);
             assert!(msg.contains(text), "{msg}");
+            // One line of single-spaced text (the format 2 message once
+            // carried runs of spaces from a broken line continuation).
+            assert!(!msg.contains("  ") && !msg.contains('\n'), "{msg:?}");
         }
 
         // Torn header on creation.

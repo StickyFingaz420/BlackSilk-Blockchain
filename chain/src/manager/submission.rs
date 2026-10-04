@@ -129,11 +129,11 @@ impl ChainManager {
         if persist {
             // The header is in the tree, so its seed is defined; the hash is
             // cached from header validation (computed again only if not).
-            let header_bytes = block.header.pow_blob(self.params.network_id);
+            let blob = block.header.pow_blob(self.params.network_id);
             let seed = self
                 .headers
                 .seed_id_for(block.header.prev_id, block.header.height);
-            let pow_hash = self.pow.pow_hash(&seed, &header_bytes);
+            let pow_hash = self.pow.pow_hash(&seed, &blob);
             if let Err(e) = self.store.append(&pow_hash, &block.encode()) {
                 self.store_failures += 1;
                 if self.store.failed() || self.store_failures >= STORE_FAILURE_LIMIT {
