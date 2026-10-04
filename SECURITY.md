@@ -47,8 +47,11 @@ Everything in this repository is in scope. These are especially valuable:
 ## Dependency policy
 
 BlackSilk's core is pure Rust: no C, C++ or assembly is compiled or linked into the
-node, miner, wallet or tools, and BlackSilk's own crates forbid `unsafe` code.
-Dependencies do contain `unsafe` internally (docs/reviews/unsafe-inventory.md).
+node, miner, wallet or tools, and every crate root of the root workspace forbids
+`unsafe` code. The zkVM guest SDK and guest programs are built separately: the SDK has
+one `unsafe` block (the `ecall` instruction), and the guest programs use no `unsafe`
+but do not declare the `forbid`. Dependencies do contain `unsafe` internally
+(docs/reviews/unsafe-inventory.md).
 The rules, checked by the CI job `deny` on every push and weekly:
 - crates come from crates.io only, with the checksums in the committed `Cargo.lock`
   files, and every CI build uses `--locked`; the one exception is the patched copies
