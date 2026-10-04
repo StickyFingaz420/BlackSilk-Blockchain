@@ -14,12 +14,12 @@ project; docs/reviews/dependency-review.md records what was read.
 **BlackSilk's own crates** declare `#![forbid(unsafe_code)]` at every crate
 root (CI job `lint`); the only `unsafe` in the repository outside
 `third_party/` is the zkVM guest SDK's `ecall`, which runs inside the VM,
-not in a shipped binary. `third_party/` holds three patched Plonky3 crates
+not in a shipped binary. `third_party/` holds four patched Plonky3 crates
 that keep upstream's `unsafe` unchanged; they are path crates and so not
-listed below (their registry originals `p3-dft`, `p3-fri`,
+listed below (their registry originals `p3-batch-stark`, `p3-dft`, `p3-fri`,
 `p3-merkle-tree` 0.7.0 are the reviewed baseline, third_party/README.md).
 
-**Graph:** 222 crates.io crates; 144 contain `unsafe`, 78 do not.
+**Graph:** 221 crates.io crates; 143 contain `unsafe`, 78 do not.
 `proc-macro` crates run inside the compiler at build time only; `lib`
 crates are linked into the binaries. "Root lint" is the crate's own
 `unsafe_code` lint in `src/lib.rs`, if any.
@@ -149,7 +149,6 @@ crates are linked into the binaries. "Root lint" is the crate's own
 | 2 | form_urlencoded | 1.2.2 | lib | - |
 | 2 | futures-sink | 0.3.34 | lib | - |
 | 2 | http-body | 1.1.0 | lib | - |
-| 2 | p3-batch-stark | 0.7.0 | lib | - |
 | 2 | rand_core | 0.6.4 | lib | - |
 | 2 | serde | 1.0.229 | lib | - |
 | 2 | serde_core | 1.0.229 | lib | - |

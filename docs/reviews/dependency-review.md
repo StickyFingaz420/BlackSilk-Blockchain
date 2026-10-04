@@ -142,9 +142,9 @@ vector scripts (test tooling, decisions "Agent 01" and "Agent 05").
   and fee rules use no floating point, clocks or randomness.
 - **Hash maps** are either used for lookups only or sorted before iteration where the
   order matters.
-- **Proof bytes** are *not* reproducible from a seed, upstream or patched: the lock
-  order is scheduling-dependent (third_party/README.md). Nothing depends on
-  reproducible proofs.
+- **Proof bytes** are reproducible from (witness, seed) since the `p3-batch-stark`
+  patch (PXDET-1, third_party/README.md). Upstream draws the quotient randomness in
+  scheduling order. Consensus does not depend on reproducible proofs.
 - **Builds:** the kernel guest rebuild was byte-identical; its program id is pinned.
 
 ## 5. RustSec advisory check (2026-09-25)

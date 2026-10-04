@@ -3191,12 +3191,17 @@ the `REVISIONS` entry and the one re-pin, and both merge together.
   the manifest and are pinned by `node/tests/px_fixture.rs`).
 - **Determinism.** Two generations from the same seeds gave the same deploy but not
   the same PX transaction: the bytes first differ at offset 3,438 (the prunable part)
-  and the second encoding is longer. The prover is not bit-reproducible for a fixed
-  witness and RNG (the cause is not established; the RNG is seeded and no OS
-  randomness is read on this path). The first output is pinned; the generator is never
-  run in CI, and a regeneration gives a different, equally valid fixture whose
-  samples need a new re-pin. Open: find the source of the variation, and whether the
-  proof length varying for a fixed witness is a fingerprint (P-5).
+  and the second encoding is longer. The first output is pinned; the generator is never
+  run in CI, and a regeneration gives a different, equally valid fixture whose samples
+  need a new re-pin.
+  - **Cause (PXDET-1, 2026-10-04):** `p3-batch-stark` drew each table's quotient
+    hiding randomness from the shared PCS RNG inside a parallel loop, in scheduling
+    order. That changed the quotient commitment, then the query positions and the
+    pruned paths, and with them the length.
+  - **Fix:** the `p3-batch-stark` patch (third_party/README.md), prover side only. After
+    it, two regenerations gave identical bytes.
+  - **Privacy (P-5):** the variation was not a witness leak. The lengths follow the
+    public query positions only.
 - **Full verdicts** (`node/tests/px_fixture.rs`, verification only, no proving): the
   golden transaction is valid in full, PX5 included; its `R` variants are refused with
   the `R` errors with and without PX5; any other ciphertext byte change is refused
