@@ -240,22 +240,24 @@ fn consensus_fingerprints_are_pinned() {
 /// §6) and the rules value does not. Re-pinned by RT-FP3 (rules and consensus;
 /// identity unchanged); re-pinned by PX-R (rules and consensus: the golden PX
 /// fixture samples and the revision PX-R:ciphertext-r-canonical-not-identity;
-/// identity unchanged).
+/// identity unchanged); re-pinned by RX-SALT (rules and consensus: BlackSilk's
+/// RandomX salt, the known answer bs-1a and the revision
+/// RX-SALT:blacksilk-randomx-argon2-salt; identity unchanged).
 const TESTNET: [&str; 3] = [
-    "a2b4a5244d16e6692ea4622c3c76f304595fbbfd84d76e835792bf552bc45434",
-    "4b1e5adac907d6e9500b6bb83beeb407a516a3bdaac1c9340ccd577322f03251",
+    "8b96c3a385f3d92c782d3d840d3b0fe570aa20672b6f05e84f88929537c85ead",
+    "9eab5567e5b648177f2c7093cc6b9c840cbff38d2dfc2cef542e56fc739280f5",
     "b333a99f2bcd5d351fe87d043e9cd17d6920c43c09021ea453bc14d9fec4b294",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R).
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT).
 const REGTEST: [&str; 3] = [
-    "e84d2642e844f4908d94616e97dcea6ad64a20a835dac910f992b8e1d3851fe1",
-    "47805b69869ad49db50254b9c967953981545aa35b47a2c916537a798c4f0ffe",
+    "aebaf33756f6d6715b9a3ad0d89d493293d36ca93042ed31249afe7b6e1101bd",
+    "1ad5f7f5b6011ba0c1d79b2db8dd56323ed99513bb8a4b46c4757b9459eb98dc",
     "dfab90c6b92c127ab987cc3285557ad9b71ccd29c05bf2024531c54f10f6cf87",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R). The mainnet
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT). The mainnet
 /// parameters are provisional; mainnet is not launched.
 const MAINNET: [&str; 3] = [
-    "1fcb4385f2647bbf3259e10b33517644f978aeca85ae1f1cd07ed5c26f9b35cc",
-    "0e54ab0b4bc580e180defe1e171f8ac6202c97d93ce2e0c9df726338ef095035",
+    "67a1e4b9737ff9d2ea9d5fde6c614fdca1647235bfb7e93796e44c65905af9cb",
+    "55353dc42b5f0b5322514c6a8eaba6f20d0c44c19fe001ebc20747f5f59ed612",
     "2dbb1c3703d90367c2d4475adb86a0e57c1d8c6ebe5f698f53baa7ec27465088",
 ];

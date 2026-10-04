@@ -9,7 +9,7 @@
 //!    lowest of their tips.
 //! 2. **Light mode:** every header's RandomX hash, from fresh light caches
 //!    built here. The key height comes from this file's own copy of the key
-//!    schedule (Monero `rx/0`: epoch 2048, lag 64), the key from the header
+//!    schedule (Monero's: epoch 2048, lag 64), the key from the header
 //!    chain fetched, and the target check is this file's own 256-bit multiply
 //!    against the header's difficulty.
 //! 3. **Consensus:** the same headers are fed to a `HeaderChain` (difficulty,
@@ -79,8 +79,9 @@ struct Args {
     corrupt_nonce: Option<u64>,
 }
 
-/// Monero `rx/0` key schedule, written out here rather than taken from
-/// `blacksilk_consensus::seed_height`: the key height of a block at `height`.
+/// The key schedule (Monero's: epoch 2048, lag 64), written out here rather
+/// than taken from `blacksilk_consensus::seed_height`: the key height of a
+/// block at `height`.
 fn key_height(height: u64, epoch: u64, lag: u64) -> u64 {
     if height <= epoch + lag {
         0

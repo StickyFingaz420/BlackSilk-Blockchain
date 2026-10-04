@@ -15,7 +15,7 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 
 | Area | Design | Spec |
 |---|---|---|
-| Proof of work | RandomX v1, exactly Monero's `rx/0` (pure-Rust implementation; the reference test vectors it pins are listed in [randomx/README.md](randomx/README.md)), Monero key schedule | [consensus.md](docs/consensus.md) |
+| Proof of work | RandomX v1 with BlackSilk's own Argon2 salt, `"BlackSilk/RandomX/v1"`; every other parameter is Monero's `rx/0` (pure-Rust implementation; the reference test vectors it still pins, with Monero's salt, and BlackSilk's own vectors are listed in [randomx/README.md](randomx/README.md)), Monero key schedule | [consensus.md](docs/consensus.md) |
 | Difficulty | LWMA-1 with a 75-block window and a counted clock, 2-minute blocks | [consensus.md §4](docs/consensus.md) |
 | Sender privacy | CLSAG ring signatures, ring size 16, key images | [transactions.md](docs/transactions.md) |
 | Receiver privacy | one-time stealth outputs, view tags, subaddresses, **Janus anchor** | [transactions.md §3, §12](docs/transactions.md) |
@@ -41,9 +41,10 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
   consensus on any network ([research/wasm-contracts.md](docs/research/wasm-contracts.md),
   [contracts/README.md](contracts/README.md)). The old marketplace stays parked in
   `legacy/`.
-- **Not a strong PoW network yet.** The testnet's PoW is Monero's `rx/0`: anyone with
-  rented or JIT-mined `rx/0` hash power can out-mine it (an accepted limitation,
-  [docs/STATUS.md](docs/STATUS.md) §6).
+- **Not a strong PoW network yet.** The testnet's PoW is RandomX with BlackSilk's own
+  salt. Stock `rx/0` hash power cannot be pointed at it unmodified, but anyone who
+  adds the salt to a JIT miner (minutes of work) or rents generic CPUs can out-mine it
+  (an accepted limitation, [docs/STATUS.md](docs/STATUS.md) §6).
 
 ## Repository layout
 

@@ -36,6 +36,7 @@ they are never renamed. Index:
 - fingerprint-v3 (node, px, zkvm, consensus network id, tools/genesis; W4-40); Follow-up (RT-FP3) (FX-RTFP3)
 - px-proof-decode-bounds (zk, px, tx, p2p admission; W4-PXDOS)
 - px-ciphertext-r (tx; PX-R)
+- rx-salt (randomx; RX-SALT)
 
 New sections are appended at the end.
 
@@ -3218,3 +3219,294 @@ the `REVISIONS` entry and the one re-pin, and both merge together.
   consensus digests that hash them. Re-pinned (`node/tests/deploy_configs.rs`, `[consensus, rules]`):
   testnet `a2b4a524…`, `4b1e5ada…`; regtest `e84d2642…`, `47805b69…`; mainnet
   `1fcb4385…`, `0e54ab0b…`. Identity unchanged.
+
+<a id="rx-salt"></a>
+
+## rx-salt: BlackSilk's own RandomX Argon2 salt, `"BlackSilk/RandomX/v1"`
+
+Revision: RX-SALT:blacksilk-randomx-argon2-salt
+
+Owner: Lead (RX-SALT). Decision: owner approval of 2026-10-04: keep RandomX v1 and
+change **only** the Argon2 salt, so that existing Monero/RandomX hash power and rental
+markets cannot be pointed at BlackSilk without modification. The research is the
+SKC-1 cross-check (`C:/bszkeval/skc1-combined/skc1-combined-summary.md` §2 F3, F5,
+F16, F17 and §4(a), outside the repository) and the I4 review
+(`full-review-2026-09-27/I4-sustainability-scaling-pq.md` §2, §7.2: "change only the
+salt, never sizes or frequencies"). Internal engineering work, not an audit.
+
+1. **Problem.** BlackSilk's proof of work was byte for byte Monero's `rx/0`
+   (`randomx/src/config.rs`: `ARGON_SALT = b"RandomX\x03"`, every other parameter the
+   reference default). A block's PoW input is a header and a 32-byte key, and stock
+   RandomX hashes any key and blob. So every existing `rx/0` source could mine
+   BlackSilk **without modification**:
+   - stock xmrig `rx/0`;
+   - NiceHash's RandomX market (SKC-1 F5: about 0.12 GH/s for sale, about $40 per
+     MH/s-day, 10²–10⁵ times any plausible BlackSilk honest hash rate);
+   - pools and Qubic-style `rx/0` aggregators;
+   - RandomX ASICs on stock firmware (Antminer X5/X9; F3: they mine other `rx/0`
+     chains).
+
+   This is the "same algorithm, not merge-mined" quadrant that I4-1 calls the worst
+   one for a small chain (also R1-C2, R15-2).
+2. **Demonstrated failure.** Before this change the consensus fingerprint's pinned
+   RandomX known answer **was** the reference implementation's vector 1a
+   (`FINGERPRINT_KAT` = `639183aa…4e3f`, `randomx/src/lib.rs`). The function a
+   BlackSilk node uses to verify PoW (`RandomXPow` → `Cache::new` → `Vm::light`)
+   returned exactly the reference RandomX hash for every key and input. A header that
+   any `rx/0` miner hashed under the block's key was therefore valid BlackSilk PoW.
+3. **Prior art.**
+   - **RandomX designers** (tevador/RandomX `doc/configuration.md`, checked
+     2026-10-04): "We recommend each project using RandomX to select a unique
+     configuration to prevent network attacks from hashpower rental services". On
+     `RANDOMX_ARGON_SALT`: "Every implementation should choose a unique salt value";
+     permitted values "a string of at least 8 characters". Changing the other default
+     values "is not recommended", apart from functionally equivalent
+     instruction-frequency pairs.
+   - **The reference enforces the length** (`src/common.hpp`):
+     `constexpr int ArgonSaltSize = sizeof("" RANDOMX_ARGON_SALT) - 1;` and
+     `static_assert(ArgonSaltSize >= 8, …)`. Argon2 itself requires a salt of at least
+     8 bytes (RFC 9106 §3.1; `ARGON2_MIN_SALT_LENGTH`).
+   - **Deployed variants** (xmrig `src/crypto/randomx/randomx.cpp` and
+     `src/crypto/rx/RxAlgo.cpp`, checked 2026-10-04):
+
+     | Project | Salt | Other changes |
+     |---|---|---|
+     | Monero `rx/0` | `"RandomX\x03"` | none (reference) |
+     | Wownero | `"RandomWOW\x01"` | program iterations and count, L2/L3 sizes, 8 frequencies |
+     | ArQmA | `"RandomARQ\x01"` | Argon2 iterations 1, program iterations and count, L2/L3 sizes |
+     | Graft | `"RandomX-Graft\x01"` | Argon2 lanes 2, program size 280, 2 frequencies |
+     | Safex | `"RandomSFX\x01"` | **none: salt only** |
+     | YadaCoin | `"RandomXYadaCoin\x03"` | superscalar latency 150, Argon2 iterations 4 |
+     | Monero RandomX v2 | `"RandomX\x03"` | program size 384 and the v2 tweaks (not activated in Monero; SKC-1 F8) |
+
+     Tari's RandomX lanes and Zephyr use plain `rx/0` with their own keys
+     (secondary sources, SKC-1 F3, F15). That is the configuration BlackSilk had.
+     Safex is the precedent for a salt-only variant. The others also changed program,
+     memory or Argon2 parameters, which the designers advise against. ArQmA's
+     variant, for example, has one Argon2 pass and a quarter of the L3 scratchpad.
+4. **Rule.** The RandomX cache of key `K` is the raw Argon2d memory
+   (256 MiB, 3 passes, 1 lane, version 0x13, `outlen = 0` in `H0`) of password `K` and
+   salt **`"BlackSilk/RandomX/v1"`**: 20 bytes, ASCII, no terminator, hex
+   `426c61636b53696c6b2f52616e646f6d582f7631`. Every other RandomX v1 parameter, the
+   VM, the dataset, the key schedule (`E = 2048`, `L = 64`) and the target check are
+   unchanged. The salt enters only `H0`, so every cache, every dataset and every hash
+   differs from `rx/0`'s.
+   - **Why this string:**
+     - It is at least 8 bytes (the reference's `static_assert`, the Argon2 minimum).
+     - It has no NUL byte. The reference takes the length as `sizeof - 1` of a
+       string literal, and xmrig's `ArgonSalt` is a `const char*` read with
+       `strlen`, so a NUL would silently truncate the salt in both. A compile-time
+       assertion in `config.rs` checks both rules.
+     - It is printable ASCII, so it can be copied into a C++ string literal, a
+       miner's configuration or documentation without escapes or encoding mistakes.
+     - It follows the project's domain-tag convention, `BlackSilk/<purpose>/v<N>`, as
+       in `BlackSilk/genesis-nonce/v1` and `BlackSilk/pow-cache/v2`.
+     - It names its version. `v1` is RandomX v1; a later move to RandomX v2 would take
+       a new salt, for example `/v2`, so the two PoWs never share caches.
+     - It is distinct from every salt listed in step 3.
+   - **What the salt is not.** It is public and has no secrecy role. Any distinct
+     string separates the hash function equally well; the choice affects only
+     readability and portability.
+5. **Alternatives.**
+   - **Keep `rx/0`** (the status quo): zero-effort redirection stays possible (step 1).
+     Rejected by the owner decision.
+   - **Salt plus program, size or frequency changes** (Wownero, ArQmA, Graft style):
+     rejected. The designers advise against them. They leave the analysed parameter
+     set, and some lower the memory hardness (ArQmA). They also cost no more for an
+     attacker to port than a salt does (xmrig has a one-line constructor per variant;
+     SKC-1 F17).
+   - **RandomX v2 with a BlackSilk salt:** not implemented in this crate (no v2 code
+     or vectors), and v2 is not activated in Monero (SKC-1 F8). It would be its own
+     reviewed change, with salt `/v2`.
+   - **Merge mining with Monero** (Tari RxM model): rejected (I4 §2.3, SKC-1 §4(b)).
+     It needs an aux-PoW header, makes validators build caches for Monero-chosen
+     keys, and links BlackSilk blocks to Monero pools (a privacy cost).
+   - **A new PoW (SKC-1):** "redesign required" (SKC-1 §1); not before the v3 freeze.
+   - **A salt per network** (I4 §7.2 sketched a typed per-network parameter): not
+     adopted. One PoW identity for all networks keeps one set of vectors, one
+     fingerprint entry and one miner configuration. The networks are already
+     separated by their genesis ids, and therefore by their RandomX keys. The
+     "typed" part of the I4 sketch is `blacksilk_randomx::Variant`
+     (`BlackSilk`, `MoneroRx0`), which keeps the official vectors running.
+   - **A short binary-versioned salt** in the upstream style (for example
+     `"RandomBSK\x01"`): equally valid. Not chosen, because of the escape and
+     printability point in step 4.
+6. **Affected components.**
+   - `randomx/src/config.rs`:
+     - `ARGON_SALT = b"BlackSilk/RandomX/v1"`;
+     - `ARGON_SALT_MONERO = b"RandomX\x03"`, for the reference vectors only;
+     - compile-time salt rules (at least 8 bytes, no NUL, the two salts distinct).
+   - `randomx/src/argon2d.rs`: `fill_memory` takes the salt as a parameter (no
+     algorithm change).
+   - `randomx/src/dataset.rs`:
+     - `Cache::new` and `Cache::try_new` build BlackSilk's cache;
+     - `Cache::with_variant(key, Variant)` builds either cache;
+     - `Cache::variant` and `Dataset::variant` report which one was built.
+   - `randomx/src/lib.rs`:
+     - `pub enum Variant { BlackSilk, MoneroRx0 }` with `argon_salt()`;
+     - `FINGERPRINT_KAT` is now BlackSilk's bs-1a;
+     - `config_entries()` reports the new `ARGON_SALT` automatically, because the
+       fingerprint reads it from the crate.
+   - `randomx/src/self_test.rs`:
+     - `Vector` gains `variant`;
+     - `VECTORS` (the reference 1a–1f, `MoneroRx0`), `BLACKSILK_VECTORS` (bs-1a to
+       bs-1f) and `START_UP_VECTORS` (all six reference vectors plus bs-1a to bs-1c);
+     - `check_light` and `check_full` build one cache per (variant, key);
+     - `check_dataset` also compares the variant.
+   - `node/src/fingerprint.rs`: the `randomx.variant` text, the REVISIONS entry, and
+     the pinned KAT in the manifest test.
+   - `node/src/main.rs`, `node/src/lib.rs`, `miner/src/main.rs`: self-test messages
+     and counts (`START_UP_VECTORS`).
+   - **Follow without a code change** (they call `Cache::new`, `Cache::try_new`,
+     `hash_light` or `RandomXPow`):
+     - `consensus/src/pow.rs` (`RandomXPow`, `SeedCache`);
+     - the chain manager's PoW cache and pool (`chain/src/manager/pow_cache.rs`: an
+       in-memory map keyed by seed and header, no salt-dependent persistent state);
+     - the miner (`SeedPlanner`, light and full mode);
+     - wallet header sync;
+     - `tools/labnet` `rx_verify`.
+   - **Pinned RandomX values searched for** (every `Cache`, `hash_light`, `RandomXPow`
+     and 64-hex-digit literal in `chain/`, `consensus/`, `miner/`, `p2p/`, `wallet/`,
+     `node/`, `tools/` and the fixtures `node/src/*fixture*`, `consensus/tests/data`,
+     `crypto/tests/vectors`, `px/tests/data`, `wallet/tests/data`). The only pinned
+     RandomX hashes were in `randomx/src/lib.rs`, `randomx/src/self_test.rs` and the
+     fingerprint test.
+     - Tests that use real RandomX (`chain/tests/manager.rs`, `pow_pool*.rs`,
+       `seed_switch.rs`, `consensus/tests/randomx_end_to_end.rs`, `seed_cache.rs`,
+       `seed_switch_liveness.rs`, the miner's tests) mine live or compare
+       `RandomXPow` with `hash_light`, so they follow the salt.
+     - Fixture chains use test PoW functions (`ZeroPow`-style, `BAD_NONCE`), not
+       RandomX.
+     - The genesis is never PoW-validated (blocks.md §3); its nonce comes from the
+       beacon, not from mining.
+     - The fingerprint fixture holds transactions only.
+     - Nothing needed regenerating beyond the vectors and the re-pin.
+   - **CI `randomx-full`:** the same command. The ignored full-mode tests now also
+     build BlackSilk's dataset for `test key 000` (four datasets instead of three).
+   - **Docs:** `docs/consensus.md` §3 and §9; `docs/testnet.md` §2.1, §4.2, §5 and
+     §12.6; `docs/STATUS.md`; `README.md`; `randomx/README.md`.
+7. **Proof statement.** The PoW is not part of any PX statement, kernel, circuit or
+   program id. No ELF, `CIRCUIT_ID` or PX fingerprint change
+   (`px/tests/consensus_fingerprint.rs` does not move).
+8. **Activation.** Part of the v3 genesis rule set; no activation height. The testnet
+   v3 has not launched (the testnet reset is authorized).
+9. **Compatibility.** This replaces the PoW function, so it is neither a tightening nor
+   a loosening. A header valid before is valid after only by chance (probability about
+   `1/difficulty`). Consequences:
+   - Builds before and after the change reject each other's blocks. The consensus
+     fingerprint of every network moves, so operators see that they differ.
+   - A block store written by an earlier build holds PoW hashes under the old salt.
+     The start-up re-check of stored hashes (blocks.md §8, `StorePowMismatch`, exit
+     66) refuses such a store at the first sampled block, and its chain fails the new
+     PoW anyway. Regtest and development data directories are discarded with the
+     fingerprint change.
+10. **Reorg.** None: the PoW function is the same at every height and on every branch.
+11. **Wallet.** No change. A wallet that verifies headers uses `RandomXPow`.
+12. **Mining.**
+    - **This project's miner** builds its caches and datasets with `Cache::new` and
+      `Cache::try_new`, so it mines BlackSilk's PoW. Its start-up self-test now
+      includes the BlackSilk vectors. A miner built before the change still passes
+      its own self-test, but mines blocks the node rejects. Operators must upgrade
+      the node and the miner together.
+    - **Third-party miners:**
+      - Stock xmrig `rx/0`, NiceHash's RandomX market and stock `rx/0` firmware now
+        produce hashes BlackSilk rejects.
+      - A BlackSilk-capable xmrig is a one-line configuration
+        (`ArgonSalt = "BlackSilk/RandomX/v1";` in a copy of the Monero
+        configuration) plus a work bridge, which does not exist (J1).
+    - **Limits** (said plainly):
+      - The change removes **zero-effort** redirection of existing `rx/0` hash power
+        only. An attacker who builds that xmrig variant needs minutes (SKC-1 F17) and
+        can then use generic CPU or cloud capacity, or ASICs if their firmware can be
+        rebuilt (unverifiable; SKC-1 F3).
+      - It does not make the network secure against a determined renter, a botnet or
+        a large pool. K1 ("PoW honest majority is nominal") stands.
+      - It does not make anything ASIC-proof. It also removes plug-and-play honest
+        mining with stock tools, which the project did not support anyway.
+13. **P2P.** No message or policy change. A peer on the old PoW sends headers that
+    fail `check_hash` and is penalized as for any invalid PoW (docs/p2p.md §10).
+14. **Vectors and regression tests.**
+    - **BlackSilk vectors** bs-1a to bs-1f: the keys and inputs of the reference's 1a
+      to 1f hashed with BlackSilk's salt (light mode). Each differs from the reference
+      answer.
+
+      | Vector | Key | Hash |
+      |---|---|---|
+      | bs-1a | `test key 000` | `424838440b398cd20d703905167a6d07b19816b0ab246b678218649fa7d70802` |
+      | bs-1b | `test key 000` | `7d742273815a73a2fea8b7e0102bf8b47d6b7cd2657a3cd7a7d2dd9f4e798d8f` |
+      | bs-1c | `test key 000` | `182e687dcbd7d60daecef46c8b7a3369fa0b0e5517d21b57a31b1bf7ff9c5bb6` |
+      | bs-1d | `test key 001` | `7c5f9da95f68936abddc00535549716ccb5c1c5965fe31fc7cd8d047950bcede` |
+      | bs-1e | `test key 001` | `a4687b72af500c1e764655b42db9580ee0b72a6c06b8020d97597ec037b2c1bf` |
+      | bs-1f | 31-byte key of 1f | `2d2e59cff0b64955878021d9c35b3300f93980434522b15e8cde421210ca35ae` |
+
+      BlackSilk cache words 0, 1568413 and 33554431 for `test key 000`:
+      `0x17e29b325605d985`, `0xef0cec13efeca6e3`, `0x822616767d3ded6b`.
+    - **How they were generated:** by this crate (`Cache::new` and `Vm::light`, release
+      build), with a temporary test that was removed. Two independent arguments
+      support them:
+      1. **The salt-dependent stage is checked independently.** The salt enters only
+         the Argon2d fill. `argon2_crate_fills_the_same_cache` fills the 256 MiB with
+         the RustCrypto `argon2` crate 0.5.3 (`Argon2::fill_memory`, which hashes `H0`
+         with an empty output exactly as RandomX does). It compares every one of the
+         33,554,432 words with this crate's cache, for BlackSilk's salt and for the
+         reference salt as the control. Both agree.
+         - The `argon2` crate is a separate implementation already locked by the
+           wallet; it is a dev-dependency of `blacksilk-randomx` only. The lockfile
+           gains only the dependency edge, no new crate or version.
+      2. **Everything after the cache is salt-independent code** checked by the
+         official vectors: superscalar programs (keyed by the key, not the salt),
+         dataset items, the VM and the hash chain. Full mode, a different code path
+         (an expanded dataset), reproduces bs-1a to bs-1c
+         (`full_mode_matches_light_mode`, `the_full_mode_check_passes`).
+    - **Limitation:** no second complete RandomX implementation was run with the
+      BlackSilk salt. The reference C++ implementation cannot enter the repository.
+      **Reproduction recipe** (not run here): build any tevador/RandomX v1 release (v1.2.1 or later)
+      with `#define RANDOMX_ARGON_SALT "BlackSilk/RandomX/v1"` in
+      `src/configuration.h`. Then `randomx_init_cache(cache, "test key 000", 12)` and
+      `randomx_calculate_hash(vm, "This is a test", 14, out)` must give bs-1a.
+      Equivalently, use xmrig's `RandomX_ConfigurationBase` with that `ArgonSalt`.
+      Running it is an open point.
+    - **Regression tests (`randomx`):**
+      - `cache_initialization`, `hash_1a` to `hash_1f` and `dataset_items`: the
+        official vectors, unchanged, now built with `Variant::MoneroRx0`;
+      - `blacksilk_cache_initialization`;
+      - `argon2_crate_fills_the_same_cache`;
+      - `blacksilk_vectors` (all six; the fingerprint KAT is bs-1a; `hash_light` is
+        BlackSilk's);
+      - `config_entries_are_the_reference_values` (the new salt);
+      - `try_new_builds_the_same_cache` (BlackSilk's);
+      - `self_test::the_vectors_are_the_reference_ones` (the sets and the start-up
+        set);
+      - `the_self_test_passes_and_detects_a_wrong_answer` (a BlackSilk vector checked
+        under the Monero salt fails, so the variant is really used);
+      - the ignored full-mode tests (BlackSilk's dataset added).
+    - **Node:** the manifest test pins `randomx.KAT.hash` = bs-1a and
+      `randomx.ARGON_SALT`.
+    - **Start-up self-test:** four caches instead of three (step 15).
+15. **Suite results and open review points.** The results are in the commit message.
+    Open:
+    - The reproduction with the reference implementation (step 14) has not been run.
+    - The start-up self-test builds one more cache (bs-1a to bs-1c under
+      `test key 000`): about a third more work than with three caches (5.6–11.7 s
+      measured, docs/testnet.md §4.2). `blacksilk-node --randomx-self-test` took 10.1 s
+      and 9.5 s with the nine answers (2026-10-04, 4-core Windows workstation loaded by
+      other builds; dev profile, which compiles RandomX at `opt-level = 3`). bs-1d to
+      bs-1f run in the crate's tests only.
+    - Mainnet: the same salt applies to every network. A RandomX v2 move would be a
+      new reviewed change with its own salt.
+
+### Fingerprint revision
+
+- `REVISIONS` gains `RX-SALT:blacksilk-randomx-argon2-salt`.
+- The rules and consensus fingerprints of every network move once; the identity
+  fingerprints do not.
+- Entry-level diff (`--print-manifest` for every network, base `8ccc24c` built in its
+  own target directory, against this change): the only changed entries are
+  `randomx.variant`, `randomx.ARGON_SALT` (`0x52616e646f6d5803` →
+  `0x426c61636b53696c6b2f52616e646f6d582f7631`), `randomx.KAT.hash`,
+  `rules.revision.len` 14 → 15 and the new `rules.revision[14]`, and the encodings
+  and digests that hash them.
+- Re-pinned (`node/tests/deploy_configs.rs`, `[consensus, rules]`): testnet
+  `8b96c3a3…`, `9eab5567…`; regtest `aebaf337…`, `1ad5f7f5…`; mainnet `67a1e4b9…`,
+  `55353dc4…`. Identity unchanged (testnet `b333a99f…`, regtest `dfab90c6…`, mainnet
+  `2dbb1c37…`).

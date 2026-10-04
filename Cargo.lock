@@ -384,6 +384,7 @@ name = "blacksilk-randomx"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "argon2",
  "blake2",
  "hex",
 ]

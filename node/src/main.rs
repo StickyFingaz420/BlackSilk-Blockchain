@@ -97,9 +97,9 @@ fn self_test_only() -> ! {
     match randomx_self_test() {
         Ok(took) => {
             println!(
-                "RandomX self-test passed: {} reference vectors (light mode, the node's \
-                 verification path) in {took:.1?}",
-                blacksilk_randomx::self_test::VECTORS.len()
+                "RandomX self-test passed: {} known answers (reference and BlackSilk, light \
+                 mode, the node's verification path) in {took:.1?}",
+                blacksilk_randomx::self_test::START_UP_VECTORS.len()
             );
             std::process::exit(0)
         }
@@ -284,8 +284,9 @@ fn run(cfg: Config) -> Result<(), Stop> {
             message,
         })?;
         log::info!(
-            "RandomX self-test passed: {} reference vectors (light mode) in {took:.1?}",
-            blacksilk_randomx::self_test::VECTORS.len()
+            "RandomX self-test passed: {} known answers (reference and BlackSilk, light mode) \
+             in {took:.1?}",
+            blacksilk_randomx::self_test::START_UP_VECTORS.len()
         );
     }
 
