@@ -808,7 +808,7 @@ never used in any check or sent to a peer:
     (§8.1): like a restarted relay, it has the transaction only once a peer
     announces it and it fetches it, and it re-announces it from that pool height
     (`rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay`,
-    `a_restarted_origin_never_reannounces_its_held_copy`).
+    `a_restarted_origin_never_reannounces_its_held_copy` in `p2p/tests/privacy.rs`).
   - Before TM2-P1 (2026-10-02) the origin counted from the height it relayed the
     transaction for when that was earlier. That height is fixed at submission,
     before the stem, so a block found during the stem made the origin alone
@@ -817,7 +817,8 @@ never used in any check or sent to a peer:
     once, while every other node counted from the readmission: a spy opening fresh
     connections identified the origin with certainty
     (`a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first`,
-    `after_a_reorganization_the_origin_reannounces_with_everyone`). A restarted
+    `after_a_reorganization_the_origin_reannounces_with_everyone`, both in
+    `p2p/tests/privacy.rs`). A restarted
     origin re-announced the copy it pooled for its wallet from its relay height
     too.
   - Only peers not known to have the transaction get the announcement (the per-peer
@@ -940,7 +941,7 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   (`Expired` up to the window's last block after a restart, then one `StemTx`),
   `a_peers_stem_of_a_transaction_this_node_originated_is_relayed`,
   `a_restarted_origin_never_reannounces_its_held_copy` (silent while a relay
-  re-announces it), `rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay`,
+  re-announces it; in `p2p/tests/privacy.rs`), `rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay`,
   the unit tests of `originated.rs` and `p2p/tests/rt_originated.rs`.
 - **Limits.** The set protects against re-origination by this node only. A wallet
   that submits the same transaction to another node, or a node without this set,
@@ -961,7 +962,21 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   embargo then fluffs the transaction first, naming the origin to its peers. There is
   no local re-stem on the first embargo expiry and no separate PX embargo (dossier 33
   W3, W4: not implemented).
-- No privacy regression suite tests these properties (docs/STATUS.md §3).
+
+### 8.2 The privacy regression suite (the gate for relay changes)
+
+`p2p/tests/privacy.rs` (dossier 33 W1, cross-check G9) is the required gate for every
+change to transaction relay, Dandelion++, the trickle, address relay and the
+transaction request tracker: such a change merges only with the suite passing
+(`cargo test -p blacksilk-p2p --test privacy`), and a change that fixes an open
+property un-ignores its test in the same commit. Each test names the property it
+guards and its source. It covers held local transactions, a diffuser stemming its own
+transaction, the three TM2-P1 re-announcement cases, uniform `InvTx` order, and
+`GetAddr` answered only to inbound peers. Two open properties are `#[ignore]`d tests
+that fail today with `-- --ignored`: the slow-lane stempool timing oracle (TM2-P6)
+and the stem black hole through a full Tx lane with no local re-stem (X1, TM2-P4).
+The suite tests these properties; it does not show that the relay protects origins
+against spy nodes or a link observer (above).
 
 ## 9. Peer discovery and the address manager
 
