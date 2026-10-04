@@ -30,9 +30,10 @@ All integers are unsigned and little-endian unless stated otherwise.
 **Parameter invariants** (`ChainParams::check`, enforced when a `HeaderChain` is
 built and at node start-up): `2 ≤ T < 2^51`; `N ≥ 1` and `T·N·(N+1) < 2^64` (§4's
 `u128` bound); `1 ≤` median-time-past window `≤ 11` (the counted clock's warm-up);
-`1 ≤ FTL ≤ 7200 s`; `E` a power of two and `L < E`; `D0 ≥ 1`; the genesis header has
-height 0, zero parent and `tx_root`, difficulty `D0` and the first epoch's header
-version. The schedule table is validated when it is built (§11).
+`1 ≤ FTL ≤ 7200 s`; `E` a power of two and `1 ≤ L < E`; `D0 ≥ 1`; the genesis header
+has height 0, zero parent and `tx_root`, `output_count` 0, zero `output_root`,
+`px_root = EMPTY_PX_ROOT`, difficulty `D0` and the first epoch's header version.
+The schedule table is validated when it is built (§11).
 
 The genesis header of each network is built in `params.rs` from a `GenesisSpec`
 (`consensus/src/genesis.rs`): network id, timestamp, `D0`, and the network's
@@ -131,7 +132,8 @@ the hash of the full 172-byte header, nonce included.
   32 bits); a pool server owns bytes 43..47 (the high 32 bits) as extranonce, so
   workers never overlap: the pool rebuilds the header's nonce as
   `(extranonce << 32) | xmrig_nonce`. Solo mining (`blacksilk-miner`) iterates the
-  whole `u64`.
+  whole `u64`. No pool or stratum server is part of BlackSilk; `blacksilk-miner`
+  mines solo via `/template`. The pool layout above is what the blob allows.
 - **Security.** The blob has a fixed length and is derived by every node from the
   header; it is never transmitted inside blocks, so there is no padding or optional
   field a miner could vary to get equal-work duplicates (the Tari RandomX-T
@@ -186,8 +188,10 @@ Why:
     docs/testnet.md §12.1. Nodes verify in light mode and only need a new 256 MiB
     cache (about 0.6 s).
   - The first switch is at height 2113 (then 4161, …). The switch has been exercised
-    only in a test with a short epoch (16 blocks, lag 4, `chain/tests/manager.rs`),
-    not at 2113 with the network parameters.
+    only in short-epoch tests (16 blocks, lag 4: `chain/tests/manager.rs`,
+    `chain/tests/seed_switch.rs` with real RandomX in light mode,
+    `node/tests/tip_notify.rs` for the template's `next_seed_id`), not at 2113 with
+    the network parameters.
 - The seed block must be looked up **on the header's own branch**. On a fork deeper
   than the lag, the two branches can use different keys.
 
@@ -321,7 +325,8 @@ A header `B` whose parent `P` is known and not invalid is valid iff, in this ord
 4. Median-time-past (§5 rule 1)
 5. Future time limit (§5 rule 2), the only non-permanent rule, after every
    permanent rule but PoW
-6. PoW: `check_hash(RandomX(seed_id(B.height), bytes(B)), B.difficulty)` (§3)
+6. PoW: `check_hash(RandomX(seed_id(B.height), pow_blob(B)), B.difficulty)`, with the
+   47-byte mining blob of §3
 
 Validity does not depend on the order (it is the conjunction of the rules); the
 order decides which error is reported, and so whether the sender is penalized.
@@ -381,7 +386,7 @@ root(n)     = H32("output-mmr/root", LE64(n) ‖ peaks(n)[0] ‖ … ‖ peaks(n
 A block is valid only if its `output_count` is its parent's plus its outputs and its
 `output_root` is the `root` of that range (B-OMR). The node keeps every node of the
 range (about 64 bytes per output), so the range after any connected block is a lookup;
-a miner extends the parent's peaks, which `/template` carries (blocks.md §9.4). A
+a miner extends the parent's peaks, which `/template` carries (blocks.md §9). A
 wallet holding a list of outputs checks it against one header: the count and the root.
 
 ## 8. Chain selection and reorganization
@@ -412,9 +417,9 @@ wallet holding a list of outputs checks it against one header: the count and the
   docs/reviews/k4-reorg-policy.md). **No limit and no checkpoints.** The
   chain with the most work wins at any depth, so honest nodes always converge. The
   cost is that an attacker with more hash power can rewrite any amount of history
-  (assumptions.md K1, K4). Reorganizations of `DEEP_REORG_WARN_DEPTH` = 10 blocks or
-  more are logged as warnings, and the node keeps the deepest one seen
-  (`ChainManager::deepest_reorg`) for monitoring.
+  ([reviews/assumptions.md](reviews/assumptions.md) K1, K4). Reorganizations of
+  `DEEP_REORG_WARN_DEPTH` = 10 blocks or more are logged as warnings, and the node
+  keeps the deepest one seen (`ChainManager::deepest_reorg`) for monitoring.
 - **Options not adopted:**
   - a hard depth limit: nodes that saw different branches could split permanently,
     and an attacker could partition the network deliberately;
@@ -432,7 +437,7 @@ wallet holding a list of outputs checks it against one header: the count and the
   **designed** to be bit-identical on every CPU and compiler. **Verified** only on
   x86_64: the official vectors pass on Windows (locally) and the test suite on Linux
   (CI). There is no ARM64 run and no cross-platform comparison of identical chain
-  hashes (assumptions.md K5).
+  hashes ([reviews/assumptions.md](reviews/assumptions.md) K5).
 - **RandomX conformance evidence** (`randomx/README.md`, "Verification status"): the
   official hash vectors 1a–1f of the reference (tevador/RandomX v1.2.3, including 1f,
   the ISUB_R immediate edge case of upstream PR #326) and its cache, dataset,
@@ -440,10 +445,14 @@ wallet holding a list of outputs checks it against one header: the count and the
   (`Variant::MoneroRx0`). That is 6 end-to-end hashes under 3 keys. BlackSilk's salt
   changes only the Argon2 fill. That fill is compared word for word with the
   independent RustCrypto `argon2` crate for both salts. BlackSilk's own answers
-  bs-1a to bs-1f were generated by this crate; no second complete RandomX
-  implementation has computed them (record #rx-salt has a reproduction recipe). There is no comparison against the reference at scale (no reference
-  corpus, no oracle for the software rounding emulation), and no vector has
-  BlackSilk's 32-byte-key, 172-byte-header shape.
+  bs-1a to bs-1f were generated by this crate. The reference implementation
+  (tevador/RandomX v1.2.3 with only the salt changed) reproduced bs-1a to bs-1f and
+  the known answer on a 47-byte mining blob (`randomx_known_answer_on_a_mining_blob`,
+  `consensus/tests/golden.rs`) on 2026-10-04, in light mode only; full mode was not run
+  against the reference ([evidence](evidence/randomx-reference-2026-10-04/README.md);
+  record #rx-salt has a reproduction recipe). There is no comparison against the
+  reference at scale (no reference corpus, no oracle for the software rounding
+  emulation).
 - **RandomX full mode** (what the miner uses) must reproduce the official hash vectors
   and BlackSilk's bs-1a to bs-1c, and agree with light mode (what nodes verify with)
   on 512 random inputs per key. The
@@ -476,8 +485,9 @@ wallet holding a list of outputs checks it against one header: the count and the
 
 ## 11. Upgrades: the rule-set schedule
 
-*v3 candidate. Design, alternatives and the integration still owed by other
-components: [`reviews/v3-upgrade-mechanism.md`](reviews/v3-upgrade-mechanism.md).*
+*Part of the v3 rule set. Design, alternatives and the integration by other
+components (written while v3 was a candidate):
+[`reviews/v3-upgrade-mechanism.md`](reviews/v3-upgrade-mechanism.md).*
 
 `ChainParams.schedule` is a table of epochs (`consensus/src/schedule.rs`). Each epoch
 has an activation height, a header version, a branch id and a PX verifier id. The
@@ -514,8 +524,9 @@ What the epoch fixes:
   penalized.
 - Validate a block at height `h` with the transaction rules of `epoch_at(h)`
   (`TxRules::at_height`).
-- When the next height crosses an activation (`Schedule::activation_in`), flush the
-  mempool: pooled transactions are bound to the old branch.
+- The mempool is flushed when any transaction rule changes (`Mempool::enter_rules`),
+  for example when the next height crosses an activation: pooled transactions are
+  bound to the old branch.
 - `TxRules::for_chain` panics on a schedule with more than one epoch, so no caller
   can keep the first epoch's rules by accident.
 
