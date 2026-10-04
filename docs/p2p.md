@@ -1,6 +1,9 @@
 # BlackSilk Peer-to-Peer Protocol
 
 Status: **v1**, implemented by `blacksilk-p2p` (`p2p/`) and wired into `blacksilk-node`.
+"v1" in this document names this specification. The wire versions are separate:
+transport version 1 (`TRANSPORT_VERSION`, §3) and protocol version 3
+(`PROTOCOL_VERSION` = `MIN_PROTOCOL_VERSION` = 3, §4).
 
 This protocol is not consensus. Nodes agree on validity through
 [`consensus.md`](consensus.md), [`transactions.md`](transactions.md) and
@@ -105,7 +108,8 @@ k_i→r   = k[0..32],  k_r→i = k[32..64]
 - **Closed-network pre-shared key** (optional, F48-1). A private test network can give
   every member the same 32 secret bytes (`NetConfig::network_psk`; a file of 64
   hexadecimal characters, for example from `openssl rand -hex 32`, read by
-  `NetworkPsk::load`). The key is mixed into `k`, so a node without it, or with another
+  `NetworkPsk::load`; operators set it with `--network-psk-file` or
+  `[p2p] network_psk_file`). The key is mixed into `k`, so a node without it, or with another
   key, fails at the first frame, and so does a man in the middle: without a key he can
   run the handshake with both ends and read everything (`p2p/tests/transport_adversarial.rs`,
   `a_man_in_the_middle_reads_the_traffic_unless_a_psk_is_set`). Limits: one leaked key
@@ -240,13 +244,13 @@ sender, so `MIN_PROTOCOL_VERSION` rose to 3 with it: v2 and v3 nodes refuse each
 at the handshake instead. Old `peers.json` files stay readable (the table format did
 not change).
 
-How a later version (v3) adds a feature without splitting the network:
+How a later version (v4) adds a feature without splitting the network:
 - **New `Version` fields** are appended after `relay_txs`, in order. A decoder reads the
   fields it knows and ignores the rest, so old nodes still complete the handshake.
 - **New message types** are sent only to peers whose `protocol` is at least the version
-  that defines them. Older v2 peers ignore them anyway (§5), so a mistake costs
+  that defines them. Older v3 peers ignore them anyway (§5), so a mistake costs
   bandwidth, not a ban.
-- **Negotiation** may use messages of new types between `Version` and `Verack`: a v2
+- **Negotiation** may use messages of new types between `Version` and `Verack`: a v3
   node skips up to 8 frames of unknown types there. Each must fit in
   `MAX_HANDSHAKE_FRAME` (4096 bytes), and the whole negotiation in the 20 s handshake
   deadline: deployed nodes enforce both, so a later version cannot relax them without a
@@ -254,7 +258,7 @@ How a later version (v3) adds a feature without splitting the network:
 - No feature bitfield was added: with nothing to negotiate yet it would only be a
   constant, and each bit set later would fingerprint software versions. The protocol
   number carries the same information for features every node of a version supports.
-  A v3 that needs optional per-node features can append one; that is the fingerprint
+  A v4 that needs optional per-node features can append one; that is the fingerprint
   trade-off to decide then.
 
 ## 5. Messages
@@ -386,7 +390,7 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
    - **Cost bound.** A batch that breaks a cheap rule costs no RandomX hash. One that
      fails the proof of work costs at most one chunk of hashes beyond its last valid
      header, and the sender is banned. Before 2026-09-27 every header of a batch was
-     hashed first: up to 2000 × 0.45 s ≈ 900 CPU-seconds per junk message.
+     hashed first: up to 2000 × ~0.5 s ≈ 1000 CPU-seconds per junk message.
    - **No hash for a sender about to be banned.** If the pre-check finds a violation
      the sender is penalized for, the batch is rejected before any hash, and nothing
      of it is stored. Only failures that are not the sender's fault (a future
@@ -408,7 +412,7 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
      - Otherwise the batch is dropped: no hash, nothing stored, no penalty, and the
        peer is not asked again because of it.
      - Why: once LWMA is driven to difficulty 1 (timestamps 6T apart from an old
-       block), valid headers cost an attacker nothing, but each cost ~0.45 s of
+       block), valid headers cost an attacker nothing, but each cost ~0.5 s of
        RandomX to verify and would be stored forever. Such a branch claims ~1 work
        per header, far below the threshold once our difficulty is above ~2.
    - **Headers of an unknown version (RT-1, RTW1-1).** A header whose version is above
@@ -464,7 +468,9 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
      `a_header_announced_during_a_batch_is_asked_for_again_and_scored`).
    - **Bounded queue.** At most `max_per_ip` batches per sender IP (onion peers: per
      address; not enforced in `allow_private` mode, like the connection limit) and
-     `2 × (max_inbound + max_outbound)` in total are queued. When full, the headers
+     `2 × (max_inbound + max_outbound)` trusted batches in total are queued
+     (untrusted inbound batches have their own bound, `max_inbound`, so they never
+     take a trusted batch's room). When full, the headers
      are dropped and the peer is asked again once there is room. Before 2026-09-27
      the batches of departed senders stayed queued without bound: an attacker
      reconnecting (or rotating IPs) could queue batch after batch and starve honest
@@ -611,8 +617,8 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
      9.45 MB): **3 blocks** per peer in practice (at least one is always allowed).
      Before 2026-09-27 the window was 16 blocks, up to 151 MB, which a peer on a
      home connection could not deliver within the 60 s timeout. The cost is a lower
-     download rate for small blocks (3 per round trip per peer); a v3 inventory
-     message with body sizes would lift it.
+     download rate for small blocks (3 per round trip per peer); an inventory message
+     with body sizes in a later protocol version would lift it.
    - A block counts in its peer's window from the request until it has been
      **processed** (connected or rejected), not merely received, so the block
      worker's queue is bounded by the windows.
@@ -1005,9 +1011,9 @@ never used in any check or sent to a peer:
     never offered.
   - The answer is **paced** (TM2-17; `net/serve_tx.rs`): at most `SERVE_TX_BYTES`
     (`MAX_RELAY_FRAME`, at least one transaction) per step, and each `Tx` is queued
-    only while the peer has fewer than `SERVE_TX_FRAMES` (32, half its control
-    outbox) answers queued or being written. The rest of the outbox stays free for
-    pongs and announcements. Meanwhile that peer's slow lane waits, as Bitcoin Core
+    only while the peer has fewer than `SERVE_TX_FRAMES` (32) answers queued or
+    being written. Answers use their own answers outbox (§10), so the control
+    outbox stays free for pongs and announcements. Meanwhile that peer's slow lane waits, as Bitcoin Core
     stops processing a peer's messages while its send buffer is full. The
     `NotFound` comes last and ends the answer. An id named twice in one `GetTx` is
     answered once.
@@ -1651,7 +1657,8 @@ dropped.
   (`HeaderError::UnknownUpgrade`, docs/consensus.md §11): the peer probably runs a
   newer release. It is not penalized; the operator warning follows the rules of §6
   ("Headers of an unknown version": outbound reporters only, required-difficulty work
-  gate, 2 distinct network groups);
+  gate, 2 distinct network groups, or one whose header reaches our best chain's
+  work);
 - within `ACTIVATION_GRACE_BLOCKS` (60) of an activation height, on either side, a
   transaction whose PX proof or ring signature fails: it may be bound to the
   neighbouring rule set's branch id (`TxError::is_stateless_at`);
@@ -1704,7 +1711,7 @@ the 30 s pong timeout, so the link was cut
   - Answers to our own requests are exempt: a block we requested from that peer and
     are still waiting for, and headers while our `GetHeaders` is outstanding.
   - Their volume is already bounded by our requests: the block window (§6: 32 MiB
-    per peer) and one header batch (at most 200 kB).
+    per peer) and one header batch (at most about 344 kB: 2000 × 172 bytes).
   - Before 2026-09-27 requested blocks were charged too. During a sync of large (PX)
     blocks the node dropped the blocks it had asked for, penalized the honest sender,
     and re-requested them after a timeout.
@@ -1990,7 +1997,7 @@ the 30 s pong timeout, so the link was cut
   and no post-quantum step, and its first bytes are recognizable (§3.1). Frames are
   not padded, so a link observer sees when a node originates a transaction, v1 or
   PX (§1).
-- PoW verification of headers costs about 0.45 s per header in RandomX light mode.
+- PoW verification of headers costs about 0.5 s per header in RandomX light mode.
   Parallel verification divides this by the number of cores. Initial sync of a long
   chain is still slow until RandomX gets faster (AUDIT.md R1).
 - **Cheap valid-PoW headers (R1-C1), partly closed.** The work gate (§6) keeps
@@ -2064,7 +2071,7 @@ the 30 s pong timeout, so the link was cut
   batch, and a batch being hashed is not preempted.
 - **Per-hop block latency** (RT-LAB F2). A node announces a block only after it has
   connected it: it verifies the header's RandomX proof of work in light mode (about
-  0.45 s per header, above), then downloads and connects the body. Relaying the
+  0.5 s per header, above), then downloads and connects the body. Relaying the
   header before the body connects, and a faster light-mode verifier, are design
   notes, not implemented; the announcement itself no longer waits for the maintenance
   tick (§6). No multi-hop figure is measured yet.
@@ -2116,10 +2123,10 @@ the 30 s pong timeout, so the link was cut
       tip of the network), is not budgeted; each such identity costs one junk
       chunk before it is disconnected;
     - the budget has not run against a live adversary.
-- **Send buffers are bounded in messages, not bytes** (64 control frames, 32 blocks
-  per peer), so a slow-reading peer can pin hundreds of megabytes; and a `GetTx` for
-  more than 64 transactions may overflow the 64-slot control outbox and disconnect
-  the honest requester (not yet reproduced by a test).
+- **The block outbox is bounded in messages, not bytes** (32 `Block` frames per
+  peer), so a slow-reading peer can pin hundreds of megabytes. `GetTx` answers have
+  their own outbox and byte budget (§7, §10; test
+  `a_gettx_for_more_transactions_than_an_outbox_is_served_in_full`).
 - There is no compact-block relay; a full block is sent once per peer that lacks it.
 - Dandelion++'s parameters follow Monero (q = 0.2, 39 s mean embargo), plus a 10 s
   embargo base. They have not been re-tuned for BlackSilk's network size.
