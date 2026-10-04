@@ -13,18 +13,26 @@
 //! had it (timing-based origin inference; RES-FREEZE §4.5(2), §8.6-4a,
 //! dossier 33 W5). The identities are kept apart (IPv4, IPv6, onion, and
 //! each local endpoint): one timer for all of them would release at the same
-//! instant on, say, our onion service and our IPv4 address, and so tell a
-//! spy connected to both that they are one node. Bitcoin Core PR #33464
+//! instant on, say, our onion service and our IPv4 address; with one timer
+//! each, the trickle timer does not link them. Every timer releases at its
+//! own drawn instant ([`trickle_loop`]), never on the maintenance tick's
+//! grid, which would make every gap between two identities' releases a
+//! whole number of ticks (RT-R1 F1). Bitcoin Core PR #33464
 //! (merged 2025-10-03) has the same two properties: one inbound timer per
 //! "network key" (the peer's network class, onion for its onion service,
 //! plus the local bind address and port), outbound timers per peer.
 
+use super::relay::remember;
+use super::state::{shuffle, Inner, Peer, State, OWED_IDS};
 use crate::addr::NetAddr;
 use crate::dandelion::exponential;
+use crate::message::{Message, MAX_INV};
 use rand_chacha::rand_core::RngCore;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 
 /// The network an inbound peer reached us through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -62,15 +70,26 @@ impl TrickleKey {
     }
 }
 
-/// The shared inbound timers, one per [`TrickleKey`] in use.
+/// The shared inbound timers, one per [`TrickleKey`] in use, and the
+/// wake-up of [`trickle_loop`].
 #[derive(Default)]
 pub(super) struct InboundTrickle {
     timers: HashMap<TrickleKey, Instant>,
+    /// Woken when a peer's empty queue gets an id: a new identity gets its
+    /// timer, an outbound peer's deadline is slept to, at once.
+    wake: Arc<Notify>,
 }
 
 impl InboundTrickle {
-    /// The keys whose timer fired by `now`, each then drawn again (`now` +
-    /// Exp(`mean`)). A key first seen gets a fresh timer (not fired); keys
+    /// Wakes [`trickle_loop`] (a permit is kept if it is not waiting).
+    pub(super) fn wake(&self) {
+        self.wake.notify_one();
+    }
+
+    /// The keys whose timer fired by `now`, each then drawn again: the
+    /// instant it fired + Exp(`mean`), so the process does not depend on
+    /// when the loop woke (or `now` + Exp(`mean`) if that is already past,
+    /// after a stall). A key first seen gets a fresh timer (not fired); keys
     /// not in `live` (no inbound peer left) are forgotten, so the map holds
     /// only the node's own current identities.
     pub(super) fn fire(
@@ -89,17 +108,96 @@ impl InboundTrickle {
                 .entry(key)
                 .or_insert_with(|| now + exponential(mean, rng));
             if *timer <= now {
-                *timer = now + exponential(mean, rng);
+                let next = *timer + exponential(mean, rng);
+                *timer = if next > now {
+                    next
+                } else {
+                    now + exponential(mean, rng)
+                };
                 fired.insert(key);
             }
         }
         fired
     }
 
+    /// When the next timer fires.
+    fn earliest(&self) -> Option<Instant> {
+        self.timers.values().min().copied()
+    }
+
     /// When `key`'s timer fires next (tests).
     #[cfg(test)]
     fn next(&self, key: &TrickleKey) -> Option<Instant> {
         self.timers.get(key).copied()
+    }
+}
+
+/// The longest sleep of [`trickle_loop`]: a bound, not a schedule (every
+/// release is at its own timer's instant; a first queued id wakes the loop
+/// at once).
+const MAX_SLEEP: Duration = Duration::from_secs(1);
+
+/// Releases announcement queues at their timers' exact instants: it sleeps
+/// until the earliest timer (an inbound identity's, or an outbound peer's
+/// with ids queued), releases what is due, and sleeps again. Not on the
+/// maintenance tick (RT-R1 F1): releases on a fixed grid would put every
+/// gap between two identities' releases at a whole number of ticks, a
+/// signature linking them. The state lock is held only for one pass over
+/// the peers.
+pub(super) async fn trickle_loop(inner: Arc<Inner>) {
+    let wake = inner.state().inbound_trickle.wake.clone();
+    loop {
+        let now = Instant::now();
+        let until = release_due(&inner, now).min(now + MAX_SLEEP);
+        tokio::select! {
+            _ = tokio::time::sleep_until(until.into()) => {}
+            _ = wake.notified() => {}
+        }
+    }
+}
+
+/// Releases every queue whose timer is due at `now`; returns when the next
+/// timer is due.
+fn release_due(inner: &Inner, now: Instant) -> Instant {
+    let mut st = inner.state();
+    let State {
+        peers,
+        inbound_trickle,
+        rng,
+        ..
+    } = &mut *st;
+    let live = peers.values().filter_map(|p| p.trickle);
+    let fired = inbound_trickle.fire(live, now, inner.cfg.trickle_inbound, rng);
+    let mut next = inbound_trickle.earliest().unwrap_or(now + MAX_SLEEP);
+    for p in peers.values_mut() {
+        if p.inv_queue.is_empty() {
+            continue;
+        }
+        match p.trickle {
+            Some(key) if fired.contains(&key) => release(p, now, rng),
+            Some(_) => {}
+            None if now >= p.next_inv => release(p, now, rng),
+            None => next = next.min(p.next_inv),
+        }
+    }
+    next
+}
+
+/// Sends `p`'s queue as `InvTx` messages of at most 500 ids, in a fresh
+/// random order (RT4: the order ids were queued in says nothing to the
+/// peer), and remembers what it was told.
+fn release(p: &mut Peer, now: Instant, rng: &mut impl RngCore) {
+    let mut queue = std::mem::take(&mut p.inv_queue);
+    shuffle(&mut queue, rng);
+    remember(&mut p.announced_to, queue.iter().copied());
+    for h in &queue {
+        p.recent_inv.push_back((*h, now));
+    }
+    while p.recent_inv.len() > OWED_IDS {
+        p.recent_inv.pop_front();
+    }
+    for chunk in queue.chunks(MAX_INV as usize) {
+        let _ = p.out.try_send(Message::InvTx(chunk.to_vec()));
     }
 }
 
@@ -186,8 +284,10 @@ mod tests {
     }
 
     /// One timer per key: every peer of a key is released by the same fire;
-    /// keys never fire together by construction (independent draws), and a
-    /// key with no inbound peer left is forgotten.
+    /// keys have independent continuous draws, so two keys are due at the
+    /// same instant with probability 0 (and `trickle_loop` releases each at
+    /// its own instant, not on a shared tick); a key with no inbound peer
+    /// left is forgotten.
     #[test]
     fn each_key_has_one_timer_and_keys_are_independent() {
         let mut rng = ChaCha20Rng::seed_from_u64(3);

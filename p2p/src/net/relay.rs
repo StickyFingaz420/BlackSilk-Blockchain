@@ -48,12 +48,18 @@ impl Inner {
     /// knows or was told. An outbound peer's queue is released by its own
     /// timer, started (Exp(`trickle_outbound`)) when the queue was empty; an
     /// inbound peer's by its network identity's shared timer, which ticks
-    /// whatever is queued (`trickle`, `maintenance_loop`).
+    /// whatever is queued (`trickle::trickle_loop`, woken here).
     fn queue_inv(&self, st: &mut State, peer: PeerId, ids: Vec<Hash>) {
-        let State { peers, rng, .. } = st;
+        let State {
+            peers,
+            rng,
+            inbound_trickle,
+            ..
+        } = st;
         let Some(p) = peers.get_mut(&peer).filter(|p| p.relay_txs) else {
             return;
         };
+        let was_empty = p.inv_queue.is_empty();
         for id in ids {
             if p.known_txs.contains(&id) || p.announced_to.contains(&id) {
                 continue;
@@ -62,6 +68,9 @@ impl Inner {
                 p.next_inv = Instant::now() + exponential(self.cfg.trickle_outbound, rng);
             }
             p.inv_queue.push(id);
+        }
+        if was_empty && !p.inv_queue.is_empty() {
+            inbound_trickle.wake();
         }
     }
 }

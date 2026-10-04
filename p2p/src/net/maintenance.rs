@@ -3,8 +3,7 @@
 //!   it (RT-LAB F2), at most once per [`ANNOUNCE_MIN_GAP`];
 //! - [`maintenance_loop`] never waits for the chain lock: Dandelion epochs,
 //!   held local transactions, tip announcements (the fallback of
-//!   [`announce_loop`], from the published chain summary), trickle flush,
-//!   pings, timeouts, header re-requests, outbound dialing and saving keep
+//!   [`announce_loop`], from the published chain summary), pings, timeouts, header re-requests, outbound dialing and saving keep
 //!   their schedule during any long chain command (F34-2);
 //! - [`chain_maintenance_loop`] does the work that needs the chain: download
 //!   scheduling (from the published snapshot, first), embargo fluffs (each
@@ -17,17 +16,16 @@ use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
 use super::dispatch::MAX_RELAY_FRAME;
 use super::headers::{add_grace, HEADERS_TIMEOUT};
 use super::peers::maintain_outbound;
-use super::relay::{reannounce_pool, remember};
+use super::relay::reannounce_pool;
 use super::serve_tx::SLOW_RATE;
-use super::state::{short, shuffle, unix_now, Inner, State, StemEntry, OWED_IDS};
+use super::state::{short, unix_now, Inner, State, StemEntry};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
 use super::tx_requests::Actions;
 use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
 use crate::message::Message;
 use blacksilk_consensus::Hash;
-use rand_chacha::rand_core::{RngCore, SeedableRng};
-use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::RngCore;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -140,48 +138,16 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
         announce_tip(&inner);
         let header_height_now = inner.summary.load().header_height;
 
-        // Trickled announcements, pings, timeouts.
+        // Pings, timeouts (announcements are released at their exact
+        // instants by `trickle::trickle_loop`, never on this tick's grid).
         let mut timed_out = Vec::new();
         let mut too_slow = Vec::new();
         {
             let mut st = inner.state();
-            // The inbound identities whose shared timer fired: all their
-            // peers are released in this pass (`trickle`).
-            let fired = {
-                let State {
-                    peers,
-                    inbound_trickle,
-                    rng,
-                    ..
-                } = &mut *st;
-                let live = peers.values().filter_map(|p| p.trickle);
-                inbound_trickle.fire(live, now, inner.cfg.trickle_inbound, rng)
-            };
             let ids: Vec<PeerId> = st.peers.keys().copied().collect();
             for pid in ids {
                 let nonce = st.rng.next_u64();
-                let mut rng = ChaCha20Rng::seed_from_u64(st.rng.next_u64());
                 let p = st.peers.get_mut(&pid).expect("listed");
-                let due = match &p.trickle {
-                    Some(key) => fired.contains(key),
-                    None => now >= p.next_inv,
-                };
-                if !p.inv_queue.is_empty() && due {
-                    let mut queue = std::mem::take(&mut p.inv_queue);
-                    // Every flush in a fresh random order (RT4): the order
-                    // ids were queued in says nothing to the peer.
-                    shuffle(&mut queue, &mut rng);
-                    remember(&mut p.announced_to, queue.iter().copied());
-                    for h in &queue {
-                        p.recent_inv.push_back((*h, now));
-                    }
-                    while p.recent_inv.len() > OWED_IDS {
-                        p.recent_inv.pop_front();
-                    }
-                    for chunk in queue.chunks(500) {
-                        let _ = p.out.try_send(Message::InvTx(chunk.to_vec()));
-                    }
-                }
                 // A seed's address fetch that got no answer in time.
                 if p.kind == ConnKind::AddrFetch
                     && now.duration_since(p.connected_at) > inner.cfg.addr_fetch_timeout
