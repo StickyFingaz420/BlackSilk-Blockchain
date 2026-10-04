@@ -698,7 +698,37 @@ fn strictly_increasing<T: Ord>(items: impl IntoIterator<Item = T>) -> bool {
     true
 }
 
-/// Structure of a PX transaction (the PX counterpart of T1, T3–T8, T10, T11).
+/// The PX ciphertext `R` rule (docs/reviews/v3-consensus-changes.md
+/// `px-ciphertext-r`; docs/px.md §6, §11.3): every record ciphertext is
+/// exactly [`CIPHERTEXT_BYTES`] long, and its first 32 bytes, the ephemeral
+/// key `R`, are a canonical ristretto255 encoding (RFC 9496 decoding, the
+/// same `Point::decode` as every v1 point) of a point other than the
+/// identity. The ristretto255 group has prime order, so a canonical decoding
+/// is a complete group-membership check. Nothing else in the ciphertext is
+/// checkable (the view tag is a hash byte, every ML-KEM-768 ciphertext of the
+/// right length is well formed, and the AEAD body is pseudorandom).
+///
+/// A wrong length cannot come from `decode` (which reads exactly
+/// `CIPHERTEXT_BYTES`); it is refused here, as non-canonical, for
+/// transactions built in memory. The non-canonical check comes first, so a
+/// non-canonical encoding of the identity is reported as non-canonical.
+pub fn check_ciphertext_r(ciphertexts: &[Vec<u8>; 2]) -> Result<(), TxError> {
+    for (ciphertext, c) in ciphertexts.iter().enumerate() {
+        let r: Option<&[u8; 32]> = (c.len() == CIPHERTEXT_BYTES)
+            .then(|| c.get(..32).and_then(|r| r.try_into().ok()))
+            .flatten();
+        let point = r
+            .and_then(Point::decode)
+            .ok_or(TxError::PxCiphertextRNonCanonical { ciphertext })?;
+        if point.is_identity() {
+            return Err(TxError::PxCiphertextRIdentity { ciphertext });
+        }
+    }
+    Ok(())
+}
+
+/// Structure of a PX transaction (the PX counterpart of T1, T3–T8, T10, T11),
+/// and the ciphertext `R` rule ([`check_ciphertext_r`]).
 pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
     let n = tx.inputs.len();
     let k = tx.outputs.len();
@@ -758,6 +788,7 @@ pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
     if tx.nullifiers[0] == tx.nullifiers[1] {
         return Err(TxError::PxNullifierRepeated);
     }
+    check_ciphertext_r(&tx.ciphertexts)?;
     if tx.pseudo_outs.len() != n {
         return Err(TxError::PseudoOutCount);
     }
@@ -892,4 +923,240 @@ pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxEr
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! The ciphertext `R` rule (`check_ciphertext_r`; record
+    //! `px-ciphertext-r`), case by case.
+
+    use super::*;
+
+    fn hex32(s: &str) -> [u8; 32] {
+        assert_eq!(s.len(), 64);
+        let mut b = [0u8; 32];
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).expect("hex");
+        }
+        b
+    }
+
+    /// The base point's encoding: a valid, non-identity `R`.
+    fn base() -> [u8; 32] {
+        blacksilk_crypto::generators::G.compress().to_bytes()
+    }
+
+    /// A ciphertext of the fixed length whose `R` is `r`.
+    fn ct(r: [u8; 32]) -> Vec<u8> {
+        let mut c = vec![0x5a; CIPHERTEXT_BYTES];
+        c[..32].copy_from_slice(&r);
+        c
+    }
+
+    fn check(c0: Vec<u8>, c1: Vec<u8>) -> Result<(), TxError> {
+        check_ciphertext_r(&[c0, c1])
+    }
+
+    const NON_CANONICAL_0: Result<(), TxError> =
+        Err(TxError::PxCiphertextRNonCanonical { ciphertext: 0 });
+    const NON_CANONICAL_1: Result<(), TxError> =
+        Err(TxError::PxCiphertextRNonCanonical { ciphertext: 1 });
+
+    /// RFC 9496 Appendix A.2, "Invalid Encodings": encodings that MUST be
+    /// rejected (Section 4.3.1). Copied from the RFC text
+    /// (rfc-editor.org/rfc/rfc9496.txt), in the RFC's groups and order.
+    const RFC9496_INVALID: [&str; 29] = [
+        // Non-canonical field encodings.
+        "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        // Negative field elements.
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "ed57ffd8c914fb201471d1c3d245ce3c746fcbe63a3679d51b6a516ebebe0e20",
+        "c34c4e1826e5d403b78e246e88aa051c36ccf0aafebffe137d148a2bf9104562",
+        "c940e5a4404157cfb1628b108db051a8d439e1a421394ec4ebccb9ec92a8ac78",
+        "47cfc5497c53dc8e61c91d17fd626ffb1c49e2bca94eed052281b510b1117a24",
+        "f1c6165d33367351b0da8f6e4511010c68174a03b6581212c71c0e1d026c3c72",
+        "87260f7a2f12495118360f02c26a470f450dadf34a413d21042b43b9d93e1309",
+        // Non-square x^2.
+        "26948d35ca62e643e26a83177332e6b6afeb9d08e4268b650f1f5bbd8d81d371",
+        "4eac077a713c57b4f4397629a4145982c661f48044dd3f96427d40b147d9742f",
+        "de6a7b00deadc788eb6b6c8d20c0ae96c2f2019078fa604fee5b87d6e989ad7b",
+        "bcab477be20861e01e4a0e295284146a510150d9817763caf1a6f4b422d67042",
+        "2a292df7e32cababbd9de088d1d1abec9fc0440f637ed2fba145094dc14bea08",
+        "f4a9e534fc0d216c44b218fa0c42d99635a0127ee2e53c712f70609649fdff22",
+        "8268436f8c4126196cf64b3c7ddbda90746a378625f9813dd9b8457077256731",
+        "2810e5cbc2cc4d4eece54f61c6f69758e289aa7ab440b3cbeaa21995c2f4232b",
+        // Negative x * y value.
+        "3eb858e78f5a7254d8c9731174a94f76755fd3941c0ac93735c07ba14579630e",
+        "a45fdc55c76448c049a1ab33f17023edfb2be3581e9c7aade8a6125215e04220",
+        "d483fe813c6ba647ebbfd3ec41adca1c6130c2beeee9d9bf065c8d151c5f396e",
+        "8a2e1d30050198c65a54483123960ccc38aef6848e1ec8f5f780e8523769ba32",
+        "32888462f8b486c68ad7dd9610be5192bbeaf3b443951ac1a8118419d9fa097b",
+        "227142501b9d4355ccba290404bde41575b037693cef1f438c47f8fbf35d1165",
+        "5c37cc491da847cfeb9281d407efc41e15144c876e0170b499a96a22ed31e01e",
+        "445425117cb8c90edcbc7c1cc0e74f747f2c1efa5630a967c64f287792a48a4b",
+        // s = -1, which causes y = 0.
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    ];
+
+    #[test]
+    fn valid_r_in_both_ciphertexts_passes() {
+        assert_eq!(check(ct(base()), ct(base())), Ok(()));
+        // Another valid point: 2·G.
+        let g = blacksilk_crypto::generators::G;
+        let two_g = (g + g).compress().to_bytes();
+        assert_eq!(check(ct(two_g), ct(base())), Ok(()));
+    }
+
+    #[test]
+    fn identity_r_is_refused_with_its_index() {
+        assert_eq!(
+            check(ct([0; 32]), ct(base())),
+            Err(TxError::PxCiphertextRIdentity { ciphertext: 0 })
+        );
+        assert_eq!(
+            check(ct(base()), ct([0; 32])),
+            Err(TxError::PxCiphertextRIdentity { ciphertext: 1 })
+        );
+        // The first failing ciphertext is reported.
+        assert_eq!(
+            check(ct([0; 32]), ct([0; 32])),
+            Err(TxError::PxCiphertextRIdentity { ciphertext: 0 })
+        );
+    }
+
+    /// `p = 2^255 − 19` encodes zero non-canonically: refused as
+    /// non-canonical, never as the identity (decoding comes first).
+    #[test]
+    fn p_a_non_canonical_identity_is_non_canonical() {
+        let p = hex32("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+        assert_eq!(check(ct(p), ct(base())), NON_CANONICAL_0);
+        assert_eq!(check(ct(base()), ct(p)), NON_CANONICAL_1);
+        // Zero with the top bit (ignored by field decoding) set.
+        let mut z = [0u8; 32];
+        z[31] = 0x80;
+        assert_eq!(check(ct(z), ct(base())), NON_CANONICAL_0);
+    }
+
+    /// A valid encoding with bit 255 set encodes the same field element a
+    /// second way: refused.
+    #[test]
+    fn the_high_bit_is_refused() {
+        let mut r = base();
+        r[31] |= 0x80;
+        assert_eq!(check(ct(r), ct(base())), NON_CANONICAL_0);
+        assert_eq!(check(ct(base()), ct(r)), NON_CANONICAL_1);
+    }
+
+    /// `s = 1` is a negative field element (odd).
+    #[test]
+    fn a_negative_s_is_refused() {
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        assert_eq!(check(ct(one), ct(base())), NON_CANONICAL_0);
+    }
+
+    /// The Edwards constant `d` (its canonical encoding, computed as
+    /// −121665/121666 mod p) is negative: curve25519-dalek 4.1.3's own test
+    /// `decompress_negative_s_fails` (src/ristretto.rs) asserts that it does
+    /// not decode.
+    #[test]
+    fn the_edwards_d_constant_is_refused() {
+        let d = hex32("a3785913ca4deb75abd841414d0a700098e879777940c78c73fe6f2bee6c0352");
+        assert_eq!(check(ct(d), ct(base())), NON_CANONICAL_0);
+    }
+
+    /// Every RFC 9496 invalid encoding (non-canonical field encodings,
+    /// negative field elements, non-square `x²`, negative `xy`, `s = −1`) is
+    /// refused, in either ciphertext.
+    #[test]
+    fn every_rfc9496_invalid_encoding_is_refused() {
+        for h in RFC9496_INVALID {
+            let r = hex32(h);
+            assert_eq!(check(ct(r), ct(base())), NON_CANONICAL_0, "{h}");
+            assert_eq!(check(ct(base()), ct(r)), NON_CANONICAL_1, "{h}");
+        }
+    }
+
+    /// Lengths other than `CIPHERTEXT_BYTES` (not produced by `decode`, only
+    /// by a local builder) are refused, without a panic.
+    #[test]
+    fn a_wrong_length_is_refused() {
+        for len in [0, 1, 31, 32, CIPHERTEXT_BYTES - 1, CIPHERTEXT_BYTES + 1] {
+            let mut c = vec![0u8; len];
+            let n = len.min(32);
+            c[..n].copy_from_slice(&base()[..n]);
+            assert_eq!(check(c.clone(), ct(base())), NON_CANONICAL_0, "{len}");
+            assert_eq!(check(ct(base()), c), NON_CANONICAL_1, "{len}");
+        }
+    }
+
+    /// Only `R` is checked: the rest of the ciphertext may be any bytes.
+    #[test]
+    fn the_rest_of_the_ciphertext_is_not_checked() {
+        let mut c = ct(base());
+        c[32..].fill(0xff);
+        assert_eq!(check(c, ct(base())), Ok(()));
+    }
+
+    /// A PX transaction that `check_px_structure` accepts, with every
+    /// ciphertext `R` valid.
+    fn px_ok() -> PxTx {
+        PxTx {
+            inputs: vec![],
+            outputs: vec![],
+            payouts: vec![],
+            fee: PX_STANDARD_FEE,
+            bridge_in: 0,
+            bridge_out: PX_STANDARD_FEE,
+            window: Window::UNBOUNDED,
+            anchor: [0; 8],
+            nullifiers: [[1; 8], [2; 8]],
+            commitments: [[3; 8], [4; 8]],
+            ciphertexts: [ct(base()), ct(base())],
+            functions: vec![],
+            pseudo_outs: vec![],
+            range_proof: None,
+            signatures: vec![],
+            proof: vec![],
+        }
+    }
+
+    /// The rule is part of `check_px_structure` (every full validation:
+    /// mempool admission, P2P admission, blocks, the builder's self-check),
+    /// with stateless errors.
+    #[test]
+    fn check_px_structure_applies_the_rule() {
+        assert_eq!(check_px_structure(&px_ok()), Ok(()));
+        let mut t = px_ok();
+        t.ciphertexts[1] = ct([0; 32]);
+        let e = check_px_structure(&t).unwrap_err();
+        assert_eq!(e, TxError::PxCiphertextRIdentity { ciphertext: 1 });
+        assert!(e.is_stateless());
+        let mut t = px_ok();
+        t.ciphertexts[0][31] |= 0x80;
+        let e = check_px_structure(&t).unwrap_err();
+        assert_eq!(e, TxError::PxCiphertextRNonCanonical { ciphertext: 0 });
+        assert!(e.is_stateless());
+    }
+
+    /// A decoded transaction gets the rule's verdict: the identity `R`
+    /// survives encoding and decoding (the codec reads ciphertexts as bytes)
+    /// and is refused by the structure check.
+    #[test]
+    fn a_decoded_transaction_with_an_identity_r_is_refused() {
+        let mut t = px_ok();
+        t.ciphertexts[0] = ct([0; 32]);
+        let bytes = Transaction::Px(Box::new(t)).encode();
+        let Ok(Transaction::Px(d)) = Transaction::decode(&bytes) else {
+            panic!("decodes as a PX transaction");
+        };
+        assert_eq!(
+            check_px_structure(&d),
+            Err(TxError::PxCiphertextRIdentity { ciphertext: 0 })
+        );
+    }
 }

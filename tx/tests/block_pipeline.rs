@@ -18,7 +18,6 @@ mod common;
 use blacksilk_crypto::clsag::{self, RingMember};
 use blacksilk_crypto::commitment::commit;
 use blacksilk_crypto::{Point, Scalar};
-use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_px_core::Digest;
 use blacksilk_tx::builder::Decoy;
 use blacksilk_tx::params::{PX_STANDARD_FEE, RING_SIZE};
@@ -119,7 +118,7 @@ fn px_spend(net: &mut TestNet, real: &OwnedOutput, seed: u32, proof: Vec<u8>) ->
         anchor: [7; 8],
         nullifiers: [[seed; 8], [seed + 1_000_000; 8]],
         commitments: [[seed + 2; 8], [seed + 3; 8]],
-        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![pseudo_out],
         range_proof: None,

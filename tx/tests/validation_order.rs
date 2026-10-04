@@ -12,7 +12,6 @@ mod common;
 
 use blacksilk_crypto::hash::{h32, h64, tags};
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
-use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_px_core::{Digest, P};
 use blacksilk_tx::builder::Payment;
 use blacksilk_tx::params::PX_STANDARD_FEE;
@@ -377,7 +376,7 @@ fn px_zero_input(net: &mut TestNet) -> PxTx {
         anchor: digest(7),
         nullifiers: [digest(1), digest(2)],
         commitments: [digest(3), digest(4)],
-        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,
@@ -729,6 +728,8 @@ fn every_error_variant_is_classified() {
         PxInvalidProgram,
         PxDuplicateOutputKey { output: 0 },
         PxNullifierRepeated,
+        PxCiphertextRNonCanonical { ciphertext: 0 },
+        PxCiphertextRIdentity { ciphertext: 1 },
         PxDuplicateProgram { program: 1 },
         PxBudgetTooLarge { program: 0 },
         DeployFeeNotExact {
@@ -756,8 +757,8 @@ fn every_error_variant_is_classified() {
         assert!(!e.is_stateless(), "{e:?}");
     }
     // `is_stateless` is an exhaustive match, so a new variant cannot compile
-    // unclassified; these lists cover all 37 variants.
-    assert_eq!(stateless.len() + contextual.len(), 37);
+    // unclassified; these lists cover all 39 variants.
+    assert_eq!(stateless.len() + contextual.len(), 39);
 }
 
 // ------------------------------------------------------------------ differential validity

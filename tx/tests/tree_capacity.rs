@@ -57,7 +57,7 @@ fn px(net: &TestNet, tag: u32) -> PxTx {
         anchor: net.chain.px().root(),
         nullifiers: [[tag, 1, 0, 0, 0, 0, 0, 0], [tag, 2, 0, 0, 0, 0, 0, 0]],
         commitments: [[tag, 3, 0, 0, 0, 0, 0, 0], [tag, 4, 0, 0, 0, 0, 0, 0]],
-        ciphertexts: [vec![0; 4], vec![0; 4]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,

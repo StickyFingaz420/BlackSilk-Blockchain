@@ -93,7 +93,12 @@ pub mod tags {
     pub const PX_DELIVERY_VIEW: &str = "px/delivery-view";
     pub const PX_DELIVERY_KEM: &str = "px/delivery-kem";
     pub const PX_VIEW_TAG: &str = "px/view-tag";
-    pub const PX_DELIVERY_KEY: &str = "px/delivery-key";
+    /// The record-delivery key combiner (v2: binds the recipient's view key
+    /// `V` and `H(ek)`, docs/px.md §6). Wallet-side, not a consensus tag.
+    pub const PX_DELIVERY_KEY: &str = "px/delivery-key/v2";
+    /// `H(ek)`: the hash of a recipient's ML-KEM-768 encapsulation key bound
+    /// into the delivery key. Wallet-side, not a consensus tag.
+    pub const PX_DELIVERY_EK: &str = "px/delivery-ek";
     pub const PX_TX_BINDING: &str = "px/tx-binding";
     pub const PX_PROOF: &str = "px/proof";
     pub const PX_SIG_MESSAGE: &str = "px/sig-message";
@@ -170,6 +175,7 @@ pub mod tags {
         PX_DELIVERY_KEM,
         PX_VIEW_TAG,
         PX_DELIVERY_KEY,
+        PX_DELIVERY_EK,
         PX_TX_BINDING,
         PX_PROOF,
         PX_SIG_MESSAGE,

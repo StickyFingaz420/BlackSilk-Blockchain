@@ -391,6 +391,14 @@ fn b6_block_weight_is_capped() {
     env.accept(vec![cb]);
 }
 
+/// A PX record ciphertext that passes the ciphertext `R` rule: the base
+/// point's encoding as `R`, then zeros (it opens for nobody).
+fn px_ciphertext() -> Vec<u8> {
+    let mut c = vec![0; CIPHERTEXT_BYTES];
+    c[..32].copy_from_slice(&blacksilk_crypto::generators::G.compress().to_bytes());
+    c
+}
+
 /// A PX transaction that passes every structure check without a proof: no
 /// inputs or outputs, the standard fee paid out of the pool (`bridge_out`),
 /// and `proof_bytes` of padding. Its encoded size grows with `proof_bytes`.
@@ -406,7 +414,7 @@ fn px_tx(seed: u32, proof_bytes: usize) -> PxTx {
         anchor: [0; 8],
         nullifiers: [[seed; 8], [seed + 1_000_000; 8]],
         commitments: [[seed + 2; 8], [seed + 3; 8]],
-        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,

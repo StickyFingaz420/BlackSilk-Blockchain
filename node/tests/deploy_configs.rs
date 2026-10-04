@@ -238,22 +238,24 @@ fn consensus_fingerprints_are_pinned() {
 /// `0x0001D673`, the placeholder genesis time and no beacon yet, so the
 /// identity and consensus values change at launch (docs/testnet-v3-genesis.md
 /// §6) and the rules value does not. Re-pinned by RT-FP3 (rules and consensus;
+/// identity unchanged); re-pinned by PX-R (rules and consensus: the golden PX
+/// fixture samples and the revision PX-R:ciphertext-r-canonical-not-identity;
 /// identity unchanged).
 const TESTNET: [&str; 3] = [
-    "be3a87210c05019fa6507101f8435053c4019c788e31bdb02f12ace95d33e42e",
-    "d8229151a7483e7426550858268dae53e73b8567d76b9af4e2810fab5802c455",
+    "a2b4a5244d16e6692ea4622c3c76f304595fbbfd84d76e835792bf552bc45434",
+    "4b1e5adac907d6e9500b6bb83beeb407a516a3bdaac1c9340ccd577322f03251",
     "b333a99f2bcd5d351fe87d043e9cd17d6920c43c09021ea453bc14d9fec4b294",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3).
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R).
 const REGTEST: [&str; 3] = [
-    "5fb8ef8f74efa7631e2d9aa5f809fc0d9ab9273fdc54d45e5aad73f889c5e72b",
-    "aea01641c493c0f3ba756ed5b0df06219287f7e24bb6e1bbea639fb340037d71",
+    "e84d2642e844f4908d94616e97dcea6ad64a20a835dac910f992b8e1d3851fe1",
+    "47805b69869ad49db50254b9c967953981545aa35b47a2c916537a798c4f0ffe",
     "dfab90c6b92c127ab987cc3285557ad9b71ccd29c05bf2024531c54f10f6cf87",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3). The mainnet
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R). The mainnet
 /// parameters are provisional; mainnet is not launched.
 const MAINNET: [&str; 3] = [
-    "ccff82e8a6fceb219e4f89f8206b5ae7a80456716d7d6a6daa0b07c94e54e20c",
-    "ffcb05996707cc9ea5caddec2cda0329c6547e54665b8f3854004e8cf1e29f86",
+    "1fcb4385f2647bbf3259e10b33517644f978aeca85ae1f1cd07ed5c26f9b35cc",
+    "0e54ab0b4bc580e180defe1e171f8ac6202c97d93ce2e0c9df726338ef095035",
     "2dbb1c3703d90367c2d4475adb86a0e57c1d8c6ebe5f698f53baa7ec27465088",
 ];

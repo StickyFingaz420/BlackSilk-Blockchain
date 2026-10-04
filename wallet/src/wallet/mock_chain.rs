@@ -4,9 +4,10 @@
 //! consensus PX state, `blacksilk_px::state::State`), and a node that serves
 //! them over [`NodeApi`], honestly or with scripted lies.
 //!
-//! The PX transactions have no proofs and undecryptable ciphertexts: the
-//! wallet never verifies proofs, and these tests need only commitments,
-//! nullifiers and anchors. Deploys carry real programs (their registrations
+//! The PX transactions have no proofs and, for outputs to nobody,
+//! undecryptable ciphertexts whose `R` is the base point (a valid ciphertext
+//! `R`, as consensus requires: docs/px.md §6): the wallet never verifies
+//! proofs, and these tests need only commitments, nullifiers and anchors. Deploys carry real programs (their registrations
 //! are what the wallet derives) and placeholder signatures and proofs.
 
 use crate::node::NodeApi;
@@ -32,6 +33,14 @@ use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::cell::RefCell;
 use std::sync::Arc;
+
+/// A ciphertext to nobody: the base point as `R` (canonical, not the
+/// identity), then zeros.
+fn undelivered() -> Vec<u8> {
+    let mut c = vec![0; CIPHERTEXT_BYTES];
+    c[..32].copy_from_slice(&blacksilk_crypto::generators::G.compress().to_bytes());
+    c
+}
 
 /// Every hash meets every difficulty.
 pub(crate) struct ZeroPow;
@@ -248,7 +257,7 @@ impl MockChain {
             anchor,
             nullifiers: [digest(&mut self.rng), digest(&mut self.rng)],
             commitments: [digest(&mut self.rng), digest(&mut self.rng)],
-            ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+            ciphertexts: [undelivered(), undelivered()],
             functions: vec![],
             pseudo_outs: vec![],
             range_proof: None,

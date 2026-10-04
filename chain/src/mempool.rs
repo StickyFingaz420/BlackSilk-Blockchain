@@ -1432,6 +1432,14 @@ mod tests {
         assert_eq!(at(10), [early, open].into());
     }
 
+    /// A PX record ciphertext that passes the ciphertext `R` rule: the base
+    /// point's encoding as `R`, then zeros (it opens for nobody).
+    fn ciphertext() -> Vec<u8> {
+        let mut c = vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES];
+        c[..32].copy_from_slice(&blacksilk_crypto::generators::G.compress().to_bytes());
+        c
+    }
+
     /// A PX transaction (no v1 inputs, fee paid out of the pool) that every
     /// rule but the proof accepts on `chain`, with the given window.
     fn valid_px(
@@ -1455,7 +1463,7 @@ mod tests {
             anchor: chain.px().root(),
             nullifiers: [[n, 1, 0, 0, 0, 0, 0, 0], [n, 2, 0, 0, 0, 0, 0, 0]],
             commitments: [[n, 3, 0, 0, 0, 0, 0, 0], [n, 4, 0, 0, 0, 0, 0, 0]],
-            ciphertexts: [vec![], vec![]],
+            ciphertexts: [ciphertext(), ciphertext()],
             functions: vec![],
             pseudo_outs: vec![],
             range_proof: None,

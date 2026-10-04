@@ -34,6 +34,14 @@ use tokio::net::TcpStream;
 mod net_support;
 use net_support::*;
 
+/// A PX record ciphertext that passes the ciphertext `R` rule: the base
+/// point's encoding as `R`, then zeros (it opens for nobody).
+fn px_ciphertext() -> Vec<u8> {
+    let mut c = vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES];
+    c[..32].copy_from_slice(&blacksilk_crypto::generators::G.compress().to_bytes());
+    c
+}
+
 /// Every peer of `nodes` with a misbehavior score: (node index, peer
 /// address, kind, score). The penalty reasons are in the debug log
 /// (`BLACKSILK_TEST_LOG`).
@@ -3009,10 +3017,7 @@ fn junk_anchor_px(k: u32) -> Transaction {
         anchor: [k + 1, 7, 7, 7, 7, 7, 7, 7],
         nullifiers: [[k + 1, 1, 0, 0, 0, 0, 0, 0], [k + 1, 2, 0, 0, 0, 0, 0, 0]],
         commitments: [[0; 8]; 2],
-        ciphertexts: [
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-        ],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![],
         range_proof: None,
@@ -3170,10 +3175,7 @@ async fn a_garbage_px_proof_is_penalized_before_the_px_token_and_any_signature()
         anchor: root,
         nullifiers: [[9, 1, 0, 0, 0, 0, 0, 0], [9, 2, 0, 0, 0, 0, 0, 0]],
         commitments: [[0; 8]; 2],
-        ciphertexts: [
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-        ],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![blacksilk_crypto::Point::from_point(
             blacksilk_crypto::commitment::commit(bridge_in + fee, &blacksilk_crypto::Scalar::ZERO),
@@ -3252,10 +3254,7 @@ fn px_with_proof(
         anchor: root,
         nullifiers: [[8, k, 1, 0, 0, 0, 0, 0], [8, k, 2, 0, 0, 0, 0, 0]],
         commitments: [[0; 8]; 2],
-        ciphertexts: [
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-        ],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![blacksilk_crypto::Point::from_point(
             blacksilk_crypto::commitment::commit(bridge_in + fee, &blacksilk_crypto::Scalar::ZERO),
@@ -3537,10 +3536,7 @@ async fn a_decodable_proof_of_the_wrong_shape_is_penalized_in_the_cheap_stage() 
         anchor: root,
         nullifiers: [[8, 1, 0, 0, 0, 0, 0, 0], [8, 2, 0, 0, 0, 0, 0, 0]],
         commitments: [[0; 8]; 2],
-        ciphertexts: [
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
-        ],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![blacksilk_crypto::Point::from_point(
             blacksilk_crypto::commitment::commit(bridge_in + fee, &blacksilk_crypto::Scalar::ZERO),

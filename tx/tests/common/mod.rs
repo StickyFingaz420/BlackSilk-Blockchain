@@ -22,6 +22,15 @@ use std::collections::HashSet;
 
 pub const REWARD: u64 = 1_000_000_000;
 
+/// A PX record ciphertext that passes the ciphertext `R` rule
+/// (`px::check_ciphertext_r`): the base point's encoding as `R`, then zeros.
+/// It opens for nobody; for transactions whose records are not delivered.
+pub fn px_ciphertext() -> Vec<u8> {
+    let mut c = vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES];
+    c[..32].copy_from_slice(&blacksilk_crypto::generators::G.compress().to_bytes());
+    c
+}
+
 pub fn rng(seed: u64) -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(seed)
 }

@@ -1512,3 +1512,14 @@ Every external citation was verified against its primary source (res-freeze.md �
     20-minute deadline holds it up to k = 96.
 - Rejected variant A (outbound exempt from the cap): copies grow with the number of
   outbound announcers, about 17 at worst.
+
+## PX delivery combiner v2 (Lead, 2026-10-04)
+- **Decision:** the delivery key is `H32("px/delivery-key/v2", ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ V ‖ H(ek) ‖ cm)` with `H(ek) = H32("px/delivery-ek", ek)`, through the project's own hash (no new dependency). `V` and `H(ek)` are cached in `DeliveryKeys`.
+- **Rationale:** it binds the classical ciphertext and both recipient public keys into the combiner, in the style of the X-Wing and generic hybrid KEM combiners, so a hybrid share cannot be re-targeted to another key pair. Including `ct_kem` is redundant given ML-KEM's ciphertext binding, but harmless.
+- A sender also refuses an address whose view key is the identity (R2-C9).
+- Wallet-side only: neither tag is in `tags::CONSENSUS`, so no verdict and no fingerprint changes. It rides the v3 reset, which leaves no v1 ciphertext.
+
+## PX-R phase 2 (Lead, 2026-10-04)
+- **PX5 out of the manifest:** the full PX5 verdicts on the golden PX fixture stay out of the fingerprint manifest (verification costs about 0.2 s, paid at start-up, `--version` and `/info`). They are pinned by `node/tests/px_fixture.rs`. The manifest keeps the stateless PX verdicts (structure, balance, strict proof decoding), the ids and the binding.
+- **Gate:** `node/src/px_fixture.{bin,txt}` are consensus paths of the gate.
+- **Determinism finding:** the PX prover is not bit-reproducible for a fixed witness and seeded RNG (two generations differ from the prunable part on, and in length). The first output is pinned; the generator never runs in CI. Open: the source, and whether a varying proof length for one witness is a fingerprint (P-5).

@@ -106,7 +106,7 @@ fn px_with_inputs(n: usize) -> PxTx {
         anchor: [0; 8],
         nullifiers: [[1, 0, 0, 0, 0, 0, 0, 0], [2, 0, 0, 0, 0, 0, 0, 0]],
         commitments: [[3; 8], [4; 8]],
-        ciphertexts: [vec![0; 8], vec![0; 8]],
+        ciphertexts: [px_ciphertext(), px_ciphertext()],
         functions: vec![],
         pseudo_outs: vec![pt(7); n],
         range_proof: None,

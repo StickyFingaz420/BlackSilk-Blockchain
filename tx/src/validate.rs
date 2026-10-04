@@ -224,6 +224,18 @@ pub enum TxError {
     /// A PX transaction's two nullifiers are equal. It also fails PX2 on
     /// every chain; this variant reports it as stateless.
     PxNullifierRepeated,
+    /// The ephemeral key `R` of a PX record ciphertext (`ciphertext` indexes
+    /// it) is not a canonical ristretto255 encoding, or the ciphertext does
+    /// not have its fixed length (`px::check_ciphertext_r`;
+    /// docs/reviews/v3-consensus-changes.md#px-ciphertext-r).
+    PxCiphertextRNonCanonical {
+        ciphertext: usize,
+    },
+    /// The ephemeral key `R` of a PX record ciphertext is the identity
+    /// (`px::check_ciphertext_r`).
+    PxCiphertextRIdentity {
+        ciphertext: usize,
+    },
     /// A deploy registers the same program id twice (`program` indexes the
     /// second occurrence; R5-7).
     PxDuplicateProgram {
@@ -271,6 +283,7 @@ impl TxError {
     /// | `InvalidSignature` | C3 | contextual | see below |
     /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge`, `DeployFeeNotExact`, `PxUnsupportedAbi`, `PxWindowInverted` | PX structure | stateless | the transaction alone |
     /// | `PxDuplicateOutputKey`, `PxNullifierRepeated`, `PxDuplicateProgram` | PX structure | stateless | a repeat within the transaction (a one-time key shared by a hidden output and a payout) |
+    /// | `PxCiphertextRNonCanonical`, `PxCiphertextRIdentity` | PX structure (ciphertext `R`) | stateless | the ciphertext bytes alone |
     /// | `PxUnknownAnchor` | PX1 | contextual | the root window moves; the anchor may be recent on another branch |
     /// | `PxNullifierSpent` | PX2 | contextual | spent on this branch or earlier in this block |
     /// | `PxUnregistered` | PX3 | contextual | the contract may be deployed on another branch or later |
@@ -319,6 +332,8 @@ impl TxError {
             | TxError::PxInvalidProgram
             | TxError::PxDuplicateOutputKey { .. }
             | TxError::PxNullifierRepeated
+            | TxError::PxCiphertextRNonCanonical { .. }
+            | TxError::PxCiphertextRIdentity { .. }
             | TxError::PxDuplicateProgram { .. }
             | TxError::PxBudgetTooLarge { .. }
             | TxError::DeployFeeNotExact { .. }
@@ -791,8 +806,9 @@ pub fn validate_px(
 }
 
 /// Every rule of [`validate_px`] except PX5 (the proof is neither decoded
-/// nor checked): for revalidating pooled transactions whose proof was
-/// verified on admission.
+/// nor checked). It has no production caller: the pool revalidates with
+/// [`revalidate_after_extension`], which re-checks only the rules a chain
+/// change can affect; tests use this function.
 pub fn validate_px_without_proof(
     tx: &PxTx,
     chain: &impl ChainView,

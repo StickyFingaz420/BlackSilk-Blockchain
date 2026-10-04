@@ -562,7 +562,7 @@ The rules are listed in evaluation order: cheap checks first, elliptic-curve wor
 | # | Rule |
 |---|---|
 | T1 | Strict decode (§4); `size ≤ MAX_TX_SIZE = 100 000` bytes for coinbase and transfer; no trailing bytes. |
-| T2 | `version = 1`; `kind ∈ {0, 1, 2, 3}`; a coinbase is only valid as the first tx of a block (B1). Kinds 2 (PX transaction) and 3 (private-contract deploy) are specified in [`px.md`](px.md) §11, with their own size caps (`MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB; `MAX_DEPLOY_TX_SIZE` = 1 MiB) and rules (PX1–PX6, PX6 being the validity window of testnet v3); they reuse T4–T11 and C1–C3 for their v1 inputs and outputs. |
+| T2 | `version = 1`; `kind ∈ {0, 1, 2, 3}`; a coinbase is only valid as the first tx of a block (B1). Kinds 2 (PX transaction) and 3 (private-contract deploy) are specified in [`px.md`](px.md) §11, with their own size caps (`MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB; `MAX_DEPLOY_TX_SIZE` = 1 MiB) and rules (PX1–PX6, PX6 being the validity window of testnet v3); they reuse T4–T11 and C1–C3 for their v1 inputs and outputs. The ephemeral key `R` of each PX record ciphertext must decode canonically and not be the identity, as in T6 (px.md §6; `PxCiphertextRNonCanonical`, `PxCiphertextRIdentity`; testnet v3, reviews/v3-consensus-changes.md#px-ciphertext-r). |
 | T3 | Transfer: `1 ≤ n ≤ 64` inputs, `2 ≤ k ≤ 16` outputs. |
 | T4 | Key images decode, are not the identity, and are strictly increasing (§5.2). |
 | T5 | Each input has exactly 16 ring indices, strictly increasing, with no `u64` overflow. |
@@ -692,7 +692,9 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
   range proof, one failing the shape no ring lookup and no CLSAG. A well-formed proof
   that does not verify still costs every check up to the verification. A PX transaction repeating a one-time key between its hidden outputs
   and payouts, or with two equal nullifiers, gets a stateless error
-  (`PxDuplicateOutputKey`, `PxNullifierRepeated`). `PxDuplicateOutputKey` is the only
+  (`PxDuplicateOutputKey`, `PxNullifierRepeated`), as does one whose record
+  ciphertext `R` is non-canonical or the identity (`PxCiphertextRNonCanonical`,
+  `PxCiphertextRIdentity`, a validity rule: px.md §6). `PxDuplicateOutputKey` is the only
   rule rejecting such a key repeat (there is no C4); two equal nullifiers would also
   fail PX2 on every chain. The order and these variants decide only which error an
   invalid transaction gets, never whether a transaction or block is valid. The

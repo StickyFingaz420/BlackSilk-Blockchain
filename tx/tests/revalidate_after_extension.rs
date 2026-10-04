@@ -186,6 +186,15 @@ const CONTRACT: Digest = [9, 9, 9, 9, 9, 9, 9, 9];
 const PROGRAM_ID: [u8; 32] = [0x42; 32];
 const NF: [Digest; 2] = [[11, 0, 0, 0, 0, 0, 0, 0], [12, 0, 0, 0, 0, 0, 0, 0]];
 
+/// A record ciphertext with a valid `R` (the base point), so the PX
+/// transaction fails full validation for its intended reasons, not the
+/// ciphertext `R` rule.
+fn ciphertext() -> Vec<u8> {
+    let mut c = vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES];
+    c[..32].copy_from_slice(&blacksilk_crypto::generators::G.compress().to_bytes());
+    c
+}
+
 /// PX transaction: key image 300; hidden output key 400; payout key 401;
 /// anchor ANCHOR; nullifiers NF; one call to CONTRACT/PROGRAM_ID; bridges in
 /// and out as given. No proof.
@@ -201,7 +210,7 @@ fn px(bridge_in: u64, bridge_out: u64) -> PxTx {
         anchor: ANCHOR,
         nullifiers: NF,
         commitments: [[21; 8], [22; 8]],
-        ciphertexts: [vec![], vec![]],
+        ciphertexts: [ciphertext(), ciphertext()],
         functions: vec![PxFunction {
             contract: CONTRACT,
             program_id: PROGRAM_ID,
@@ -440,6 +449,16 @@ fn intrinsic_rules_are_not_rechecked_by_design() {
         assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
         let full = validate_mempool_tx(&tx, &c, 100, &rules);
         assert!(full.is_err(), "full validation must reject {tx:?}");
+        // An intrinsic rule rejects it, never the ciphertext `R` rule (the
+        // fixture's `R` is valid).
+        assert!(
+            !matches!(
+                full,
+                Err(TxError::PxCiphertextRNonCanonical { .. }
+                    | TxError::PxCiphertextRIdentity { .. })
+            ),
+            "{full:?}"
+        );
     }
     // Ring members that resolve to nothing (C1) are not looked at either:
     // outputs are append-only, so an extension cannot change them.
