@@ -664,7 +664,13 @@ selftest() {
   tamper_nomanifest() { rm -f "$1/third_party/patches/$crate.sha256"; }
   tamper_stale() { cp "$1/third_party/patches/$crate.patch" "$1/third_party/patches/no-such-crate.patch"; }
   tamper_crlf() { f="$(src1 "$1")"; sed -i.bak 's/$/\r/' "$f"; rm -f "$f.bak"; }
-  tamper_mode() { git -C "$1" update-index --chmod=+x "third_party/$crate/README.md"; }
+  # The file and the index both: with core.filemode=true (Linux, CI runs
+  # 133-134) run_case's `git add -A` restaged the working-tree mode, so an
+  # index-only chmod was undone and the case passed vacuously.
+  tamper_mode() {
+    chmod +x "$1/third_party/$crate/README.md"
+    git -C "$1" update-index --chmod=+x "third_party/$crate/README.md"
+  }
   # A NUL byte, accepted into the allow-list by a regeneration, then a later
   # edit of the same file: must still fail (diff -a, and the manifest).
   tamper_nul_regen() {
@@ -731,6 +737,9 @@ selftest() {
   run_case stale 1
   run_case crlf 1
   run_case mode 1
+  # The mode change must be what the gate caught (not some other failure).
+  grep -q 'differs from its file manifest' "$WORK/st.log" ||
+    { echo "selftest FAIL mode: not caught by the file manifest"; sed 's/^/  /' "$WORK/st.log"; bad=1; }
   run_case nul_regen 1
   run_case nul_patchfile 1
   run_case nul_readme 1
