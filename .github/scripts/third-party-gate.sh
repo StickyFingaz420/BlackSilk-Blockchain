@@ -71,14 +71,17 @@
 #   checkout (CARGO_HOME, parent directories), environment variables and
 #   --config flags are outside this gate.
 #
-# Trust (RT-TPGATE3): in CI this script, tools/tpgate and the waiver files
-# run from a trusted revision (the base of the pull request, or the push's
-# previous head), extracted outside the checkout and run against it
-# (.github/workflows/ci.yml, job gates). A commit that changes the gate is
-# judged by the old gate; the new gate applies from the next commit. When
-# the trusted revision has no gate yet (bootstrap), the commit's own copy
-# runs with a warning. The allow-lists, pins and patches are read from the
-# commit under test: they are reviewed data, not gate code.
+# Trust (RT-TPGATE3/4): in CI this script, tools/tpgate, the waiver files and
+# the cargo config pins run from a trusted revision (ci.yml job `gates`:
+# the previous rebuild/core head for a push to rebuild/core, else the merge
+# base with origin/rebuild/core; gates-trusted.yml: the pull request's base),
+# extracted outside the checkout, in a job that runs no code of the commit
+# under test. A commit that changes the gate is judged by the old gate; the
+# new gate applies from the next commit. When no trusted revision has the
+# gate yet (bootstrap), the commit's own copy runs with a warning. The
+# allow-lists, manifests and patches are read from the commit under test
+# (reviewed data); the cargo config pins from the trusted copy
+# (CARGO_CONFIG_PINS overrides, for tests).
 #
 # The allow-list certifies itself: a commit may change a third_party/ crate
 # and regenerate its patch and manifest together. The gate makes every such
@@ -92,7 +95,9 @@
 # Usage: third-party-gate.sh            check everything (from the repo)
 #        third-party-gate.sh --selftest tampered fixtures must fail
 #        third-party-gate.sh --write C  regenerate C's patch and manifest
-# Environment: THIRD_PARTY_GATE_FETCH=1 always downloads (ignores the cache).
+# Environment: THIRD_PARTY_GATE_FETCH=1 always downloads (ignores the cache);
+# TPGATE_TARGET_DIR reuses a tpgate build directory (local speed; default: a
+# fresh one per run); TPGATE_DIR, CARGO_CONFIG_PINS: other checker and pins.
 # Exit: 0 pass, 1 a check failed, 2 usage error.
 set -euo pipefail
 export LC_ALL=C
@@ -396,7 +401,10 @@ tpgate_build() {
   [ -z "$TPGATE_BIN" ] || return 0
   [ -f "$TPGATE_DIR/Cargo.toml" ] && [ -f "$TPGATE_DIR/Cargo.lock" ] ||
     { annotate "third-party gate: no checker" "$TPGATE_DIR has no standalone tools/tpgate (Cargo.toml and Cargo.lock)."; return 1; }
-  local td="${TPGATE_TARGET_DIR:-$(dirname "$WORK")/blacksilk-tpgate-target}" out
+  # A fresh target directory per run (RT-TPGATE4: never a fixed, shared path
+  # that other code could have planted a binary in); TPGATE_TARGET_DIR
+  # overrides it for local speed.
+  local td="${TPGATE_TARGET_DIR:-$WORK/tpgate-target}" out
   out="$(cd "$WORK" && RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}" \
     cargo build -q --locked --manifest-path "$TPGATE_DIR/Cargo.toml" --target-dir "$td" 2>&1)" ||
     { annotate "third-party gate: building tools/tpgate failed" "$out"; return 1; }
@@ -434,23 +442,26 @@ check_identity() {
   return 1
 }
 
-# check_config_pins ROOT: every tracked cargo configuration file is pinned by
-# sha256 (committed bytes) in .github/cargo-config.sha256, and nothing else is
-# listed there: a changed or new config fails until the pin is updated (a
-# consensus path).
+# check_config_pins ROOT PINS: every tracked cargo configuration file of ROOT
+# has its sha256 (committed bytes) and path listed in PINS. In CI, PINS is the
+# TRUSTED revision's .github/cargo-config.sha256 (RT-TPGATE4), so a commit
+# cannot pin its own config change: a new or changed config needs the pin
+# merged first, in its own change, then the config. Extra pin lines (an old
+# and a new hash during that transition) are allowed.
 check_config_pins() {
-  local root="$1" pins="$1/.github/cargo-config.sha256" f h
-  [ -f "$pins" ] || { annotate "third-party gate: no config pins" ".github/cargo-config.sha256 is missing."; return 1; }
+  local root="$1" pins="$2" f h
+  [ -f "$pins" ] || { annotate "third-party gate: no config pins" "$pins is missing."; return 1; }
+  tr -d '\r' < "$pins" | grep -v '^#' | sed '/^$/d' | sort -u > "$WORK/config-pins.expected"
   while IFS= read -r f; do
     h="$(git -C "$root" cat-file blob ":$f" | sha256sum | cut -d' ' -f1)"
     printf '%s  %s\n' "$h" "$f"
   done < <(cargo_configs "$root") | sort > "$WORK/config-pins.actual"
-  tr -d '\r' < "$pins" | grep -v '^#' | sed '/^$/d' | sort > "$WORK/config-pins.expected"
-  if ! cmp -s "$WORK/config-pins.expected" "$WORK/config-pins.actual"; then
-    annotate "third-party gate: cargo configuration changed" \
-      "The tracked .cargo/config files do not match .github/cargo-config.sha256:
-$(diff "$WORK/config-pins.expected" "$WORK/config-pins.actual" | grep '^[<>]' | head -4)
-Review the change, then update the pin (a consensus path)."
+  f="$(comm -23 "$WORK/config-pins.actual" "$WORK/config-pins.expected" | head -4)"
+  if [ -n "$f" ]; then
+    annotate "third-party gate: cargo configuration not pinned" \
+      "These tracked .cargo/config files are not in the trusted .github/cargo-config.sha256:
+$f
+Merge the reviewed pin first (a consensus path), then the config change."
     return 1
   fi
 }
@@ -770,7 +781,8 @@ selftest() {
   s_cfg_paths() { mkdir -p "$1/.cargo"; printf 'paths = ["vendor/p3-x"]\n' > "$1/.cargo/config.toml"; }
   s_cfg_source() { mkdir -p "$1/a/.cargo"; printf '[source.crates-io]\nreplace-with = "v"\n' > "$1/a/.cargo/config.toml"; }
   s_cfg_patch() { mkdir -p "$1/.cargo"; printf '[patch.crates-io]\np3-x = { path = "third_party/p3-x" }\n' > "$1/.cargo/config"; }
-  s_cfg_ok() { mkdir -p "$1/.cargo"; printf '[build]\ntarget = "x"\n[target.x]\nrustflags = ["-C", "a"]\n' > "$1/.cargo/config.toml"; }
+  s_cfg_ok() { mkdir -p "$1/.cargo"; printf '[build]\ntarget = "riscv32i-unknown-none-elf"\n[target.x86_64-pc-windows-msvc]\nrustflags = ["-C", "link-arg=-Brepro"]\n' > "$1/.cargo/config.toml"; }
+  s_cfg_flags() { mkdir -p "$1/.cargo"; printf '[target.x86_64-pc-windows-msvc]\nrustflags = ["-C", "link-arg=-Brepro", "-C", "link-arg=/evil"]\n' > "$1/.cargo/config.toml"; }
   s_cfg_runner() { mkdir -p "$1/.cargo"; printf '[target.x]\nrunner = "evil"\n' > "$1/.cargo/config.toml"; }
   s_cfg_wrapper() { mkdir -p "$1/.cargo"; printf '[build]\nrustc-wrapper = "evil"\n' > "$1/.cargo/config.toml"; }
   s_cfg_linker() { mkdir -p "$1/a/.cargo"; printf '[target.x]\nlinker = "evil"\n' > "$1/a/.cargo/config.toml"; }
@@ -807,6 +819,7 @@ selftest() {
   res_case "config: linker" 1 s_cfg_linker
   res_case "config: env" 1 s_cfg_env
   res_case "config: target-dir" 1 s_cfg_targetdir
+  res_case "config: rustflags not on the allow-list" 1 s_cfg_flags
 
   # Config pins: a pinned config passes; a changed or an unpinned one fails.
   pin_case() { # NAME EXPECT(0|1) SETUP-FN
@@ -818,7 +831,7 @@ selftest() {
     printf '%s  .cargo/config.toml\n' "$(git -C "$t" cat-file blob :.cargo/config.toml | sha256sum | cut -d' ' -f1)" > "$t/.github/cargo-config.sha256"
     "$3" "$t"
     git -C "$t" add -A
-    if check_config_pins "$t" > "$WORK/st.log" 2>&1; then r=0; else r=1; fi
+    if check_config_pins "$t" "$t/.github/cargo-config.sha256" > "$WORK/st.log" 2>&1; then r=0; else r=1; fi
     if [ "$r" = "$2" ]; then
       echo "selftest ok   pins: $1 (exit $r)"
     else
@@ -831,6 +844,8 @@ selftest() {
   pin_case pinned 0 p_none
   pin_case changed 1 p_changed
   pin_case unpinned 1 p_new
+  p_extra() { printf '%064d  .cargo/config.toml\n' 0 >> "$1/.github/cargo-config.sha256"; }
+  pin_case "old and new hash listed (transition)" 0 p_extra
   echo "third-party-gate selftest: $([ "$bad" = 0 ] && echo pass || echo FAIL)"
   return "$bad"
 }
@@ -849,7 +864,7 @@ main() {
       local bad=0
       check_cargo_files "$root" || bad=1
       check_identity "$root" || bad=1
-      check_config_pins "$root" || bad=1
+      check_config_pins "$root" "${CARGO_CONFIG_PINS:-$here/../cargo-config.sha256}" || bad=1
       [ "$bad" = 1 ] || echo "ok   lockfiles, manifests and .cargo/ configs: crates.io or third_party/ only"
       check_tree "$root" || bad=1
       exit "$bad"

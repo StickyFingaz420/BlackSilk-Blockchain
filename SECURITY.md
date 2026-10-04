@@ -67,10 +67,26 @@ The rules, checked by the CI job `deny` on every push and weekly:
   `third_party/`, `.cargo/`, the gate scripts, `tools/tpgate` and the CI workflow
   (CODEOWNERS plus branch protection)
   is a repository setting for the owner, and is not configured by this
-  repository. In CI the gate code comes from a trusted revision (the pull
-  request's base or the push's previous head), so a commit that changes a gate is
-  judged by the old one. The workflow file itself still comes from the commit under
-  test. What the identity check (`tools/tpgate`) cannot see:
+  repository. The verdicts run gate code from a trusted revision, so a commit that
+  changes a gate is judged by the old one:
+  - ci.yml's `gates` job runs no code from the commit under test. It extracts the
+    gate scripts, waiver files, cargo config pins and `tools/tpgate` from the
+    trusted revision into a fresh temporary directory and builds there. The trusted
+    revision is the previous rebuild/core head for a push to rebuild/core, and
+    otherwise the merge base with origin/rebuild/core. The commit's own self-tests
+    run in a separate job (`gates-selftest`).
+  - On `pull_request` and `push`, GitHub runs the ci.yml of the commit under test,
+    so a pull request can change or skip that job. That is an inherent limit of
+    those events.
+  - `.github/workflows/gates-trusted.yml` runs on `pull_request_target`, from the
+    base branch's workflow and code. It checks out the pull request's head only as
+    data, with a read-only token, no secrets, no cache, and no build or self-test
+    of the pull request's code.
+  - Making `gates-trusted` and ci.yml's `gates` required status checks, with branch
+    protection on rebuild/core and main, is a repository setting for the owner. It
+    is not configured by this repository.
+
+  What the identity check (`tools/tpgate`) cannot see:
   - cargo makes any path crate under a workspace root a member automatically. A
     verbatim copy of a published crate committed there under another name is
     accepted, as visible first-party code. Only review notices that it is a copy.

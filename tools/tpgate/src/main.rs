@@ -29,10 +29,14 @@
 //!    `[patch.crates-io]`, each entry exactly `{ path = ... }` resolving to
 //!    `third_party/<entry name>`; `[replace]` nowhere (every root and member
 //!    manifest, parsed as TOML);
-//! 7. (RT-TPGATE3) every `--config` file (`.cargo/config[.toml]`) holds only
-//!    `build.target` and `target.<triple>.rustflags`: no runner, linker,
-//!    rustc, wrappers, target-dir, env, alias, patch, paths, source or
-//!    registries. Their exact bytes are pinned by the gate script.
+//! 7. (RT-TPGATE3, RT-TPGATE4) every `--config` file (`.cargo/config[.toml]`)
+//!    holds only `build.target` and `target.<triple>.rustflags`, each exactly
+//!    an allowed value (`ALLOWED_BUILD_TARGET`, `ALLOWED_RUSTFLAGS`): no
+//!    runner, linker, rustc, wrappers, target-dir, env, alias, patch, paths,
+//!    source or registries. Their exact bytes are also pinned by the gate;
+//! 8. (RT-TPGATE4) every package of `tools/tpgate/Cargo.lock` but the checker
+//!    itself is in the root `Cargo.lock` with the same version, source and
+//!    checksum.
 //!
 //! Standalone path crates outside every workspace (`--standalone`, e.g.
 //! `zkvm/sdk`) count as members; each must have no dependency tables at all.
@@ -87,6 +91,7 @@ struct LockPkg {
     name: String,
     version: String,
     source: Option<String>,
+    checksum: Option<String>,
 }
 
 fn opt_str(v: &serde_json::Value, key: &str, what: &str) -> Result<Option<String>, String> {
@@ -186,6 +191,7 @@ fn parse_lock(text: &str) -> Result<Vec<LockPkg>, String> {
             name: s("name")?.ok_or("Cargo.lock: a package has no name")?,
             version: s("version")?.ok_or("Cargo.lock: a package has no version")?,
             source: s("source")?,
+            checksum: s("checksum")?,
         });
     }
     Ok(out)
@@ -395,10 +401,34 @@ fn check_manifest_patch(
     errs
 }
 
+/// The only `build.target` value a cargo config may set (zkvm/guests).
+const ALLOWED_BUILD_TARGET: &str = "riscv32i-unknown-none-elf";
+
+/// The only `target.<triple>.rustflags` a cargo config may set, exactly
+/// (RT-TPGATE4): the root's reproducible Windows link and the guests' flags
+/// (zkvm/guests/build.sh GUEST_FLAGS). Changing one is a change of this file.
+const ALLOWED_RUSTFLAGS: &[(&str, &[&str])] = &[
+    ("x86_64-pc-windows-msvc", &["-C", "link-arg=-Brepro"]),
+    (
+        "riscv32i-unknown-none-elf",
+        &[
+            "-C",
+            "relocation-model=static",
+            "-C",
+            "target-feature=+zmmul",
+            "-C",
+            "link-arg=--strip-all",
+            "-C",
+            "link-arg=-Tguest.ld",
+        ],
+    ),
+];
+
 /// Rule 7: a `.cargo/config[.toml]` may hold only `build.target` and
-/// `target.<triple>.rustflags`, nothing else (no patch, paths, source,
-/// registries, env, alias, runner, linker, rustc or wrapper, target-dir, ...).
-/// The exact contents are pinned separately (.github/cargo-config.sha256).
+/// `target.<triple>.rustflags`, each with exactly an allowed value, nothing
+/// else (no patch, paths, source, registries, env, alias, runner, linker,
+/// rustc or wrapper, target-dir, ...). The exact file bytes are pinned
+/// separately (.github/cargo-config.sha256).
 fn check_config(what: &str, text: &str) -> Vec<String> {
     let t: toml::Table = match text.parse() {
         Ok(t) => t,
@@ -411,27 +441,42 @@ fn check_config(what: &str, text: &str) -> Vec<String> {
     for (k, v) in &t {
         match (k.as_str(), v.as_table()) {
             ("build", Some(b)) => {
-                for bk in b.keys() {
+                for (bk, bv) in b {
                     if bk != "target" {
                         errs.push(format!(
                             "{what}: build.{bk} is not allowed (only build.target)"
+                        ));
+                    } else if bv.as_str() != Some(ALLOWED_BUILD_TARGET) {
+                        errs.push(format!(
+                            "{what}: build.target must be \"{ALLOWED_BUILD_TARGET}\""
                         ));
                     }
                 }
             }
             ("target", Some(targets)) => {
                 for (triple, tv) in targets {
-                    match tv.as_table() {
-                        Some(tt) => {
-                            for tk in tt.keys() {
-                                if tk != "rustflags" {
-                                    errs.push(format!(
-                                        "{what}: target.{triple}.{tk} is not allowed (only rustflags)"
-                                    ));
-                                }
-                            }
+                    let Some(tt) = tv.as_table() else {
+                        errs.push(format!("{what}: target.{triple} is not a table"));
+                        continue;
+                    };
+                    for (tk, flags) in tt {
+                        if tk != "rustflags" {
+                            errs.push(format!(
+                                "{what}: target.{triple}.{tk} is not allowed (only rustflags)"
+                            ));
+                            continue;
                         }
-                        None => errs.push(format!("{what}: target.{triple} is not a table")),
+                        let got: Option<Vec<&str>> = flags
+                            .as_array()
+                            .and_then(|a| a.iter().map(|f| f.as_str()).collect());
+                        let ok = ALLOWED_RUSTFLAGS
+                            .iter()
+                            .any(|(t, want)| t == triple && got.as_deref() == Some(*want));
+                        if !ok {
+                            errs.push(format!(
+                                "{what}: target.{triple}.rustflags is not an allowed value"
+                            ));
+                        }
                     }
                 }
             }
@@ -441,6 +486,30 @@ fn check_config(what: &str, text: &str) -> Vec<String> {
         }
     }
     errs
+}
+
+/// Rule 8 (RT-TPGATE4): every package of the checker's own lockfile
+/// (tools/tpgate/Cargo.lock) is in the root lockfile with the same name,
+/// version, source and checksum, except the checker itself: it adds no crate
+/// the main supply-chain review has not seen.
+fn check_lock_subset(sub: &[LockPkg], root: &[LockPkg]) -> Vec<String> {
+    sub.iter()
+        .filter(|p| p.name != "blacksilk-tpgate")
+        .filter(|p| {
+            !root.iter().any(|r| {
+                r.name == p.name
+                    && r.version == p.version
+                    && r.source == p.source
+                    && r.checksum == p.checksum
+            })
+        })
+        .map(|p| {
+            format!(
+                "tools/tpgate/Cargo.lock: {} {} is not in the root Cargo.lock with the same source and checksum",
+                p.name, p.version
+            )
+        })
+        .collect()
 }
 
 /// The arguments: `<repo> <root>... [--standalone <dir>...] [--config <file>...]`.
@@ -512,6 +581,7 @@ fn run(a: &Args) -> Result<Vec<String>, String> {
     let (mut members, mut deps, mut locks, mut errs) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut root_manifests = BTreeSet::new();
+    let mut by_root: Vec<(PathBuf, Vec<LockPkg>)> = Vec::new();
     for root in &a.roots {
         let manifest = root.join("Cargo.toml");
         root_manifests.insert(canonical(&manifest)?);
@@ -541,7 +611,9 @@ fn run(a: &Args) -> Result<Vec<String>, String> {
         members.extend(m);
         deps.extend(d);
         let lock = root.join("Cargo.lock");
-        locks.push((lock.display().to_string(), parse_lock(&read(&lock)?)?));
+        let pkgs = parse_lock(&read(&lock)?)?;
+        by_root.push((canonical(root)?, pkgs.clone()));
+        locks.push((lock.display().to_string(), pkgs));
     }
     for dir in &a.standalone {
         let manifest = dir.join("Cargo.toml");
@@ -571,6 +643,16 @@ fn run(a: &Args) -> Result<Vec<String>, String> {
     }
     for config in &a.configs {
         errs.extend(check_config(&config.display().to_string(), &read(config)?));
+    }
+    // Rule 8: the checker's lockfile adds nothing the root lockfile lacks.
+    let repo = canonical(&a.repo)?;
+    let find = |p: &Path| by_root.iter().find(|(r, _)| r == p).map(|(_, l)| l);
+    if let Some(sub) = find(&repo.join("tools").join("tpgate")) {
+        match find(&repo) {
+            Some(root) => errs.extend(check_lock_subset(sub, root)),
+            None => errs
+                .push("tools/tpgate/Cargo.lock is checked but the root Cargo.lock is not".into()),
+        }
     }
     errs.extend(check(&tp, &members, &deps, &locks));
     Ok(errs)
@@ -658,6 +740,7 @@ mod tests {
                     name: (*n).into(),
                     version: (*v).into(),
                     source: s.map(Into::into),
+                    checksum: None,
                 })
                 .collect(),
         )]
@@ -871,9 +954,17 @@ evil = \"1\"
 
     #[test]
     fn cargo_configs_hold_only_target_and_rustflags() {
-        let ok = "[build]\ntarget = \"riscv32i-unknown-none-elf\"\n[target.x]\nrustflags = [\"-C\", \"a\"]\n";
+        let ok = "[build]\ntarget = \"riscv32i-unknown-none-elf\"\n[target.x86_64-pc-windows-msvc]\nrustflags = [\"-C\", \"link-arg=-Brepro\"]\n";
         assert!(check_config("c", ok).is_empty());
+        // The repository's own configs, verbatim apart from comments.
+        let guests = "[build]\ntarget = \"riscv32i-unknown-none-elf\"\n[target.riscv32i-unknown-none-elf]\nrustflags = [\"-C\", \"relocation-model=static\", \"-C\", \"target-feature=+zmmul\", \"-C\", \"link-arg=--strip-all\", \"-C\", \"link-arg=-Tguest.ld\"]\n";
+        assert!(check_config("c", guests).is_empty());
         for bad in [
+            "[build]\ntarget = \"x86_64-unknown-linux-gnu\"\n",
+            "[target.x]\nrustflags = [\"-C\", \"a\"]\n",
+            "[target.x86_64-pc-windows-msvc]\nrustflags = [\"-C\", \"link-arg=-Brepro\", \"-C\", \"link-arg=/evil\"]\n",
+            "[target.riscv32i-unknown-none-elf]\nrustflags = [\"-C\", \"link-arg=-Brepro\"]\n",
+            "[target.x86_64-pc-windows-msvc]\nrustflags = \"-C link-arg=-Brepro\"\n",
             "[build]\nrustc-wrapper = \"evil\"\n",
             "[build]\nrustc = \"evil\"\n",
             "[build]\ntarget-dir = \"x\"\n",
@@ -890,6 +981,31 @@ evil = \"1\"
         ] {
             assert!(!check_config("c", bad).is_empty(), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_checker_lockfile_is_a_subset_of_the_root_lockfile() {
+        let p = |n: &str, v: &str, k: Option<&str>| LockPkg {
+            name: n.into(),
+            version: v.into(),
+            source: k.map(|_| CRATES_IO.into()),
+            checksum: k.map(Into::into),
+        };
+        let root = vec![
+            p("serde", "1.0.0", Some("aa")),
+            p("toml", "0.8.0", Some("bb")),
+        ];
+        let ok = vec![
+            p("blacksilk-tpgate", "0.1.0", None),
+            p("serde", "1.0.0", Some("aa")),
+        ];
+        assert!(check_lock_subset(&ok, &root).is_empty());
+        let bad = vec![
+            p("serde", "1.0.1", Some("aa")), // another version
+            p("toml", "0.8.0", Some("cc")),  // another checksum
+            p("evil", "1.0.0", Some("dd")),  // not in the root lockfile
+        ];
+        assert_eq!(check_lock_subset(&bad, &root).len(), 3);
     }
 
     #[test]

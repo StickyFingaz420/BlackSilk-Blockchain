@@ -4,7 +4,7 @@ These are copies of published crates with a minimal, reviewed change, used throu
 `[patch.crates-io]` in the workspace `Cargo.toml`. Each entry records what changed, why,
 and when to remove it.
 
-## CI check: published crate + allow-listed diff (RT-PXDET finding 1, RT-TPGATE, RT-TPGATE2, RT-TPGATE3)
+## CI check: published crate + allow-listed diff (RT-PXDET finding 1, RT-TPGATE to RT-TPGATE4)
 
 `.github/scripts/third-party-gate.sh` (CI job `gates`) checks every crate directory
 here (a directory with a `Cargo.toml`) against what it claims to be:
@@ -66,11 +66,17 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
     `{ path = ... }` resolving to `third_party/<entry name>`. `[replace]` is not
     allowed anywhere.
   - Every tracked `.cargo/config[.toml]`, parsed as TOML, may hold only
-    `build.target` and `target.<triple>.rustflags`. That rules out runner, linker,
-    rustc and its wrappers, target-dir, env, alias, patch, paths, source and
-    registries. The exact bytes of each config are pinned in
-    `.github/cargo-config.sha256` (a consensus path), so any change fails until the
-    pin is updated.
+    `build.target` and `target.<triple>.rustflags`, each exactly a value on tpgate's
+    allow-list. Today that is the guests' build target, the root's
+    `link-arg=-Brepro` and the guests' flags. That rules out runner, linker, rustc
+    and its wrappers, target-dir, env, alias, patch, paths, source and registries.
+    The exact bytes of each config must also be listed in the trusted revision's
+    `.github/cargo-config.sha256` (a consensus path). To change a config, first
+    merge the new pin line (and, for new values, the tpgate allow-list) on its own,
+    then merge the config change; both are read from the trusted revision.
+  - Every package of `tools/tpgate/Cargo.lock` except the checker itself must be in
+    the root `Cargo.lock` with the same version, source and checksum. CI also runs
+    `cargo audit` on that lockfile and `cargo deny` with `tools/tpgate/deny.toml`.
   - The checker is built and run, and runs `cargo metadata`, with its working
     directory outside the repository and `--manifest-path`. So no repository
     `.cargo/config` or `rust-toolchain` file is read. `RUSTUP_TOOLCHAIN` defaults to
@@ -83,18 +89,27 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
   `target-dir`, `rustc*` or `rustdoc*`. The only exception is a workspace root's
   exact `[patch.crates-io]`, whose entries must each be
   `<name> = { path = "<to root>third_party/<name>" }`.
-- Trust: in CI, the gate scripts, `tools/tpgate` and the waiver files come from a
-  trusted revision. That is the pull request's base, or the push's previous head
-  (for a new branch, its merge base with rebuild/core). They are extracted outside
-  the checkout and run against it (`.github/workflows/ci.yml`, job `gates`).
+- Trust: in CI the verdicts run gate code from a trusted revision. That covers the
+  gate scripts, `tools/tpgate`, the waiver files and the cargo config pins.
+  - ci.yml has two jobs. `gates-selftest` runs this commit's self-tests and its
+    tpgate tests. `gates` runs no code from the commit under test: it extracts the
+    trusted copy into a fresh temporary directory, builds tpgate there in a fresh
+    target directory, and runs it against the checkout.
+  - The trusted revision for a push to rebuild/core is the previous rebuild/core
+    head. For anything else it is the merge base with origin/rebuild/core. A commit
+    already on rebuild/core is judged by its own gate, which is rebuild/core's.
+  - If that revision has no gate, origin/rebuild/core's copy is used. If neither
+    has one (bootstrap), the commit's own copies run, with a warning.
+  - `.github/workflows/gates-trusted.yml` gives the same verdicts on
+    `pull_request_target`, from the base branch's workflow and code, with the pull
+    request checked out only as data.
   - A commit that changes a gate is judged by the old gate. The new gate applies
     from the next commit.
-  - Bootstrap: if the trusted revision has no third-party gate or standalone
-    `tools/tpgate` yet, the commit's own copies run, with a warning.
-  - The allow-lists, pins and patches are read from the commit under test. They are
-    reviewed data, not gate code.
-  - The workflow file itself comes from the commit under test. It is a consensus
-    path, so a change to it needs a `Consensus-Change:` trailer and review.
+  - The allow-lists, manifests and patches are read from the commit under test, as
+    reviewed data. The cargo config pins are read from the trusted copy.
+  - On `pull_request` and `push`, ci.yml itself comes from the commit under test.
+    It is a consensus path, so changing it needs a `Consensus-Change:` trailer and
+    review. Required status checks are an owner setting (SECURITY.md).
 - `--selftest` runs tampered fixtures and expects each to fail. It also expects
   clean fixtures to pass, and allow-listed files that are binary, or unchanged from
   the published crate, to pass. The tampered fixtures:
@@ -113,7 +128,8 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
     spaces), a renamed path copy, a path dependency outside every workspace;
   - cargo files: the `[patch]`, `[replace]`, `paths` and `[source]` spellings above,
     and configs with a runner, rustc-wrapper, linker, env or target-dir;
-  - config pins: a changed and an unpinned config.
+  - config pins: a changed and an unpinned config (an extra pin line for a
+    transition passes); rustflags not on the allow-list.
   - `tools/tpgate` has its own unit tests:
     `cargo test --manifest-path tools/tpgate/Cargo.toml`.
 
