@@ -1,8 +1,8 @@
 //! The `blocks.dat` format and its identity binding at the chain-manager level
 //! (docs/blocks.md §8): stores from before the v3 format (headerless format 0,
-//! format 1) are refused on the public networks with remediation text, a store
-//! of another network or genesis is refused, and replay reaches the state a
-//! fresh sync reaches.
+//! format 1) are refused on every network with remediation text, a store of
+//! another network or genesis is refused, and replay reaches the state a fresh
+//! sync reaches.
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, Template};
@@ -137,13 +137,19 @@ fn format1_header(p: &ChainParams) -> Vec<u8> {
 }
 
 /// F35-1: a headerless (format 0) store holding valid blocks of the node's
-/// own network is refused on testnet and mainnet, before anything is read
-/// or written: its network cannot be verified (every store written before
-/// 2026-09-27 belongs to a pre-v3 network). The error says what to do.
-/// On the base commit the store was accepted and replayed.
+/// own network is refused, before anything is read or written: its network
+/// cannot be verified (every store written before 2026-09-27 belongs to a
+/// pre-v3 network). The error says what to do. On the base commit the store
+/// was accepted and replayed; regtest kept reading it (and appending to it
+/// in its own layout) until 2026-10-05, and now refuses it like testnet and
+/// mainnet.
 #[test]
-fn a_legacy_headerless_store_is_refused_on_testnet_and_mainnet() {
-    for p in [ChainParams::testnet(), ChainParams::mainnet()] {
+fn a_legacy_headerless_store_is_refused_on_every_network() {
+    for p in [
+        ChainParams::regtest(),
+        ChainParams::testnet(),
+        ChainParams::mainnet(),
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("blocks.dat");
         let blocks = chain_of(&p, 2, 1);
@@ -154,6 +160,7 @@ fn a_legacy_headerless_store_is_refused_on_testnet_and_mainnet() {
         let msg = err.to_string();
         assert!(msg.contains("format 0"), "{msg}");
         assert!(msg.contains("move"), "remediation: {msg}");
+        assert!(msg.contains("resync"), "remediation: {msg}");
         assert_eq!(std::fs::read(&path).unwrap(), bytes, "nothing changed");
     }
 }
@@ -182,31 +189,6 @@ fn a_format_1_store_is_refused_with_resync_advice() {
         assert!(msg.contains("resync"), "remediation: {msg}");
         assert_eq!(std::fs::read(&path).unwrap(), bytes, "nothing changed");
     }
-}
-
-/// Regtest keeps reading a headerless store as it is (docs/blocks.md §8):
-/// its blocks replay, new blocks are appended in its own layout, and the
-/// file is never rewritten.
-#[test]
-fn a_legacy_headerless_store_is_still_read_on_regtest() {
-    let p = ChainParams::regtest();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("blocks.dat");
-    let blocks = chain_of(&p, 3, 3);
-    let legacy: Vec<u8> = blocks[..2].iter().flat_map(legacy_record).collect();
-    std::fs::write(&path, &legacy).unwrap();
-    {
-        let mut m = open_path(&p, &path).unwrap();
-        assert_eq!(m.height(), 2);
-        m.submit_block(blocks[2].clone(), blocks[2].header.timestamp)
-            .unwrap();
-    }
-    let now = std::fs::read(&path).unwrap();
-    assert_eq!(now[..legacy.len()], legacy[..], "nothing rewritten");
-    assert_eq!(now[legacy.len()..], legacy_record(&blocks[2])[..]);
-    let m = open_path(&p, &path).unwrap();
-    assert_eq!(m.height(), 3);
-    assert_eq!(m.tip_id(), blocks[2].id(p.network_id));
 }
 
 /// A store of one network is refused by a node of another network, and by

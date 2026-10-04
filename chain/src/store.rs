@@ -39,11 +39,13 @@
 //! instead of being replayed into (and silently orphaned by) a new genesis.
 //!
 //! **Older formats** are never migrated (docs/blocks.md §8):
-//! - format 0 (no file header, written before 2026-09-27): its network cannot
-//!   be verified, and every such store belongs to a network from before the
-//!   v3 reset. It is refused on testnet and mainnet (F35-1). On regtest it is
-//!   still read and appended to as it is (blocks only, in its own record
-//!   layout), with a warning;
+//! - format 0 (no file header, untyped `"BSB1"` block records, written before
+//!   2026-09-27): its network cannot be verified, and every such store
+//!   belongs to a network from before the v3 reset. Refused on every network
+//!   with resync advice: on testnet and mainnet since F35-1, on regtest since
+//!   2026-10-05 (its blocks and stored PoW hashes predate the 172-byte header
+//!   and the mining blob, like format 2's). Its first record's magic is still
+//!   recognised, so the refusal names the format;
 //! - format 1 (file header, untyped `"BSB1"` block records; pre-freeze labnet
 //!   stores): refused on every network with resync advice;
 //! - format 2 (the 100-byte header, or the intermediate output-root build
@@ -241,21 +243,24 @@ impl BlockStore for MemoryStore {
     }
 }
 
+/// The magic of a format 0 (headerless) store's first record: recognised
+/// only to refuse such a store by name ([`BlockStore::bind`]); never read.
+const LEGACY_RECORD_MAGIC: &[u8; 4] = b"BSB1";
+
 /// The record layout of a store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Codec {
     /// Format 3 (the current one): typed records ("BSR2"; format 2 used the
-    /// same record layout and is refused by its header version).
+    /// same record layout and is refused by its header version). The only
+    /// layout this build reads or writes: format 0's untyped records
+    /// (`Legacy`, regtest only) were removed on 2026-10-05.
     Typed,
-    /// Format 0 on regtest only: untyped block records ("BSB1").
-    Legacy,
 }
 
 impl Codec {
     fn magic(self) -> &'static [u8; 4] {
         match self {
             Codec::Typed => b"BSR2",
-            Codec::Legacy => b"BSB1",
         }
     }
 
@@ -264,7 +269,6 @@ impl Codec {
         match self {
             // The type byte, then at most a block record's payload.
             Codec::Typed => 1..=1 + 32 + MAX_BLOCK,
-            Codec::Legacy => 32..=32 + MAX_BLOCK,
         }
     }
 
@@ -278,7 +282,6 @@ impl Codec {
                 h.update(body);
                 h.finalize()
             }
-            Codec::Legacy => crc32fast::hash(body),
         }
     }
 
@@ -295,9 +298,7 @@ impl Codec {
     /// The record of a block.
     fn block_record(self, pow_hash: &Hash, block: &[u8]) -> Vec<u8> {
         let mut body = Vec::with_capacity(1 + 32 + block.len());
-        if self == Codec::Typed {
-            body.push(TYPE_BLOCK);
-        }
+        body.push(TYPE_BLOCK);
         body.extend_from_slice(pow_hash);
         body.extend_from_slice(block);
         self.frame(&body)
@@ -332,9 +333,6 @@ impl Codec {
     /// type this build does not know (skipped). `Err`: a body that is not a
     /// valid record of its type, or an unknown critical type (refused).
     fn decode_body(self, body: &[u8]) -> Result<Option<Record>, String> {
-        if self == Codec::Legacy {
-            return Ok(Some(block_record(body)));
-        }
         let (&ty, p) = body.split_first().expect("typed bodies are not empty");
         match ty {
             TYPE_BLOCK => {
@@ -523,9 +521,9 @@ impl FileStore {
     /// kept prefix, in their order, each logged with its block id (RTW3-7).
     /// Blocks are downloaded again, but a lost verdict would not come back.
     ///
-    /// Only the current format and legacy headerless stores are repaired; a
-    /// damaged file header or another format version is an error (the
-    /// operator moves the store aside and resyncs), and nothing is changed.
+    /// Only the current format is repaired; a missing (format 0) or damaged
+    /// file header or another format version is an error (the operator moves
+    /// the store aside and resyncs), and nothing is changed.
     ///
     /// Returns the number of bytes set aside: 0 if the store is undamaged or
     /// does not exist yet (a fresh data directory).
@@ -536,8 +534,16 @@ impl FileStore {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
             Err(e) => return Err(e),
         };
-        let (codec, start) = if !data.starts_with(FILE_MAGIC) {
-            (Codec::Legacy, 0)
+        let (codec, start) = if FILE_MAGIC.starts_with(&data) {
+            return Ok(0); // empty, or a header torn inside its magic: `bind` writes it
+        } else if !data.starts_with(FILE_MAGIC) {
+            // Format 0 (refused on every network) or not a block store.
+            return Err(corrupt(format!(
+                "{}: no file header (a format 0 store from before the v3 reset, or not a \
+                 block store); repair handles format {FORMAT_VERSION} only. Move the store \
+                 aside and resync",
+                path.display()
+            )));
         } else if data.len() < FILE_HEADER {
             return Ok(0); // a torn header: `bind` writes it again
         } else if header_len(&data) != FILE_HEADER {
@@ -579,7 +585,6 @@ impl FileStore {
         // the last record for an id wins).
         let kept = match codec {
             Codec::Typed => operator_records(&data[pos..]),
-            Codec::Legacy => Vec::new(),
         };
         let mut f = OpenOptions::new().write(true).open(path)?;
         let mut end = pos;
@@ -668,13 +673,12 @@ impl FileStore {
         &self.path
     }
 
-    /// The format version: [`FORMAT_VERSION`] for a store with a file header,
-    /// 0 for a legacy headerless store (regtest only) or before
-    /// [`BlockStore::bind`].
+    /// The format version: [`FORMAT_VERSION`] once [`BlockStore::bind`]
+    /// accepted the store (the only format it accepts), 0 before.
     pub fn format_version(&self) -> u32 {
         match self.codec {
             Some(Codec::Typed) => FORMAT_VERSION,
-            _ => 0,
+            None => 0,
         }
     }
 }
@@ -729,8 +733,8 @@ impl BlockStore for FileStore {
     /// Writes the file header into a new (empty) store, or checks an existing
     /// one. A torn header (a crash while the store was created, so no record
     /// follows) is written again. Refused, with nothing changed: another
-    /// network or genesis, a damaged header, format 1, an unknown version,
-    /// and a headerless (format 0) store except on regtest.
+    /// network or genesis, a damaged header, a headerless (format 0) store,
+    /// formats 1 and 2, and an unknown version, on every network.
     fn bind(&mut self, identity: &StoreIdentity) -> io::Result<()> {
         self.codec = None;
         let expected = encode_file_header(identity);
@@ -751,31 +755,24 @@ impl BlockStore for FileStore {
         let path = self.path.display();
         let net = network_name(identity.network);
         if !head.starts_with(FILE_MAGIC) {
-            // A format 0 store starts with its first record. Anything else is
-            // not a block store (or its header magic is damaged): refused, so
-            // that a damaged header is never read as a legacy store whose
-            // "torn tail" is the whole file.
-            if !head.starts_with(Codec::Legacy.magic()) {
-                return Err(corrupt(format!(
-                    "{path}: not a block store, or its file header is damaged. Move {path} \
-                     aside and start again to resync"
-                )));
-            }
-            if identity.network != Network::Regtest {
+            // A format 0 store starts with its first record: refused on every
+            // network (on testnet and mainnet since F35-1, on regtest since
+            // 2026-10-05), named so the operator knows why. Anything else is
+            // not a block store, or its header magic is damaged.
+            if head.starts_with(LEGACY_RECORD_MAGIC) {
                 return Err(corrupt(format!(
                     "{path}: block store from before the v3 reset (format 0, no file \
-                     header): its network and genesis cannot be verified, so it is not \
-                     used on {net}. Stop the node, move {path} aside (or start with a \
-                     fresh data directory) and start again; the node resyncs the chain \
-                     from its peers (docs/testnet.md §4.5)"
+                     header): its network and genesis cannot be verified, and this build \
+                     reads format {FORMAT_VERSION} only and never migrates old stores, so \
+                     it is not used on {net}. Stop the node, move {path} aside (or start \
+                     with a fresh data directory) and start again to resync the chain from \
+                     its peers (docs/testnet.md §4.5)"
                 )));
             }
-            log::warn!(
-                "{path}: legacy block store without a file header (format 0); its network \
-                 cannot be verified. Regtest only: it is used as it is"
-            );
-            self.codec = Some(Codec::Legacy);
-            return Ok(());
+            return Err(corrupt(format!(
+                "{path}: not a block store, or its file header is damaged. Move {path} \
+                 aside and start again to resync"
+            )));
         }
         if header_len(&head) != FILE_HEADER {
             return Err(corrupt(format!(
@@ -832,13 +829,7 @@ impl BlockStore for FileStore {
     }
 
     fn append_marker(&mut self, marker: &Marker) -> io::Result<()> {
-        if self.codec()? != Codec::Typed {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "a legacy (format 0) block store keeps blocks only",
-            ));
-        }
-        let record = Codec::Typed.frame(&encode_marker(marker)?);
+        let record = self.codec()?.frame(&encode_marker(marker)?);
         self.append_framed(&record)
     }
 
@@ -860,7 +851,6 @@ impl BlockStore for FileStore {
         let mut out = Vec::new();
         let mut pos = match codec {
             Codec::Typed => FILE_HEADER,
-            Codec::Legacy => 0,
         };
         while pos < data.len() {
             match codec.parse_frame(&data[pos..]) {
@@ -1422,7 +1412,7 @@ mod tests {
             TYPE_CHECKPOINT,
             0x99,
         ];
-        for codec in [Codec::Typed, Codec::Legacy] {
+        for codec in [Codec::Typed] {
             for round in 0..20_000usize {
                 let n = (rng.next_u32() % 300) as usize;
                 let mut data = vec![0u8; n];
@@ -1857,41 +1847,73 @@ mod tests {
         }
     }
 
-    /// F35-1: a store written before the file header existed (format 0) is
-    /// refused on testnet and mainnet, unchanged, with remediation text. On
-    /// regtest it is accepted as it is and stays headerless: records load,
-    /// block appends continue in its own layout, markers are refused.
+    /// A format 0 record, written from the old layout: "BSB1" ‖ LE32 n ‖
+    /// LE32 crc32(body) ‖ body, body = pow hash ‖ block bytes (no type byte).
+    fn format0_record(pow_hash: &Hash, block: &[u8]) -> Vec<u8> {
+        let mut body = pow_hash.to_vec();
+        body.extend_from_slice(block);
+        let mut r = LEGACY_RECORD_MAGIC.to_vec();
+        r.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        r.extend_from_slice(&crc32fast::hash(&body).to_le_bytes());
+        r.extend_from_slice(&body);
+        r
+    }
+
+    /// A store written before the file header existed (format 0) is refused
+    /// on every network, unchanged, with resync advice: on testnet and
+    /// mainnet since F35-1, on regtest since 2026-10-05 (before, regtest read
+    /// it and appended to it in its own layout). `repair` refuses it too,
+    /// unchanged, and sets nothing aside.
     #[test]
-    fn a_legacy_headerless_store_is_refused_except_on_regtest() {
+    fn a_legacy_headerless_store_is_refused_on_every_network() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("blocks.dat");
         let legacy: Vec<u8> = (0..3u8)
-            .flat_map(|i| Codec::Legacy.block_record(&[i; 32], &vec![i; 10 + i as usize]))
+            .flat_map(|i| format0_record(&[i; 32], &vec![i; 10 + i as usize]))
             .collect();
         std::fs::write(&path, &legacy).unwrap();
-        for network in [Network::Testnet, Network::Mainnet] {
-            let err = FileStore::open(&path)
-                .unwrap()
-                .bind(&ident(network))
-                .unwrap_err();
+        for network in [Network::Regtest, Network::Testnet, Network::Mainnet] {
+            let mut s = FileStore::open(&path).unwrap();
+            let err = s.bind(&ident(network)).unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
             let msg = err.to_string();
-            assert!(msg.contains("format 0") && msg.contains("move"), "{msg}");
+            assert!(
+                msg.contains("format 0") && msg.contains("move") && msg.contains("resync"),
+                "{msg}"
+            );
+            assert!(!msg.contains("  ") && !msg.contains('\n'), "{msg:?}");
+            assert_eq!(s.format_version(), 0, "not bound");
+            assert_eq!(
+                s.append(&[9; 32], b"new").unwrap_err().kind(),
+                io::ErrorKind::Other,
+                "an unbound store takes no block"
+            );
+            drop(s);
             assert_eq!(std::fs::read(&path).unwrap(), legacy, "nothing changed");
         }
-        let mut s = FileStore::open(&path).unwrap();
-        s.bind(&REGTEST).unwrap();
-        assert_eq!(s.format_version(), 0);
-        assert_eq!(s.load().unwrap(), vec![block(0), block(1), block(2)]);
-        s.append(&[9; 32], b"new").unwrap();
+        let err = FileStore::repair(&path, 7).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("format 0"), "{err}");
         assert_eq!(
-            s.append_marker(&checkpoint(1)).unwrap_err().kind(),
-            io::ErrorKind::Unsupported
+            std::fs::read(&path).unwrap(),
+            legacy,
+            "repair changed nothing"
         );
-        drop(s);
-        let now = std::fs::read(&path).unwrap();
-        assert_eq!(&now[..legacy.len()], &legacy[..], "nothing rewritten");
-        assert_eq!(load(&path).unwrap().len(), 4);
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "nothing set aside"
+        );
+        // An empty file, or one torn inside the header magic, is a new store
+        // to `repair` (nothing to set aside; `bind` writes the header).
+        for torn in [&b""[..], b"B", b"BSB"] {
+            std::fs::write(&path, torn).unwrap();
+            assert_eq!(FileStore::repair(&path, 8).unwrap(), 0);
+            assert_eq!(std::fs::read(&path).unwrap(), torn);
+            let mut s = FileStore::open(&path).unwrap();
+            s.bind(&REGTEST).unwrap();
+            assert_eq!(s.format_version(), FORMAT_VERSION);
+        }
     }
 
     /// A damaged header is refused (fail safe), as are a file that is no
@@ -2002,10 +2024,7 @@ mod tests {
     /// more is "bad length", and so is a body below the smallest length.
     #[test]
     fn record_body_lengths_are_inclusive_at_both_ends() {
-        for (codec, min, max) in [
-            (Codec::Typed, 1, 1 + 32 + MAX_BLOCK),
-            (Codec::Legacy, 32, 32 + MAX_BLOCK),
-        ] {
+        for (codec, min, max) in [(Codec::Typed, 1, 1 + 32 + MAX_BLOCK)] {
             assert_eq!(codec.lengths(), min..=max, "{codec:?}");
             for (len, ok) in [(min - 1, false), (min, true), (max, true), (max + 1, false)] {
                 let body = vec![TYPE_BLOCK; len];

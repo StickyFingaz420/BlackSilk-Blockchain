@@ -5,7 +5,9 @@
 //!
 //! Input: a mode byte, then the file (after a valid file header, or raw).
 //! Mode bits: 1 = raw (the input is the whole file, header included), 2 =
-//! testnet instead of regtest (a headerless legacy store is refused there),
+//! testnet instead of regtest (a headerless format 0 store is refused on
+//! both since 2026-10-05; the legacy frame layout is kept here so raw inputs
+//! still reach that refusal),
 //! 4 = fix checksums (the target recomputes the header's and every frame's
 //! CRC-32 first, so mutations reach the body decoder instead of stopping at
 //! the checksum).

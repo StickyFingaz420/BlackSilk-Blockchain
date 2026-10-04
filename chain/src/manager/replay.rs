@@ -154,7 +154,8 @@ impl ChainManager {
     /// last verdict for an id wins.
     ///
     /// Refused (`InvalidInput`, nothing written): invalidating genesis. A
-    /// legacy headerless (regtest) store keeps no markers (`Unsupported`).
+    /// store that keeps no markers (the trait default) refuses with
+    /// `Unsupported`.
     pub fn mark_stored_block(
         params: &ChainParams,
         store: &mut dyn BlockStore,
