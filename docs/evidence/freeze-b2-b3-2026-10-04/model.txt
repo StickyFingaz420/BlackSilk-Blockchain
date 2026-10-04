@@ -1,0 +1,119 @@
+model base: C:/bszkeval/b23-out\base.bin (3624871 bytes, 4 input batches)
+size model exact on 34 real two-function proofs (every configuration)
+every real proof: all input batches have the same digest count: true
+n_fn 0 p5: 60 proofs; total digests real mean 11026.8 sd 154.2, uniform-query model mean 11052.1 sd 134.1; KS 0.171, p = 0.053
+    tree 0 (depth 20): real mean 1332.5, model mean 1335.2 sd 13.2
+    tree 1 (depth 20): real mean 1332.5, model mean 1335.2 sd 13.2
+    tree 2 (depth 20): real mean 1332.5, model mean 1335.2 sd 13.2
+    tree 3 (depth 20): real mean 1332.5, model mean 1335.2 sd 13.2
+    tree 4 (depth 19): real mean 1224.6, model mean 1227.2 sd 13.2
+    tree 5 (depth 18): real mean 1116.7, model mean 1119.2 sd 13.1
+    tree 6 (depth 17): real mean 1008.8, model mean 1011.3 sd 13.1
+    tree 7 (depth 16): real mean 901.0, model mean 903.4 sd 13.0
+    tree 8 (depth 15): real mean 793.5, model mean 795.7 sd 12.9
+    tree 9 (depth 12): real mean 473.8, model mean 475.3 sd 11.6
+    tree 10 (depth 9): real mean 178.3, model mean 179.2 sd 6.9
+n_fn 1 p5: 30 proofs; total digests real mean 9933.0 sd 110.2, uniform-query model mean 9933.4 sd 120.7; KS 0.148, p = 0.495
+    tree 0 (depth 20): real mean 1335.3, model mean 1335.2 sd 13.1
+    tree 1 (depth 20): real mean 1335.3, model mean 1335.2 sd 13.1
+    tree 2 (depth 20): real mean 1335.3, model mean 1335.2 sd 13.1
+    tree 3 (depth 20): real mean 1335.3, model mean 1335.2 sd 13.1
+    tree 4 (depth 19): real mean 1227.3, model mean 1227.3 sd 13.1
+    tree 5 (depth 17): real mean 1011.3, model mean 1011.4 sd 13.1
+    tree 6 (depth 16): real mean 903.3, model mean 903.5 sd 13.0
+    tree 7 (depth 15): real mean 795.5, model mean 795.7 sd 12.9
+    tree 8 (depth 12): real mean 474.8, model mean 475.4 sd 11.6
+    tree 9 (depth 9): real mean 179.3, model mean 179.2 sd 6.9
+n_fn 2 base: 2 proofs; total digests real mean 8961.0 sd 65.1, uniform-query model mean 9137.2 sd 107.6; KS 0.884, p = 0.034
+    tree 0 (depth 20): real mean 1313.0, model mean 1335.2 sd 13.1
+    tree 1 (depth 20): real mean 1313.0, model mean 1335.2 sd 13.1
+    tree 2 (depth 20): real mean 1313.0, model mean 1335.2 sd 13.1
+    tree 3 (depth 20): real mean 1313.0, model mean 1335.2 sd 13.1
+    tree 4 (depth 19): real mean 1205.0, model mean 1227.2 sd 13.1
+    tree 5 (depth 17): real mean 990.0, model mean 1011.3 sd 13.0
+    tree 6 (depth 16): real mean 882.5, model mean 903.4 sd 13.0
+    tree 7 (depth 12): real mean 458.5, model mean 475.4 sd 11.5
+    tree 8 (depth 9): real mean 173.0, model mean 179.2 sd 6.9
+n_fn 2 coarse18: 2 proofs; total digests real mean 11314.5 sd 139.3, uniform-query model mean 11336.5 sd 121.9; KS 0.340, p = 0.924
+    tree 0 (depth 22): real mean 1547.0, model mean 1551.2 sd 13.2
+    tree 1 (depth 22): real mean 1547.0, model mean 1551.2 sd 13.2
+    tree 2 (depth 22): real mean 1547.0, model mean 1551.2 sd 13.2
+    tree 3 (depth 22): real mean 1547.0, model mean 1551.2 sd 13.2
+    tree 4 (depth 20): real mean 1332.0, model mean 1335.2 sd 13.2
+    tree 5 (depth 19): real mean 1224.5, model mean 1227.2 sd 13.2
+    tree 6 (depth 17): real mean 1009.5, model mean 1011.3 sd 13.2
+    tree 7 (depth 16): real mean 902.0, model mean 903.4 sd 13.1
+    tree 8 (depth 12): real mean 478.5, model mean 475.3 sd 11.7
+    tree 9 (depth 9): real mean 180.0, model mean 179.2 sd 6.9
+n_fn 2 p5: 30 proofs; total digests real mean 9116.7 sd 139.7, uniform-query model mean 9135.9 sd 108.9; KS 0.142, p = 0.552
+    tree 0 (depth 20): real mean 1332.5, model mean 1335.0 sd 13.3
+    tree 1 (depth 20): real mean 1332.5, model mean 1335.0 sd 13.3
+    tree 2 (depth 20): real mean 1332.5, model mean 1335.0 sd 13.3
+    tree 3 (depth 20): real mean 1332.5, model mean 1335.0 sd 13.3
+    tree 4 (depth 19): real mean 1224.5, model mean 1227.0 sd 13.3
+    tree 5 (depth 17): real mean 1008.6, model mean 1011.1 sd 13.2
+    tree 6 (depth 16): real mean 900.7, model mean 903.3 sd 13.1
+    tree 7 (depth 12): real mean 473.8, model mean 475.2 sd 11.7
+    tree 8 (depth 9): real mean 178.9, model mean 179.2 sd 6.9
+p5 n_fn 0 deposit: n 15, mean 2401816, sd 6081, min 2393010, max 2413554
+p5 n_fn 0 pay2: n 15, mean 2402582, sd 4813, min 2395538, max 2412146
+p5 n_fn 0 pay1: n 15, mean 2403715, sd 4638, min 2395090, max 2410482
+p5 n_fn 0 withdraw: n 15, mean 2400888, sd 4036, min 2393842, max 2407698
+p5 n_fn 0: deposit vs pay2: mean difference 766 bytes, p(mean) = 0.700, p(KS) = 0.673
+p5 n_fn 0: deposit vs pay1: mean difference 1899 bytes, p(mean) = 0.347, p(KS) = 0.183
+p5 n_fn 0: deposit vs withdraw: mean difference 928 bytes, p(mean) = 0.624, p(KS) = 0.939
+p5 n_fn 0: pay2 vs pay1: mean difference 1133 bytes, p(mean) = 0.516, p(KS) = 0.371
+p5 n_fn 0: pay2 vs withdraw: mean difference 1694 bytes, p(mean) = 0.303, p(KS) = 0.678
+p5 n_fn 0: pay1 vs withdraw: mean difference 2827 bytes, p(mean) = 0.088, p(KS) = 0.074
+p5 n_fn 1 lock: n 15, mean 3001652, sd 3427, min 2997616, max 3008208
+p5 n_fn 1 claim: n 15, mean 3002090, sd 3729, min 2995472, max 3007728
+p5 n_fn 1: lock vs claim: mean difference 437 bytes, p(mean) = 0.736, p(KS) = 0.644
+p5 n_fn 2 claim_lock: n 10, mean 3632103, sd 5273, min 3619591, max 3637159
+p5 n_fn 2 lock_lock: n 10, mean 3631047, sd 3113, min 3624743, max 3635175
+p5 n_fn 2 claim_claim: n 10, mean 3630829, sd 5086, min 3623463, max 3636455
+p5 n_fn 2: claim_lock vs lock_lock: mean difference 1056 bytes, p(mean) = 0.606, p(KS) = 0.395
+p5 n_fn 2: claim_lock vs claim_claim: mean difference 1274 bytes, p(mean) = 0.590, p(KS) = 0.788
+p5 n_fn 2: lock_lock vs claim_claim: mean difference 218 bytes, p(mean) = 0.908, p(KS) = 0.413
+
+widest, vault programs: 1024 reachable height sets; largest expected size 4094185 bytes
+  table heights (log2) {8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}, schedule [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3]
+    add at 2^22
+    bit at 2^21
+    lt at 2^20
+    shift at 2^19
+    mul at 2^18
+    poseidon at 2^11
+    f0.keys at 2^17
+    f0.cycles at 2^15
+    f1.keys at 2^14
+  budgets: C Budget { cycles: 32768, keys: 131072, add: 4164804, bit: 2094892, lt: 1024126, shift: 522398, mul: 260254, poseidon: 1870 }
+           C2 Budget { cycles: 6000, keys: 16384, add: 4300, bit: 260, lt: 3900, shift: 240, mul: 240, poseidon: 27 }
+  registrable: true; statement heights {8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22} (equal to the set: true)
+  20,000 uniform query draws: mean 4094233, sd 6830, min 4065015, max 4116695; P(> 3.8 MB) = 1.0000, P(> 4 MiB) = 0.0000
+  worst case over any query positions: 4199575 bytes
+  verifier compressions: mean 25082
+
+widest, any programs: 2048 reachable height sets; largest expected size 4125175 bytes
+  table heights (log2) {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}, schedule [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3]
+    add at 2^22
+    bit at 2^21
+    lt at 2^20
+    shift at 2^19
+    mul at 2^18
+    poseidon at 2^17
+    fn.program at 2^15
+    fn.image at 2^14
+    fn.keys at 2^11
+    fn.cycles at 2^10
+    fn.output at 2^9
+  20,000 uniform query draws: mean 4125173, sd 7657, min 4091923, max 4151859; P(> 3.8 MB) = 1.0000, P(> 4 MiB) = 0.0000
+  worst case over any query positions: 4242995 bytes
+  verifier compressions: mean 26563
+
+one Poseidon2 2-to-1 compression: 1.306 us (306965279)
+n_fn 2 base: verify median of medians 320.6 ms (min 316.2, max 320.6), model compressions 10089
+n_fn 2 coarse18: verify median of medians 378.1 ms (min 324.2, max 378.1), model compressions 12395
+n_fn 2 p5: verify median of medians 324.0 ms (min 317.4, max 381.9), model compressions 10086
+fitted slope 24.181 us per compression (microbenchmark 1.306 us)
+verifier, widest (vault programs): about 687 ms (fitted slope), 344 ms (compression cost only), from 324 ms at 10086 compressions
+verifier, widest (any programs): about 722 ms (fitted slope), 346 ms (compression cost only), from 324 ms at 10086 compressions
