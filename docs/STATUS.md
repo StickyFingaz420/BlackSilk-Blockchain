@@ -4,10 +4,11 @@
 [phase-2 decisions](reviews/phase2-2026-09-27/decisions.md)). Other documents link here
 instead of stating status themselves; a status line anywhere else is historical.
 
-- **As of:** `rebuild/core` at `a144d94`, reconciled row by row against the code and
-  the decisions after the second threat-model round (2026-10-02), plus the branch
-  that last edited this file (see `git log -- docs/STATUS.md`). Every entry names its
-  evidence; an entry without evidence in the repository says so.
+- **As of:** `rebuild/core` at `de9e2ca` (2026-10-04) for §5 and the rows touched by
+  the freeze-commit reconciliation; the rest was reconciled row by row at `a144d94`
+  against the code and the decisions after the second threat-model round (2026-10-02),
+  plus the branches that later edited this file (see `git log -- docs/STATUS.md`).
+  Every entry names its evidence; an entry without evidence in the repository says so.
 - **What this is:** internal engineering work. BlackSilk has had **no external audit
   and no independent review**, none is engaged, and none is planned (owner decision
   2026-09-25, [review-status.md](reviews/review-status.md)). This file does not claim
@@ -133,7 +134,7 @@ row says otherwise.
 | AVX-512 refusal at compile time, Plonky3 backend in `--version` and `/info` | "Agent 27" W4 | |
 | Independent BP+ verifier by a different author | "Agent 16" | `crypto/src/bulletproofs_plus.rs` has an in-module naive verifier (`verify_naive`) that shares the challenge code, so it is not independent |
 | Monero CLSAG conformance harness (`tools/clsag-conformance`) | "Agent 15" W10 | |
-| Golden PX proof fixture | "Agent 22", "Run C and RT-MUTC" | Done: `node/src/px_fixture.bin` (merge `5d3d96f`). Open: the prover is not bit-reproducible, so the fixture is pinned and never regenerated in CI (P-5, under investigation) |
+| Golden PX proof fixture | "Agent 22", "Run C and RT-MUTC" | Done: `node/src/px_fixture.bin` (merge `5d3d96f`). The prover was not bit-reproducible; fixed by PXDET-1 (merge `451505e`: two regenerations give identical bytes). The fixture stays pinned and is never regenerated in CI |
 | Supply-audit PX test (F40-9) | "Agent 40" | the audit's PX half is tested only with an empty pool |
 | Verifier-only grinding switch for deeper ZK fuzzing | "RT-STATEFUL" | P1 |
 | Staller detection for block downloads (disconnect, never ban) | "Agent 31" | a timed-out request moves to a random candidate, possibly the same peer |
@@ -162,8 +163,10 @@ row says otherwise.
 |---|---|---|
 | Full test suite on the freeze commit, including the PX-proving tests | Not implemented (per-merge suites are recorded in the merge commits) | `git log --merges` |
 | Fuzz campaign (W4-FUZZ, `-O -a`) and stateful harnesses (W4-STATEFUL) | Complete but requires further testing: 12 targets for 30 minutes each, no finding; robustness evidence only ("no panic on the reached surface"), and shallow (several targets still found new units at the end). Stateful `peer_protocol`, `px_admission` and `scan_outputs` harnesses, no product bug found | [fuzz-w4 evidence](evidence/fuzz-w4-2026-09-29/README.md); [fuzz-stateful evidence](evidence/fuzz-stateful-2026-10-01/README.md); decisions "W4-FUZZ and RT-FUZZ" |
-| Mutation-testing freeze gate (zero unexplained survivors) | Partially implemented: runs A (`consensus`) and B (`px-core`), C (transaction rules, fork choice, crypto, blocks) and D (decode bounds, admission, header sync, cache store) done, every survivor killed or exempted. Not done: run E (tx types, codec and state; px prove, state and tree; chain submission and header sync; p2p headers, connections, maintenance and admission; wallet checks); `replay.rs`, `store.rs`, the zk verify path, `randomx/`, the fingerprint modules and the supply audit are in no run | [run A/B](evidence/mutation-2026-09-29/README.md), [run C](evidence/mutation-runC-2026-09-30/README.md), [run D](evidence/mutation-runD-2026-10-01/README.md); [mutation-exemptions.md](reviews/mutation-exemptions.md) |
-| BVM-1 AIR soundness evidence (TM2-1: the AIR has had no mutation census) | Not implemented: W4-MUTAIR started 2026-10-02 | decisions "Threat model round 2" |
+| Mutation-testing freeze gate (zero unexplained survivors) | Partially implemented: runs A (`consensus`) and B (`px-core`), C (transaction rules, fork choice, crypto, blocks), D (decode bounds, admission, header sync, cache store) and E (tx types, codec and state; px prove, state and tree; chain submission and header sync; p2p headers, connections, maintenance and admission; wallet checks) done, every survivor killed or exempted (run E: no real bug, RT-MUTE accepted with fixes). Run F is partial: `store.rs` and the supply audit's PX scan only (E62–E64). Not done: the rest of run F (`replay.rs`, the zk verify, config and params path, `randomx/`, both fingerprint modules, the supply audit) and the re-run of the 124 chain mutants invalidated by the overload; no run covers the consensus code added after run E (PX-R, RX-SALT, the output root and mining blob, the RandomX interpreter rewrite) | [run A/B](evidence/mutation-2026-09-29/README.md) (merge `6a2b3b7`), [run C](evidence/mutation-runC-2026-09-30/README.md) (`33f789f`), [run D](evidence/mutation-runD-2026-10-01/README.md) (`4c88560`), [run E](evidence/mutation-runE-2026-10-01/README.md) (`5738093`); run F partial `47205d5`; [mutation-exemptions.md](reviews/mutation-exemptions.md); decisions "Run E", "RT-MUTE", "Run F stopped", "Run F memory incident" |
+| BVM-1 AIR soundness evidence (TM2-1: the AIR had no mutation census) | Complete but requires further testing: the first AIR census (1,977 mutants, 62 hand mutants, a 3.86 M-change cell census, lying-generator and forgery tests) accepted no false execution; RT-MUTAIR found no soundness finding; the stream limits are documented as interpreter limits (spec corrected, `tx/tests/px_io_limits.rs` as the tripwire); `CIRCUIT_ID` unchanged. Internal evidence, not a proof of AIR soundness | merge `57ee353`; [mutation-air evidence](evidence/mutation-air-2026-10-02/README.md); decisions "W4-MUTAIR" |
+| Golden PX fixture, tamper sweep, PX and deploy verdict samples (TM2 P0-freeze) | Complete but requires further testing: `node/src/px_fixture.{bin,txt}` pinned, full verdicts in `node/tests/px_fixture.rs`, stateless PX and deploy samples in the manifest; red-team reviewed twice (RT-PXR, RT-PXR2). The prover is now deterministic for a fixed witness and seed (PXDET-1), but the fixture stays pinned and is never regenerated in CI | merge `5d3d96f`; PXDET-1 merge `451505e`; record `px-ciphertext-r`, Phase 2 |
+| Soundness arithmetic with the mixed-height union term | Complete but requires further testing: unique decoding ≥ 100.58 bits over the envelope with a conservative 5-bit union over input heights (105.58 without it), above the 100-bit floor; computed, not proven; no red-team pass yet | `zk/tests/soundness_calc.rs`; [zk.md](zk.md) §9.3; record "Soundness figures", Follow-up (mixed-height term) |
 | P-5 re-run on the frozen kernel; widest-proof and verifier-cost measurement | Not implemented | decisions, "Agent 26", "Agent 22" |
 | Labnet campaign | Partially implemented: W4-LAB (honest network to equilibrium, unequal partitions, a withholding miner, late-joiner discovery and address relay) on one machine; runs 3–4 have an undetermined build and are superseded by the quiet-window reruns, not yet run (ring topology, address relay, late joiner) | [labnet-w4 evidence](evidence/labnet-w4-2026-09-30/README.md); decisions "W4-LAB and RT-LAB", "W4-GUARD" |
 | Supply audit with a PX pool, a multi-machine 72-hour run | Not implemented | [testnet.md](testnet.md) §7, §7.1 |
@@ -206,6 +209,3 @@ landed. Each entry is cleared by the coordinator when its owner fixes the findin
   include the network"; [px.md](px.md) §6 is corrected), and the `reannounce_pool`
   comment in `p2p/src/net/relay.rs` repeats the claim of [p2p.md](p2p.md) §7 that
   TM2-P1 refutes (owned by TM2-P2P).
-- The decisions log still assigns the DAA race residual to park-on-deep-reorg
-  ("Agent 03", "DAA DECIDED"); the record and the evidence carry the correction
-  (§2).

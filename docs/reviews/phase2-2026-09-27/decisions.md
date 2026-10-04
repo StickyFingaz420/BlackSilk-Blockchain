@@ -206,6 +206,7 @@
 - **Fixed parameters:** N stays 60 unless the harness shows the 90 variant is needed. The 99/100 factor is NOT bundled (it is a separate bias question; P3).
 - **Deadline:** W2 lands BEFORE 01 freezes the golden vectors. New vectors come from an independent script. The fingerprint gains a difficulty-rule identifier (40).
 - **Complementary policy:** 02's park-on-deep-reorg is defence in depth for a public testnet.
+  - *Corrected 2026-10-04 (freeze-commit reconciliation):* park-on-deep-reorg does not cover the DAA raising-race residual. It is not implemented, its decided depth (720, public testnet; off for the trial, "Agent 02" W-7) is far beyond a race at 100 confirmations, and the inherited difficulty (RT-4) arises after the attacker's chain is accepted. The residual is accepted under K1 ("RES-FREEZE verified" item 1; record daa-lwma75-warm, correction 2026-10-02).
 - **Never-change list:** the "LWMA floor" item is amended. The floor of 1 is kept; the rise rule changes before the freeze.
 - **Red-team (50):** attacks the chosen rule, including hop-in/hop-out mining and the start-up window (03-F2).
 - **R1-C8 (difficulty lowering):** downgraded to Low (03 and 04 agree independently); confirm with W1.
@@ -597,6 +598,7 @@
   - re-derives the genesis-gap and 1-second-block tests;
   - adds a fingerprint difficulty-rule identifier.
 - **Residual:** about 4% at q=0.4 is left to the park-on-deep-reorg policy (02).
+  - *Corrected 2026-10-04 (freeze-commit reconciliation):* a misattribution. Park-on-deep-reorg cannot act on a race measured at 100 confirmations (decided depth 720, off for the trial, not implemented) and does not touch the inherited difficulty of RT-4. The residual (+3.5 % at q = 0.4 after the warm-up, "DAA FINAL") is accepted under K1 for the testnet and reopened before mainnet ("RES-FREEZE verified" item 1; record daa-lwma75-warm, correction 2026-10-02).
 
 ## DAA FINAL (after RT-DAA)
 - **Rule:**
@@ -1645,3 +1647,63 @@ Every external citation was verified against its primary source (res-freeze.md �
   nonce at byte 39 where stock xmrig writes its RandomX nonce (xmrig iterates 39..43, a
   pool's extranonce is 43..47). The block id stays the full header's hash. The revision
   id becomes `OMR:header-output-mmr-px-root-and-mining-blob` (one revision).
+
+## RT-W1 (wave-1 red team): findings and verdict status (freeze-commit reconciliation, 2026-10-04)
+
+- **Why this entry:** RT-W1b and RT-W1c have verdict sections above; the first wave-1
+  red team (RT-W1, over CB-A, CB-B1a and CB-B3) has none. This entry collects what the
+  repository and its history show. It reconstructs no verdict.
+- **Findings and fixes (from the fix commits and records):**
+  - RTW1-1 (Medium) and RTW1-10 (Info): the unknown-upgrade work gate and
+    `seed_lag ≥ 1`; `2affc89`, merge `278dc60`; record rt1-unknown-upgrade-pow,
+    Follow-up (RTW1-1).
+  - RTW1-2 (Medium) and RTW1-7 (docs): PX proofs decoded and shape-checked before rings
+    on every single-transaction path; `75ed1c9`, merge `2a69556`.
+  - RTW1-3 (Medium), RTW1-6 (Low), RTW1-8 (Low/Info) and an Info item (canonical form
+    in `zk::verify`): `be93f71`, merge `180d1ca`; records BS-ZK-3, Canonical proof shape
+    and Soundness figures, Follow-up (RTW1-3/6/8).
+  - RTW1-4 (Low) and RTW1-5 (Low): wallet duplicate outputs and foreign-genesis files;
+    `d1e05bc`, merge `2a69556`.
+  - RTW1-9: no commit, record or decision names it.
+- **Verdicts: not recorded.** No per-record verdict (ACCEPT, ACCEPT WITH CHANGES, ...)
+  of RT-W1 is in decisions.md, the records or any commit message, and the RT-W1 report
+  is not in the repository. The re-review of FX-RTW1-ZK is not recorded either.
+- **Records:** the step-15 lines of BS-ZK-3, Canonical proof shape and Soundness figures
+  now cite the findings above and keep the verdict **open**. They no longer say
+  "red-team review (agent 50) pending" without context: agent 50's verdicts above are
+  design-stage verdicts, given before implementation.
+- **Open (not a freeze gate by itself; record debt):** a red-team verdict on the three
+  zk records and on FX-RTW1-ZK. If one is run before the freeze, its scope should
+  include the mixed-height union term (below).
+
+## RT-PXR, RT-PXR2 and RT-RXSALT (freeze-commit reconciliation, 2026-10-04)
+
+- **RT-PXR** (phase 1 of px-ciphertext-r): nothing High. Follow-ups L1–L4 and L6 in
+  `9f9ccb5` (the record's scope claim about pool revalidation corrected; identity-`R`
+  open test; delivery v2 known answer; mock-chain `R`; wallet-review D-1 superseded).
+- **RT-PXR2** (phase 2: golden PX fixture, samples, revision PX-R): nothing above Low.
+  Follow-ups L1–L3 and I1 in `d5c20f7` (the fixture re-encodes byte for byte; binary and
+  LF attributes; STATUS rows; the ciphertext binding probed at six offsets). Both passes
+  are stated in merge `5d3d96f`.
+- **RT-RXSALT** (rx-salt): verdict "merge", stated in merge `68e6e66`. Its findings are
+  not in the repository. The reference-implementation cross-check of bs-1a..bs-1f is
+  still not run (a freeze gate).
+- The records px-ciphertext-r and rx-salt now cite these reviews.
+
+## Mixed-height soundness term (freeze gate B6, 2026-10-04)
+
+- **Done:** "RES-FREEZE dossier, first pass" item 5 asked for a ~5-bit mixed-height
+  union-bound term in the independent calculator (research: res-freeze.md §5.4 (b),
+  §8.6 item 5 (b)). `zk/tests/soundness_calc.rs` now charges every FRI term (batching,
+  commit phase, query phase) log2(H) bits for H distinct input heights, with H
+  over-counted as 32 (at most 23 tables, at most 15 heights): 5 bits.
+- **Result:** unique decoding with the term is **≥ 100.58 bits over the whole envelope**
+  (105.58 − 5; 100.65 at the largest shape), above the 100-bit floor
+  `MIN_PROVEN_BITS` by about 0.6 bits. Johnson stays hash-bound at 122. Computed, not
+  proven: the term is a heuristic stand-in for the missing roll-in theorem.
+- **No parameter change.** The FRI parameters (BS-ZK-3) and `PARAMS_ID` are unchanged.
+  The margin is thin: any later change that costs more than about 0.6 bits in this
+  regime (fewer queries, a larger rate, a larger height count) needs a parameter
+  decision, which is consensus.
+- docs/zk.md §9.3 and §12 quote about 100.6 bits with the term; record "Soundness
+  figures", Follow-up (mixed-height term).

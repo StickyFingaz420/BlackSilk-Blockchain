@@ -40,17 +40,30 @@ procedure), R15-3 and R15-4, and the SX1 cross-review.
 
 ## 2. Construction
 
-Every field except the nonce is fixed and announced before the beacon:
+Every field except the nonce is fixed and announced before the beacon. The header is
+172 bytes (`HEADER_SIZE`, consensus/src/header.rs), fields in this order, integers
+little-endian:
 
-| Field | Value |
-|---|---|
-| `version` | the header version of the first epoch (1) |
-| `height` | 0 |
-| `prev_id` | 32 zero bytes |
-| `timestamp` | `T_g`, announced (§4) |
-| `difficulty` | `D0`, announced (§5) |
-| `tx_root` | 32 zero bytes (the empty body; docs/blocks.md §3) |
-| `nonce` | derived from the beacon (below) |
+| Bytes | Field | Value |
+|---|---|---|
+| 0..4 | `version` | the header version of the first epoch (1) |
+| 4..12 | `height` | 0 |
+| 12..44 | `prev_id` | 32 zero bytes |
+| 44..52 | `timestamp` | `T_g`, announced (§4) |
+| 52..60 | `difficulty` | `D0`, announced (§5) |
+| 60..92 | `tx_root` | 32 zero bytes (the empty body; docs/blocks.md §3) |
+| 92..100 | `output_count` | 0 (no outputs; rule B-OMR, docs/blocks.md §5) |
+| 100..132 | `output_root` | 32 zero bytes (the root of the empty output range; docs/consensus.md §7.1) |
+| 132..164 | `px_root` | `EMPTY_PX_ROOT` (consensus/src/genesis.rs): the root of the empty PX tree (docs/px.md §5), checked against `blacksilk_px::state::State::new().root()` and against `empty.32` in `px/tests/data/hk_vectors.txt` (from the independent script `tools/vectors/poseidon2_hk.py`); rule B-PXR |
+| 164..172 | `nonce` | derived from the beacon (below) |
+
+`blacksilk-genesis` prints every field, `px_root` in hex, and the 172 bytes (step 4).
+The block id hashes the full 172 bytes (below). The proof-of-work input is not the
+header but the 47-byte mining blob `"BSilk/1" ‖ mining_hash ‖ LE64(nonce)`, with
+`mining_hash = H32("mining-hash", LE32(network_id) ‖ header[0..164])` and the nonce at
+blob bytes 39..47 (docs/consensus.md §3). The genesis carries no proof of work and is
+never validated (below), so the blob plays no part in its construction; it matters from
+block 1 on.
 
 ```text
 beacon = the 32 bytes of Bitcoin block H's hash in DISPLAY order

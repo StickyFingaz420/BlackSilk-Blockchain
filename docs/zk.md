@@ -589,6 +589,21 @@ owner): a STARK on Plonky3 0.7.**
   against an adversary's Poseidon2 budget); the Johnson regime is **hash-bound at
   ≈ 122 bits** (`COLLISION_BITS`). The figures are pinned by
   `zk/tests/soundness_calc.rs::headline_figures_at_the_largest_shape`.
+  - **With the mixed-height union term: about 100.6 bits** in the unique-decoding
+    regime (105.58 − 5 = 100.58 at the worst point of the envelope, the smallest height;
+    100.65 at the largest shape), just above the 100-bit floor `MIN_PROVEN_BITS`, and still
+    ≥ 100 at every point of the envelope (`the_independent_calculator_agrees_with_p3_security`).
+    This is the conservative figure to quote. The term (RES-FREEZE, reviews/phase2-2026-09-27/research/res-freeze.md
+    §5.4 (b) and §8.6 item 5 (b)) treats each distinct input height of the batched FRI
+    as its own FRI instance and takes a union bound over them, so the batching, every
+    commit-phase round and the query phase each lose log2(H) bits. H is at most the
+    table count (23, `PROOF_LIMITS`) and at most the 15 committed heights of the
+    envelope; the calculator over-counts with H = 32 (5 bits, against 4.5 for H = 23).
+    It is a heuristic stand-in for the missing theorem on mixed-height roll-in, not a
+    proof (§12.1). The Johnson figure stays hash-bound at 122 (its algebraic bound,
+    ≥ 150, minus 5 bits is still above it). The margin above the floor is about
+    0.6 bits; any change that costs more (fewer queries, a larger rate, more distinct
+    heights counted) needs a parameter decision, which is consensus.
   - **The commitment term** `COLLISION_BITS` = 122 is our evaluation of ePrint
     2026/089 (Coratger, Khovratovich, Mennink, Wagner, ACM CCS 2026), **Theorem 3**:
     extractability of the Plonky3 Merkle tree with an overwrite-sponge leaf hash on
@@ -600,8 +615,11 @@ owner): a STARK on Plonky3 0.7.**
     paper shows does not apply to the node compression alone.
   - **Not modelled by `p3-security`:** LogUp, the multi-table DEEP union and
     mixed-height FRI inputs. The first two are bounded by the independent calculator;
-    mixed-height FRI has no published analysis (it is covered only by the per-round
-    commit bound, an assumption).
+    mixed-height FRI has no published analysis. The calculator charges it the
+    conservative union-bound term above (5 bits); that the roll-in loses no more than a
+    union over heights is an assumption, not a theorem (Plonky3 GHSA-f69f-5fx9-w9r9, an
+    unsound roll-in fixed in 0.7.0, shows the construction is delicate;
+    docs/reviews/plonky3-advisories-2026-10-03.md).
 - **Batched-function count (internal review):** the calculator is given one batched
   function per committed column. Plonky3 batches each (column, opening point) pair
   with its own power of the FRI batching challenge, and trace and permutation columns
@@ -859,7 +877,8 @@ of scope until proof size is solved (aggregation-study.md).
 
 **Security headline (BS-ZK-3; figures and caveats in §9.3):** about **105 bits** of
 soundness, computed (not proven) under the assumptions of §9.3 (**89.6 statistical +
-16 grinding**, unique-decoding regime); the Johnson regime is **hash-bound at
+16 grinding**, unique-decoding regime), and about **100.6 bits** once the conservative
+mixed-height union term (5 bits) is charged, just above the 100-bit floor; the Johnson regime is **hash-bound at
 ≈ 122 bits** (the Merkle commitments); zero knowledge is
 **statistical and conditional** (reviews/zk-coverage.md §3), and **computational in
 practice**, because the masks are PRG outputs. None of this is a claim that BlackSilk is
@@ -880,6 +899,11 @@ secure or perfectly zero-knowledge; it is internal engineering work, not an audi
      zk-coverage.md §3).
    - **Soundness** counts 16 bits of proof-of-work grinding, which are computational
      (an adversary's Poseidon2 budget), on top of 89.6 statistical bits.
+   - **Mixed-height batching** (no published theorem): the batched FRI over tables of
+     different heights is assumed to lose no more than a union bound over the input
+     heights, which the calculator charges as 5 bits (§9.3; about 100.6 bits with
+     it). The batch-STARK composition (DEEP-ALI, LogUp, several tables, ZK masking)
+     likewise has no end-to-end soundness proof as configured.
 2. **`Hk`** (the sponge): collision resistance, preimage resistance, and PRF security
    when keyed (nullifiers), assuming the Poseidon2 permutation behaves ideally. This is
    the key PX assumption. It does **not** extend to the tree-node compression
