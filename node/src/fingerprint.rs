@@ -170,6 +170,10 @@ pub const REVISIONS: &[Revision] = &[
         id: "OMR:header-output-mmr-px-root-and-mining-blob",
         record: "output-root",
     },
+    Revision {
+        id: "ZK:BS-ZK-4-query-grinding-20",
+        record: "bs-zk-4",
+    },
 ];
 
 /// The three digests of one network.

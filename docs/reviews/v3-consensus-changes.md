@@ -38,6 +38,7 @@ they are never renamed. Index:
 - px-ciphertext-r (tx; PX-R)
 - rx-salt (randomx; RX-SALT)
 - output-root (consensus header, tx, px, chain, rpc, miner, node, wallet; OMR)
+- bs-zk-4 (zk parameter set: 20 query grinding bits; px fingerprint, golden PX fixture; BS-ZK-4)
 
 New sections are appended at the end.
 
@@ -3880,3 +3881,124 @@ make the proof-of-work input a fixed 47-byte mining blob, in this one revision.
   intermediate `650e5fe` build (header-input PoW hashes under the new genesis ids) is
   never replayed (`damaged_torn_and_foreign_file_headers`); the PoW cache key tag is
   `"BlackSilk/pow-cache/v3"`.
+
+---
+
+<a id="bs-zk-4"></a>
+
+## bs-zk-4: twenty query grinding bits, parameter set BS-ZK-4
+
+Revision: ZK:BS-ZK-4-query-grinding-20
+
+Owner: BS-ZK-4 (zk, px, node). Decision: "BS-ZK-4" (Lead, 2026-10-04, approved by the
+owner), after "RES-FREEZE dossier, first pass" item 5, "Mixed-height soundness term" and
+"RT-FREEZE-V". Research: `C:/bszkeval/fri-margin/NOTES.md` (local study, summarized in
+item 3; not in the repository). Internal engineering work, not an audit.
+
+1. **Problem.** With the mixed-height union term (Follow-up (mixed-height term) of
+   "Soundness figures"), BS-ZK-3's unique-decoding figure is ≥ 100.54 bits over the
+   envelope: about 0.5 bits above the 100-bit floor `MIN_PROVEN_BITS`. Any small error
+   in the calculator's model, or a later shape change, would put the frozen parameter
+   set below its own floor, and a change after the freeze is a reset.
+2. **Demonstrated failure.** None in a proof. The failure is a margin one, by
+   calculation: `soundness_calc.rs` gives 100.54 at the worst shape with H = 33. The
+   floor counts total bits (`MIN_PROVEN_BITS` is checked against p3-security's
+   unique-decoding bits, queries plus grinding), and docs/zk.md §9.3 allows grinding up
+   to 20 bits.
+3. **Prior art and options.** ethSTARK (ePrint 2021/582) counts grinding bits in the
+   same way; Plonky3's `p3-security` adds `query_pow_bits` to the query term. Options
+   measured by the study (total bits; with the H = 32 term of the time):
+   - 108 queries, 16 bits (BS-ZK-3): 105.58; 100.58 with the term.
+   - **108 queries, 20 bits (chosen): 109.58; 104.58 with the term.** No proof-byte cost.
+   - 112 queries, 16 bits: 108.90; 103.90. About +3.4 % proof bytes, and 112 is the
+     ceiling of eq. 17 at `MIN_LOG_HEIGHT` 8 (2·(q + 16) ≤ 256); the widest PX proof
+     (3.63 MB measured for W28-3, unmeasured for the widest shape, freeze gate B2) would
+     come within about 1.2 % of the 3.8 MB decision bound.
+   - 116 or 120 queries: need `MIN_LOG_HEIGHT` 9, a circuit-envelope change.
+   - Literature on the term itself: Zhang et al., "Fast RS-IOP Multivariate Polynomial
+     Commitments and Verifiable Secret Sharing", USENIX Security 2024, Protocol 1
+     ("rolling batch FRI") and Theorem 3.1: arity 2, unique decoding, a query term with
+     no factor in the number of rolled-in polynomials. It is a close peer-reviewed
+     analogue, not a theorem for Plonky3's construction (arity up to 16, skipped
+     heights, DEEP-batched and hiding inputs, a final polynomial of 64 coefficients,
+     ρ⁺, Fiat–Shamir), so the union term is kept as the conservative figure.
+4. **Alternatives.** Keep BS-ZK-3 and accept a 0.5-bit margin (rejected: the margin is
+   inside the uncertainty of the model); more queries (rejected above: proof bytes and
+   the eq. 17 ceiling); drop the union term on the strength of Zhang et al. (rejected:
+   not the same construction).
+5. **Affected components.** `zk/src/params.rs` (`PARAMS_ID` =
+   `BlackSilk/zk/BS-ZK-4`, `QUERY_POW_BITS` = 20, a `const` assertion of the 20-bit
+   cap); every proof's transcript (the parameter-set id is absorbed first) and its
+   query grinding witness; the PX consensus manifest (`zk.PARAMS_ID`,
+   `zk.QUERY_POW_BITS`, the transcript sample) and so `PX_SIDE_DIGEST`; the golden PX
+   fixture (`node/src/px_fixture.bin`), regenerated, and the node's PX samples; the
+   rules and consensus fingerprints of every network. No verifier code changes:
+   Plonky3's verifier reads the grinding bits from the configuration. `CIRCUIT_ID`
+   and `CIRCUIT_DIGEST` are unchanged (the statement digest does not hash the
+   parameter set).
+6. **Activation.** v3 genesis base rule (the reset); no BS-ZK-3 proof was ever
+   published on a network.
+7. **Compatibility.** BS-ZK-3 proofs do not verify under BS-ZK-4 (another `PARAMS_ID`
+   in the transcript, and a 16-bit witness fails the 20-bit check with probability
+   15/16) and vice versa. Records, nullifiers, the tree and the proof encoding are
+   unchanged; proof sizes are unchanged.
+8. **Reorg, wallet, mining, P2P.** Wallets prove with the new set (same binary). The
+   prover's grinding grows from about 2^16 to about 2^20 Poseidon2 permutations per
+   proof: about 1.3 s mean, 0.95 s median, up to 5.2 s (item 11), small against proving times
+   of tens of seconds. The search stays sequential and returns the smallest nonce
+   (F27-3); a prover that deviates is distinguishable at about 2^20 permutations
+   (docs/zk.md §11.3). Verification cost is unchanged (one witness check). No mining,
+   reorg or P2P change.
+9. **Vectors.** `PARAMS_ID` = `BlackSilk/zk/BS-ZK-4`. The pinned `PX_SIDE_DIGEST`
+   (`px/tests/consensus_fingerprint.rs`), the golden PX fixture and the
+   `deploy_configs.rs` pins are re-pinned (item 11); values are referenced, not copied.
+10. **Tests.** `zk/tests/soundness_calc.rs` (p3-security 105 → 109; largest shape
+    109.5–109.8, with the term 104.5–104.8; the envelope minimum with the term
+    104.5–104.7); `params::tests::every_shape_within_limits_meets_both_security_targets`
+    (worst case 109 unique-decoding bits, 122 Johnson);
+    `zk/tests/grinding.rs::grinding_time_at_the_parameter_sets_bits` (new, ignored,
+    release: times the 20-bit search on 64 transcripts and checks four against brute
+    force); the zk proof suites, the PX-proving suites and `node/tests/px_fixture.rs` on
+    the regenerated fixture.
+11. **Suite results** (2026-10-04, release, `--locked`, 4-core i7-6700, 16 GB,
+    Windows 10; other builds were running on the machine):
+    - `cargo test --release -p blacksilk-zk -- --test-threads=2`: every binary passes
+      (lib 3; decode_bounds 10; field_mutations 2; grinding 4, 2 ignored; pins 1;
+      proofs 16; rt_pxdos_differential 4; soundness_calc 3; upstream_advisories 6).
+      The params test prints the worst case `{ johnson_bits: 122,
+      unique_decoding_bits: 109 }`; the independent calculator gives ≥ 109.58 bits over
+      1,440 shapes, ≥ 104.54 with the mixed-height term.
+    - Grinding at 20 bits (`grinding_time_at_the_parameter_sets_bits`, 64 transcripts):
+      min 25.3 ms, median 952 ms, mean 1,321 ms, max 5,211 ms; mean nonce 1,052,916
+      (2^20 = 1,048,576); four results equal the brute-force smallest nonce.
+    - PX manifest, entry-level diff against `5c283a4` (both rendered from release
+      builds in separate target directories): exactly `zk.PARAMS_ID`,
+      `zk.QUERY_POW_BITS` and `px.sample.zk.transcript([7; 32], [1, 2, 3])` change. The
+      PX-side digest becomes `c122c962…` (BS-ZK-4 alone). By decision it is re-pinned,
+      with `deploy_configs.rs`, once at the end of the branch together with
+      px-deploy-row-caps, which changes the PX manifest again; until then both pins
+      fail, known and expected (decision "Fingerprint pins during the pre-freeze v3
+      window").
+    - Golden PX fixture: regenerated twice from the same seeds, byte-identical
+      (SHA-256 `9ed13fe7…`; 2,404,291 bytes, was 2,408,995); `node --test px_fixture`
+      6 passed, 1 ignored (the generator), verification only.
+    - The PX-proving suites (tx `px_consensus`, `fuzz_decode`; px `proof`, `unified`;
+      chain `restart_rebuilds_the_px_state_exactly`; wallet e2e PX; p2p PX) are run one
+      at a time, `--test-threads=1`, at 9 GB free or more, on the branch tip before
+      merge; their results are in the merge message.
+12. **Open review points.** (i) Grinding is computational: against an adversary with
+    cheap Poseidon2 hardware the 20 bits are worth less than statistical bits; only
+    84.5 bits (89.58 − 5.04) are statistical with the term. (ii) The 20-bit cap of
+    docs/zk.md §9.3 is now used up for the chain's life: any further margin must come
+    from queries or the rate. (iii) The smallest-nonce prover rule now costs about
+    2^20 permutations to check (docs/zk.md §11.3). (iv) The widest PX proof is still
+    unmeasured (gate B2); this change does not move it. (v) A red-team pass is owed
+    before the freeze.
+13. **Identity impact.** New `PARAMS_ID`; the PX-side digest and the rules and
+    consensus fingerprints of every network change; the identity fingerprints do not.
+    `rules.revision.len` 16 → 17.
+14. **Documentation.** docs/zk.md §9.3 (headline, current set, the Zhang et al.
+    analogue), §11.3 (grinding time, the 2^20 smallest-nonce cost), §12, §12.1;
+    docs/proof-system.md §2; docs/px.md §9.1; `zk/src/config.rs` (grinding doc);
+    decisions "BS-ZK-4"; res-freeze.md §8.5 annotated; STATUS.md.
+15. **Review status.** Implemented and tested by BS-ZK-4; red-team review pending.

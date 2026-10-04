@@ -5,11 +5,13 @@ with **108 queries**. This file records why, what it costs, and what would justi
 change. Nothing here changes a parameter.
 
 **Figures updated 2026-10-04 (freeze-commit reconciliation).** The current set is
-BS-ZK-3 (8 random codewords; otherwise the parameters below). The Johnson figure is
-hash-bound at **122** (`COLLISION_BITS`, ePrint 2026/089 Theorem 3), not 123. Unique
-decoding is ≥ 105.58 bits computed, and ≥ 100.54 (about 100.5) once the mixed-height
-union term (log2 33 bits; a heuristic, no theorem covers the roll-in) is charged: that
-term uses up the "about 5 bits of margin" of §2 (docs/zk.md §9.3). The 123 / 105
+BS-ZK-4 (8 random codewords and 20 query grinding bits; otherwise the parameters
+below). The Johnson figure is hash-bound at **122** (`COLLISION_BITS`, ePrint 2026/089
+Theorem 3), not 123. Unique decoding is ≥ 109.58 bits computed, and ≥ 104.54 once the
+mixed-height union term (log2 33 bits; a heuristic, no theorem covers the roll-in) is
+charged. At BS-ZK-3 (16 grinding bits) the term used up the "about 5 bits of margin"
+of §2 (100.54); BS-ZK-4 restored about 4.5 bits with grinding, not queries (decisions
+"BS-ZK-4"; docs/zk.md §9.3). The 123 / 105
 figures below, including the "Current" row of §3, are those of 2026-09-25.
 
 ## 1. The current parameters (`zk/src/params.rs`)

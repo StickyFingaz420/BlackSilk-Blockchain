@@ -1742,3 +1742,32 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   value changes.
 - The records' step-15 lines now carry these verdicts; "verdict open" and "re-review
   pending" are replaced where a verdict was given.
+
+## BS-ZK-4 (Lead, 2026-10-04; approved by the owner)
+
+- **Decision:** keep `NUM_QUERIES` = 108 and raise `QUERY_POW_BITS` from 16 to 20, as
+  a new parameter set `BlackSilk/zk/BS-ZK-4` (a constant change is a new set, never an
+  in-place edit). Revision `ZK:BS-ZK-4-query-grinding-20`, record
+  docs/reviews/v3-consensus-changes.md#bs-zk-4.
+- **Why:** with the mixed-height union term (H = 33), BS-ZK-3 sat about 0.5 bits above
+  the 100-bit floor. The floor counts total bits, grinding included, and docs/zk.md
+  §9.3 caps grinding at 20 bits. BS-ZK-4 gives 109.58 bits, 104.54 with the term, at no
+  proof-byte cost and with no verifier change. 112 queries (the eq. 17 ceiling at
+  `MIN_LOG_HEIGHT` 8) would cost about 3.4 % proof bytes and leave about 1.2 % to the
+  3.8 MB bound for the widest proof, which is still unmeasured (gate B2).
+- **The term stays.** res-freeze.md §8.5's "absence" is narrowed: a close peer-reviewed
+  analogue exists, Zhang et al., USENIX Security 2024, Protocol 1 / Theorem 3.1
+  (rolling batch FRI, arity 2, unique decoding: the query term has no factor in the
+  number of rolled-in polynomials). There is no theorem for the exact Plonky3
+  construction, so the H = 33 union term is retained as the conservative figure.
+- **Caveats, recorded:**
+  - the statistical part stays 89.58 bits (84.54 with the term); the extra 4 bits are
+    grinding, which is computational and worth less against cheap Poseidon2 hardware;
+  - the 20-bit grinding cap is used up for the chain's life;
+  - the smallest-nonce prover rule (F27-3) now costs about 2^20 permutations to check
+    (docs/zk.md §11.3); the reference search stays sequential and deterministic;
+  - prover grinding time, measured: 1.32 s mean, 0.95 s median, 25 ms to 5.2 s over 64
+    transcripts (release, 4-core i7-6700, other builds running; record item 11).
+- **Re-pins:** the golden PX fixture is regenerated here (deterministic since PXDET-1);
+  `PX_SIDE_DIGEST` and `deploy_configs.rs` are re-pinned once, at the end of the branch,
+  together with px-deploy-row-caps. A red-team pass is owed before the freeze.

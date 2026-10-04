@@ -1,4 +1,4 @@
-//! STARK configuration for BS-ZK-3 (docs/zk.md §9.2–9.3, docs/proof-system.md).
+//! STARK configuration for BS-ZK-4 (docs/zk.md §9.2–9.3, docs/proof-system.md).
 //!
 //! | Part | Choice |
 //! |---|---|
@@ -93,9 +93,14 @@ pub type ProverZkConfig = StarkConfig<Pcs, Challenge, ProverChallenger>;
 ///
 /// The verifier is untouched: `check_witness` accepts any valid nonce, so
 /// proofs from upstream-grinding provers still verify. The search is
-/// sequential, SIMD-packed as upstream's: about 2^16 permutations on average at
-/// 16 bits, a few milliseconds. (Raising the grinding bits would call for a
-/// chunk-parallel scan that still returns the smallest nonce, F27-7.)
+/// sequential, SIMD-packed as upstream's: about 2^20 permutations on average
+/// at BS-ZK-4's 20 bits (2^16 at BS-ZK-3's 16). The measured time is in
+/// docs/zk.md §11.3 (`grinding.rs::grinding_time_at_the_parameter_sets_bits`).
+/// It stays sequential at 20 bits, so the witness stays the smallest nonce, a
+/// function of the transcript alone (F27-3). A chunk-parallel scan that keeps
+/// the smallest nonce (F27-7) is an optional prover speed-up, not needed for
+/// correctness: 20 bits is the policy cap (docs/zk.md §9.3), so the search
+/// never grows beyond this.
 #[derive(Clone, Debug)]
 pub struct ProverChallenger {
     inner: Challenger,

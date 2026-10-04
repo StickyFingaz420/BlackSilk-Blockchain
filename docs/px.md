@@ -565,7 +565,7 @@ high-throughput per-transaction use on a chain.
 ### 9.1 Assumptions
 
 1. Knowledge soundness and zero knowledge (statistical and conditional, computational
-   in practice) of the BVM-1 STARK at BS-ZK-3 (zk.md §9.3, §12).
+   in practice) of the BVM-1 STARK at BS-ZK-4 (zk.md §9.3, §12).
 2. `Hk`: collision resistance, preimage resistance, and PRF security keyed by `nk`. The
    node compression: extractability of the commitment tree as argued in zk.md §9.3
    (argued, not proven; the compression alone is not collision resistant, §2).

@@ -38,7 +38,8 @@ encoding beyond "postcard of Plonky3 0.7.0's `BatchProof`".
 
 ## 2. Parameter set
 
-The active set is the one named by `params::PARAMS_ID` (currently BS-ZK-3). A parameter
+The active set is the one named by `params::PARAMS_ID` (currently BS-ZK-4: BS-ZK-3 with
+20 query grinding bits instead of 16; docs/reviews/v3-consensus-changes.md, "bs-zk-4"). A parameter
 set is never edited in place: any change to a constant in `zk/src/params.rs` that affects
 proofs is a new set with a new `PARAMS_ID`.
 
@@ -105,7 +106,7 @@ whole envelope; the limiting terms are pinned (query phase; commitment term
   manifest lists (`zkvm.CIRCUIT_DIGEST`, fingerprint v3), so an AIR change also moves
   the rules fingerprint. A change of the digest's coverage alone (RTW1-3) appends
   a line with the same id and a new digest method: the AIRs, and so the transcript, did
-  not change. The v3 changes to the parameter set and canonical form (BS-ZK-3, §5) do
+  not change. The v3 changes to the parameter set and canonical form (BS-ZK-3, BS-ZK-4, §5) do
   not touch the AIRs, so `CIRCUIT_ID` is unchanged by them.
 - **Prover randomness** (not checkable by a verifier): hedged seeds, OS randomness mixed
   with a witness digest, fresh per proof (`ProverConfig::for_statement`).
