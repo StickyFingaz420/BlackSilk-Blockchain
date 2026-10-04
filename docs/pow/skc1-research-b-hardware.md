@@ -1,5 +1,7 @@
 # SKC-1 (SilkChain-1) research report B: performance, hardware economics, security
 
+> Historical record (2026-10-04). Superseded where it conflicts with the code: RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca); the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5); both were adopted after this report. Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 - Agent: SKC-1 Research Agent B. This is internal research, not an audit, and no measurements were made. Every number is either cited or a labeled back-of-envelope estimate.
 - Started: 2026-10-04T07:44:19Z. Finished: see the footer.
 - Scope: theoretical modeling only. No builds, tests or benchmarks were run, and no repository file was changed. Agent A's notes were not read.

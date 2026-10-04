@@ -1,3 +1,5 @@
+**Internal engineering review log; not an audit. No external audit has been performed.**
+
 # BlackSilk internal findings log (historical)
 
 > **Historical record; not maintained, and not an audit.** This file was titled

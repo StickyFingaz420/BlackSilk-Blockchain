@@ -1,5 +1,7 @@
 # I4: Sustainability, scalability, post-quantum and decentralized mining (innovation research, internal review, 2026-09-27)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5); RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 - **Reviewer:** I4 (innovation researcher). This is internal review, not an audit.
 - **Tree:** `rebuild/core` family, read-only (the checkout I read is `42320ac` on `agent4b-tx-validation`; the files I cite do not differ from `f677e55` in the parts I read). No builds, no cargo.
 - **Inputs:** the brief; R1 (consensus), R2 (crypto), R3 (privacy), R9 (RandomX), R12 (performance); the source files cited below; web sources listed at the end.

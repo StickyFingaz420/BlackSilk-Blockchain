@@ -1,5 +1,7 @@
 # 26 zk-privacy: research dossier (phase 2, phase 1)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Specialist 26, BlackSilk engineering phase 2. **Internal engineering work, not an audit.**
 Nothing here claims that BlackSilk or its proofs are secure, proven or perfectly
 zero-knowledge. Zero knowledge (ZK) is discussed only as **statistical and conditional**.

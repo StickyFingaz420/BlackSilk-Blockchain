@@ -1,5 +1,7 @@
 # 27 zk-performance: research dossier (phase 2, phase 1: research and briefing)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 **Internal engineering work, not an audit.** Nothing here claims that BlackSilk or any
 part of it is secure, audited, proven or production-ready. Zero knowledge is claimed only
 as statistical and conditional (docs/reviews/zk-coverage.md §3). No build, test or

@@ -1,5 +1,7 @@
 # PX-F4 and PX-F5: analysis for the owner's decision
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: PX-F5 option B was merged into `rebuild/core` in 9e422d8 (c280928; px-core/src/kernel.rs); PX-F4 is still deferred. Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 Status: **analysis 2026-09-27. Update (v3 candidate, V3-B): PX-F5 option B is
 implemented on the candidate branch** — the kernel output loop refuses
 `contract ≠ 0 ∧ owner ≠ 0` with the new error `ContractOutputOwner` (exit code 17,

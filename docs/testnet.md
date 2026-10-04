@@ -28,7 +28,7 @@ project and testnet status is kept only in [STATUS.md](STATUS.md).
 | Genesis id | pinned by `genesis_ids_are_pinned` (`consensus/src/params.rs`); printed by `blacksilk-node --version` | same |
 | Genesis body | empty, no premine | empty |
 | Block time | 120 s | 10 s |
-| Starting difficulty | 100 | 1 |
+| Starting difficulty | 100, a placeholder until `D0` is measured on reference hardware (testnet-v3-genesis.md §5) | 1 |
 | Difficulty | LWMA-1, 75-block window (consensus.md §4) | same |
 | Proof of work | RandomX v1; the key changes every 2048 blocks, with a 64-block lag | same |
 | First reward | 20.02716064 BLK; smooth curve with a 0.6 BLK tail | same |
@@ -200,7 +200,7 @@ Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
 `px/tests/consensus_fingerprint.rs` pins the PX part on its own. Changing one is a
 consensus change with a record. The values are deliberately not copied here (a copy
 goes stale with every consensus change before the freeze): compare the output of
-`blacksilk-node --version` with the signed release announcement, which takes its
+`blacksilk-node --version` with the two-channel release announcement (§2.1), which takes its
 values from that test at the release commit.
 
 Limits of the check:
@@ -242,9 +242,16 @@ Limits of the check:
   `test-hooks` feature (chain, tx, px and p2p) exports a marker that is compiled in only with that feature,
   and chain and p2p one for `cfg(fuzzing)` (`chain/src/build_flags.rs`). A new
   test-only feature is covered only once its crate exports a marker too;
-  `tools/check-test-features.sh` (CI `gates`) fails on one that does not.
+  `tools/check-test-features.sh` (CI `gates-selftest`) fails on one that does not.
 
 ## 3. Quick start (one machine)
+
+**Until launch:** `--network testnet` (and every template or service with
+`network = "testnet"`) exits with status 2 and `configuration error: the testnet is
+disabled until its v3 genesis is final` (`check_network_enabled`,
+`node/src/config.rs`). The recipes in this guide are for the launched testnet; until
+then, run them with `--network regtest` (or `deploy/config/regtest.toml`), whose ports
+are 39333 / 39334 (§1).
 
 ```sh
 blacksilk-node --network testnet                    # P2P 0.0.0.0:29334, RPC 127.0.0.1:29333
@@ -514,7 +521,10 @@ for every testnet generation, so after a reset the node finds the old store ther
 store of another network or genesis is refused ("wrong network data directory"), and so
 are stores written before the v3 store format, which are never migrated: a store
 without a file header ("format 0", written before 2026-09-27) on testnet or mainnet, and
-a "format version 1" store on any network. In each case the node starts only after
+a "format version 1" or "format version 2" store on any network (format 2 was
+written before the 172-byte header and the mining-blob proof of work, or by an
+intermediate build; the node names it: `block store format version 2 (written before the
+172-byte header and the mining-blob proof of work, …)`). In each case the node starts only after
 `blocks.dat` is moved aside; it then resyncs from its peers. Regtest still reads a
 format 0 store as it is.
 
@@ -600,7 +610,8 @@ use seeds only to find the network (p2p.md §9).
 **To run one:**
 1. Use a server with a static public IP (or a DNS name you control) and TCP 29334 open.
 2. Start with `deploy/config/testnet-seed.toml`: set `public_address`, and list the other
-   seeds in `peers`.
+   seeds in `peers`. `public_address` takes an IP address or a `.onion` name with its
+   port only; a DNS name is refused (`bad public address`).
 3. Run it for at least a week, and check `deploy/scripts/check-node.sh` regularly.
 4. Add `"<host>:29334"` to `builtin_seeds()` in `node/src/config.rs`, in a reviewed change.
 
@@ -673,7 +684,7 @@ v1 amounts are hidden and a ring hides which of its 16 members is spent, so nobo
 can compute the circulating supply from the chain. In a closed trial where **every**
 wallet is kept,
 the sum of all wallets can be compared with the chain's emission: an end-to-end
-inflation check (validation item V14; review R15-7). On a public network it is
+inflation check (review R15-7; item V14 of the historical v2 checklist). On a public network it is
 impossible, because not every wallet can be collected.
 
 **Rules for the trial:**
@@ -948,7 +959,7 @@ column), `journal.log`, and each process's log.
 | `block store: … corrupt record at offset … followed by valid data` at start | Real corruption in `blocks.dat`, or (rarely) a crash while writing a block whose data contains a record-shaped byte string; a plain crash is repaired by the node itself. Back up the data directory, then start once with `--repair-store` (logged as a warning; remove the flag afterwards): the damaged part moves to `blocks.dat.damaged-<time>` and the node downloads the dropped blocks again (docs/blocks.md §8). Your `--invalidate-block` and `--reconsider-block` verdicts in the moved part are kept: each is logged as `operator record kept from the damaged region … block … invalidated` (or `reconsidered`). Check that the listed ids are verdicts you gave, and cancel any you did not give with the opposite flag |
 | The node exits with `block store write failed: free disk space / check the disk` | Several block writes in a row failed, or one could not be undone: the disk is full or failing. The node stops instead of re-downloading bodies it cannot store. Free space or fix the disk, then restart; it resumes from the last stored block |
 | The node exits with status 65 and `applying block … at height … failed: …. The block passed validation, so it is consensus-valid by this build's rules` | A bug in this build: a block valid by its own rules did not apply. The block is not bad, the rest of the network follows it, and it is not marked invalid; systemd does not restart the node (§4.2). Keep the data directory and the log, report the incident (block id, log) to the project, and do not restart in a loop: the same block fails again. The fix is an upgraded build. Invalidating the block instead (next row) forks this node off the network's chain until you reconsider it |
-| Deciding to invalidate a block (`--invalidate-block`) | Only for the halt above on your own node, or an incident you have verified through a second channel: the project's signed announcement plus a check with at least one other operator you know, or your own node's logs. Never on the strength of a single message, chat post or notice naming a block: anyone can post one, and a node that invalidates a block the network follows leaves the network's chain. Start once with `--invalidate-block <block id>` (the full 64-hex id; repeatable). The node logs `block … is marked invalid by the operator` and starts on the best other branch, or on the block's parent. The verdict is stored in `blocks.dat`, so the flag is not needed again; the node refuses the block and its descendants, however much work they carry, until `--reconsider-block <block id>` cancels it (for example after upgrading to a fixed build). Node policy, not consensus: other nodes are not affected (docs/blocks.md §8) |
+| Deciding to invalidate a block (`--invalidate-block`) | Only for the halt above on your own node, or an incident you have verified through a second channel: the project's two-channel announcement (§2.1) plus a check with at least one other operator you know, or your own node's logs. Never on the strength of a single message, chat post or notice naming a block: anyone can post one, and a node that invalidates a block the network follows leaves the network's chain. Start once with `--invalidate-block <block id>` (the full 64-hex id; repeatable). The node logs `block … is marked invalid by the operator` and starts on the best other branch, or on the block's parent. The verdict is stored in `blocks.dat`, so the flag is not needed again; the node refuses the block and its descendants, however much work they carry, until `--reconsider-block <block id>` cancels it (for example after upgrading to a fixed build). Node policy, not consensus: other nodes are not affected (docs/blocks.md §8) |
 | `configuration error: --invalidate-block …: expected a block id of 64 hex characters`, or `--invalidate-block …: the genesis block cannot be invalidated` (status 2) | A shortened or mistyped id (use the full id), or genesis; nothing was written |
 | `block store: N block(s) invalidated by the operator` and `operator verdict in force: block … at height …` at start | The operator verdicts in force, one line per block with its full id and height; `--reconsider-block` cancels one. Check that each is a verdict you gave |
 | `WARN operator fork: a heavier chain (known up to height …) is refused only because the operator invalidated block …`, repeated every 10 minutes; `/info` shows `operator_fork` | This node is off the network's chain because of your verdict: its view and its wallets' balances differ from the network's, and `/template` answers `503 operator fork: …`, so the miner stops. Verify the incident through a second channel (row above). When it is over (for example after upgrading), restart once with `--reconsider-block <block id>`. Mine on the fork only deliberately, with `--mine-despite-operator-fork` (docs/blocks.md §9.4) |
@@ -961,17 +972,17 @@ column), `journal.log`, and each process's log.
 | `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
 | `N stored block(s) descend from blocks found invalid` at start | Harmless: blocks refused before the restart are refused again |
 | `block store: … wrong network data directory` at start | The data directory holds another network's (or an old testnet's) store. Use a separate data directory per network, or move `blocks.dat` aside to resync (§4.5) |
-| `block store: … format 0, no file header` or `… format version 1` at start | A store from before the v3 store format; it is never migrated. Stop the node, move `blocks.dat` aside and start again to resync (§4.5). `--repair-store` does not apply |
+| `block store: … format 0, no file header`, `… format version 1` or `… format version 2 (written before the 172-byte header and the mining-blob proof of work, …)` at start | A store from before the v3 store format; it is never migrated. Stop the node, move `blocks.dat` aside and start again to resync (§4.5). `--repair-store` does not apply |
 | `block store: … damaged file header` or `… not a block store` at start | The first 48 bytes of `blocks.dat` are damaged, or the file is something else. Back up the data directory, move `blocks.dat` aside and resync |
 | `block store: … record at offset … is not valid` or `… unknown record type` at start | A record with a correct checksum that this build cannot read: the store was written by a newer build (run that build) or is corrupt. Nothing is truncated; back up the data directory, then move `blocks.dat` aside to resync |
 
 ## 10. Private execution (PX)
 
-**Compatibility.** Builds with PX accept transaction kinds 2 and 3 from genesis
-(px.md §11). Older builds reject blocks that contain them, so the two versions fork.
-Every node on one network must run a PX-capable build; a public PX trial therefore
-starts with a testnet reset (a new network id and genesis), unless an activation
-height is added first.
+**Compatibility.** PX is part of the v3 rule set: v3 builds accept transaction kinds
+2 and 3 from genesis (px.md §11), with every other v3 rule active from height 0
+(testnet-v3-genesis.md §1). The v3 testnet starts from its own genesis and network
+id, so no pre-v3 build joins it. Rule changes after the v3 launch arrive by
+activation height (consensus.md §11), not by a new genesis.
 
 **Wallet commands:**
 
@@ -980,7 +991,7 @@ height is added first.
 | `px-address [--index N]` | Shows a PX address. Give each counterparty its own index |
 | `px-balance` | `(total, spendable)` PX balance |
 | `px-deposit --amount A` | v1 funds into PX. **The amount is public** |
-| `px-send --to PXADDR --amount A` | A private payment. Proving takes about 45 s and a peak of about 3.8 GB of memory (§12.1) |
+| `px-send --to PXADDR --amount A` | A private payment. Proving takes about 50–60 s and a peak of about 3.6 GB of memory (§12.1) |
 | `px-withdraw --to ADDR --amount A` | PX funds to a v1 address. **The amount is public** |
 | `px-deploy --vault` (or `--program F.elf --budget … --out-words N`, one `--budget` and one `--out-words` per `--program`) | Registers a private contract, paid with v1 funds. `--out-words` is the exact number of public output words each call of that function publishes (contracts.md §5); check it with a dry run of the function before deploying, because a wrong count makes every call invalid |
 | `px-contracts` / `px-records` | Deployed contracts / contract records this wallet holds |
@@ -1006,10 +1017,14 @@ so within 18 blocks of its confirmation (about 36 minutes at 120 s).
 
 **Privacy:** px.md §12 and `docs/reviews/privacy-review.md`.
 
-**Capacity:** the 8 MiB block PX budget holds 3 transfers or vault calls at the
-measured proof sizes (4 × 2.18 MB exceeds it), fewer for wider shapes: an estimated 2
-for a call with two functions, and 1 at the 4 MiB `MAX_PROOF_BYTES` cap. The widest
-shape is not yet measured (aggregation-study.md).
+**Capacity:** the 8 MiB block PX budget holds 3 transfers (about 2.40 MB each on the
+frozen kernel) or 2 one-function or two-function vault calls (about 3.0 MB and
+3.63 MB), measured in docs/evidence/freeze-b2-b3-2026-10-04/ (freeze gate B3). The
+widest shape a deploy can register today is modelled at about 4.09–4.13 MB, above the
+3.8 MB budget (freeze gate B2: **FAIL**) but below the 4 MiB `MAX_PROOF_BYTES`
+cap in every sampled case; 2 such proofs fit in a block. The fix, a deploy-time proof-size bound (V12),
+is in progress, not done. Such a shape cannot be proven on today's hardware anyway
+(about 100 GB of prover memory, same evidence).
 
 ## 11. Security notes for operators
 
@@ -1054,8 +1069,8 @@ logical CPUs) unless stated; treat them as orders of magnitude, not guarantees.
 
 | Role | Memory | CPU and time | Notes |
 |---|---|---|---|
-| Node | about 300 MB at start (267–297 MB peak per process in the local rehearsals, docs/evidence/labnet-2026-09-26/) | Verification of a PX proof takes about 0.21–0.27 s; light-mode RandomX about 0.45–0.75 s per header | **Grows with the chain:** every block body and its undo data stay in memory (PX-F1, PX-F2), about 7 KB per v1 block and up to about 8 MiB per full PX block. Plan disk and RAM for the length of the trial |
-| Wallet proving a PX transaction | peak about **3.8 GB** (3,771 MB measured) | about 45 s (transfer) to 53 s (vault call) per proof, on all cores | Proving is local; a machine without the memory cannot send PX transactions |
+| Node | about 300 MB at start (267–297 MB peak per process in the local rehearsals, docs/evidence/labnet-2026-09-26/) | Verification of a PX proof takes about 0.2–0.39 s (docs/evidence/freeze-b2-b3-2026-10-04/); light-mode RandomX about 0.45–0.75 s per header | **Grows with the chain:** every block body and its undo data stay in memory (PX-F1, PX-F2), about 7 KB per v1 block and up to about 8 MiB per full PX block. Plan disk and RAM for the length of the trial |
+| Wallet proving a PX transaction | peak working set measured on the frozen kernel: about **3.6 GB** for a transfer (3,622 MB), **4.3 GB** for a one-function vault call (4,339 MB), **6.4 GB** for a two-function vault call (6,446 MB) (docs/evidence/freeze-b2-b3-2026-10-04/) | about 50–60 s (transfer), 60–67 s (one function) and 95–115 s (two functions) per proof, on all cores (4-core, 8-thread i7-6700) | Proving is local; a machine without the memory cannot send PX transactions. A machine with about 3.8 GB cannot prove a two-function vault call |
 | Miner, full mode | 2 GiB dataset plus about 0.3 GB; about 4.4 GiB peak with prebuild (`--prebuild auto`, the default, when the memory is there) | Dataset build about 180 s with 8 threads (179 s measured under load), about **20 minutes with 1 thread** (1,217–1,219 s measured, 2026-09-27); hashing about 100 ms per hash per thread (measured under load) | The build is **repeated at every RandomX key switch** (heights 2113, 4161, …). It runs in the background: with prebuild before the switch, otherwise while the miner mines in light mode (§5) |
 | Miner, light mode | 256 MiB | about 0.45–0.75 s per hash per thread | No dataset; suitable for small machines, but finds far fewer blocks |
 
@@ -1151,7 +1166,7 @@ same time; idle figures are to be re-measured.
 - **Several devices behind one NAT** reach other nodes from one public IP. Without
   `--allow-private`, a node accepts at most `max_per_ip` = 2 inbound connections from
   one IP, and a ban of that IP (24 hours, after misbehaviour) shuts out every device
-  behind it (bans are per exact IP, N-5). Prefer outbound `--peer` connections from
+  behind it (bans cover one IPv4 address or one IPv6 /64, N-5). Prefer outbound `--peer` connections from
   such devices, and spread the trial over different networks.
 - **Tor:** see §4.3 (the onion listener, and what Tor mode does not do).
 - **Wallets:** run each wallet against its own node on the same machine. The wallet's
@@ -1192,9 +1207,14 @@ same time; idle figures are to be re-measured.
 
 ### 12.5 Testnet reset
 
-The reset procedure and the rollback are in docs/testnet-reset-plan.md §4 and §6; the
-trial's checks and the evidence to return are in docs/testnet-v2-validation.md. A reset
-always uses a new network id; never reuse one for a different genesis.
+No reset procedure for the v3 testnet is written yet. A reset needs a new network id
+and a new genesis; the v3 launch steps (docs/testnet-v3-genesis.md §6) are the model,
+and the genesis tool accepts `--final` only for `0x0001D673` today, so a reset is a
+reviewed code change first. Never reuse a network id for a different genesis. The trial's checks and the
+evidence to return are in §7 of this guide; evidence goes under `docs/evidence/` and is
+linked from [STATUS.md](STATUS.md). The v2-era reset plan (docs/testnet-reset-plan.md)
+and seven-device checklist (docs/testnet-v2-validation.md) are historical records, not
+current procedures.
 
 ### 12.6 Known limitations that affect operators
 
@@ -1258,7 +1278,8 @@ origin-privacy figure may be derived from trial data or claimed from it.
   (its ISP, or its Tor guard) sees the size and timing of every message. A node that
   sends a transaction-sized message no peer sent it first has originated a
   transaction, **v1 as well as PX**: on a clearnet link the origin is visible for
-  both. A PX transaction is about 2.2 MB (a transfer) to 2.7 MB (a vault call), which
+  both. A PX transaction is about 2.40 MB (a transfer) to 3.0–3.63 MB (a vault call with
+one or two functions, docs/evidence/freeze-b2-b3-2026-10-04/), which
   no transport hides, even over Tor; a v1 transfer is a few kB, a few Tor cells,
   which makes it a weaker signal over Tor but not a hidden one. Dandelion++ helps only
   against spy nodes, and on PX paths its protection is weaker than on v1 paths (an
@@ -1272,7 +1293,7 @@ origin-privacy figure may be derived from trial data or claimed from it.
   has too few nodes for one. The trial makes no origin-privacy claim.
 - **Security:** the trial shows operation, not security. The security assumptions are
   listed in docs/reviews/assumptions.md; the zero-knowledge claim is statistical and
-  conditional, and its remaining assumptions are in docs/reviews/zk-coverage.md.
+  conditional (computational in practice), and its remaining assumptions are in docs/reviews/zk-coverage.md.
 
 ### 12.8 Endpoint checklist (every trial device, before the trial)
 

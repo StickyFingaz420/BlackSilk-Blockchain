@@ -1,5 +1,7 @@
 # R15: Testnet readiness, decentralization and operational risk
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5); RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 **Reviewer:** R15 (senior review agent). **Date:** 2026-09-27. **This is internal review, not an audit.**
 **Tree read:** `rebuild/core` at `9578517`, which is 8 commits ahead of `origin/rebuild/core` (`87278ac`). It includes `f677e55`, `4b277cd` (the canonical proof rule), `f36b909` (ZK-F3) and `16659ee` (mempool F1). The brief's HEAD was `f677e55`; the extra commits are on the same branch.
 **Method:** I read the code and docs with Read, Grep and git, and ran no builds. I also did web research and cite it in §10.

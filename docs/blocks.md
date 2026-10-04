@@ -144,8 +144,8 @@ B8, the PX tree capacity). A block that passed validation and still fails to app
 therefore a bug in this node: the manager halts (`ChainManager::halted`), logs the
 block, does **not** mark it invalid, connects nothing more and refuses every further
 block (`SubmitError::Halted`), and the node stops with exit status 65
-(`HALT_EXIT_CODE`, node/src/lib.rs; other failures exit 1). A restart replays the store
-and tries the block again; a real apply bug fails the same way again, so the systemd
+(`HALT_EXIT_CODE`, node/src/lib.rs; the other exit statuses, 1, 2, 66, 70 and 71, are
+listed in docs/testnet.md §4.2). A restart replays the store and tries the block again; a real apply bug fails the same way again, so the systemd
 unit does not restart on status 65 (`RestartPreventExitStatus`, docs/testnet.md §4.2)
 (docs/reviews/v3-consensus-changes.md#tree-capacity; dossier 48 F48-5: never
 auto-invalidate).
@@ -217,7 +217,8 @@ bodies, `missing_bodies`, the pool and the deepest reorganization. It also check
 - a restart reproduces the tip.
 
 The model tests the rules as written here; it proves nothing beyond the cases it
-runs. Known differences are listed in the test file (W2-02-F1 and W2-02-I1).
+runs. The known difference is listed in the test file (W2-02-I1, informational); the
+model also found W2-02-F1, which was fixed (§7).
 
 Transactions from disconnected blocks return to the mempool if they are still valid
 (§7).
@@ -420,16 +421,18 @@ Transactions from disconnected blocks return to the mempool if they are still va
 ## 8. Storage (node)
 
 Blocks are stored in an append-only log of typed records, `blocks.dat` in the node's
-data directory (format 3, `chain/src/store.rs`; formats 0 to 2 are refused with resync
-advice, format 2 since output-root).
+data directory (format 3, `chain/src/store.rs`). Formats 1 and 2 are refused on every
+network with resync advice (format 2 since output-root); format 0 is refused on testnet
+and mainnet and still read on regtest (below).
 
 ```
 file    = file header ‖ record*
-header  = magic "BSBH" ‖ LE32 version (2) ‖ LE32 network_id ‖ genesis_id (32)
+header  = magic "BSBH" ‖ LE32 version (3) ‖ LE32 network_id ‖ genesis_id (32)
           ‖ LE32 crc32(the 44 bytes before)                          (48 bytes)
 record  = magic "BSR2" ‖ LE32 n ‖ LE32 crc32(LE32 n ‖ body) ‖ body   (n = |body|)
 body    = type (1) ‖ payload
   0x01 block       payload = pow_hash (32) ‖ block bytes
+                   (pow_hash: RandomX of the header's mining blob, consensus.md §3)
   0x02 invalid     payload = block id (32) ‖ origin (1: verdict, 2: operator)
                              ‖ LE16 k ‖ reason (k ≤ 256 bytes, UTF-8)
   0x03 reconsider  payload = block id (32)
@@ -523,10 +526,13 @@ body    = type (1) ‖ payload
     error says to move `blocks.dat` aside and resync. On regtest it is still read and
     appended to as it is (block records only, in its own `"BSB1"` layout, never
     rewritten), with a warning. Format 1 (file header, untyped `"BSB1"` records; stores
-    of pre-freeze labnet runs) is refused on every network with the same advice.
+    of pre-freeze labnet runs) is refused on every network with the same advice, and so
+    is format 2 (the 100-byte header, or an intermediate output-root build whose stored
+    PoW hashes are of the header, not the mining blob).
   - Tested in `store.rs` (`a_new_store_is_bound_to_its_network`,
     `a_legacy_headerless_store_is_refused_except_on_regtest`,
-    `damaged_torn_and_foreign_file_headers`, `unknown_and_malformed_records`) and
+    `damaged_torn_and_foreign_file_headers` (formats 1 and 2 and an unknown version),
+    `unknown_and_malformed_records`) and
     `chain/tests/store_format.rs` (the chain manager refuses format 0 on testnet and
     mainnet, format 1 everywhere, another network or genesis; regtest still reads format
     0).
@@ -558,8 +564,8 @@ body    = type (1) ‖ payload
   headers from its own file it uses the stored PoW hash instead of recomputing RandomX
   (about 0.45 s per header). The stored hash is trusted only under the RandomX key
   derived from the stored parent, exactly as header validation derives it: the PoW
-  cache is keyed by (seed, header bytes). Records are written only for headers that
-  passed full header validation, including PoW, and the CRC detects corruption. Bodies
+  cache is keyed by (seed, mining blob), domain `BlackSilk/pow-cache/v3`. Records are
+  written only for headers that passed full header validation, including PoW, and the CRC detects corruption. Bodies
   are fully re-validated during replay, so a stored block with an invalid body is
   rejected again deterministically.
   - **Stored hashes are re-checked** (decisions "Agent 01", TM2-5): the CRC does not
@@ -679,7 +685,7 @@ body    = type (1) ‖ payload
     `store.rs::repair_keeps_the_operator_records_of_the_moved_region`,
     `chain/tests/rt_w3_regressions.rs::repair_keeps_operator_verdicts_written_after_the_damage`.
     A missing store (fresh data directory) is "nothing to repair". Repair handles format
-    2 and regtest format 0 stores only; it refuses a damaged file header or another
+    3 and headerless (format 0) stores only; it refuses a damaged file header or another
     format version and changes nothing (the operator moves the store aside and
     resyncs).
 - **Known limitations** (acceptable for a controlled testnet; to be measured in the
@@ -701,14 +707,14 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 
 | Method | Path | Purpose | Class | Body limit |
 |---|---|---|---|---|
-| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version), `template_ready`, `template_latched` and, during an operator fork, `operator_fork` (§9.4); `network_psk_loaded` (whether a pre-shared key is loaded, never the key), `overrides` (the operator flags of this run that change a default, e.g. `--invalidate-block <id>`, `--skip-randomx-self-test`) and `operator_verdicts` (`block`, `height` or `null`: the operator invalidations in force) | read | none |
-| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions, the parent's output range (`output_count`, `output_peaks`: the miner appends its coinbase's and the transactions' outputs and puts the count and root in the header, B-OMR), the block's `px_root` for exactly these transactions (B-PXR), and `next_seed_id` inside the key-switch window; `503` until the node has caught up, during a drain, and during an operator fork (§9.4) | bulk | none |
+| GET | `/info` | network and `network_id`, height, tip id, difficulty, generated supply, mempool size (`mempool_txs`, `mempool_bytes`), `outputs`, `peers`, `header_height`, `deepest_reorg`, `misbehaving_disconnects`, identity (genesis id, consensus, rules and identity fingerprints, commit, version, `build_flags`), `template_ready`, `template_latched` and, during an operator fork, `operator_fork` (§9.4); `network_psk_loaded` (whether a pre-shared key is loaded, never the key), `overrides` (the operator flags of this run that change a default, e.g. `--invalidate-block <id>`, `--skip-randomx-self-test`) and `operator_verdicts` (`block`, `height` or `null`: the operator invalidations in force) | read | none |
+| GET | `/template` | mining template: height, prev id, header `version` (the epoch's), difficulty, seed id, min timestamp, reward, fees, transactions, the parent's output range (`output_count`, `output_peaks`: the miner appends its coinbase's and the transactions' outputs and puts the count and root in the header, B-OMR), the block's `px_root` for exactly these transactions (B-PXR), and `next_seed_id` inside the key-switch window; `503` until the node has caught up, during a drain, and during an operator fork (§9.4) | bulk | none |
 | GET | `/tip?after=<id>&wait=<s>` | the connected tip (height, id, header height, `template_ready`); with `after`, held until the tip differs from it, at most `wait` ≤ 30 s (§9.4) | long poll | none |
 | POST | `/block` | submit a mined block (`{"hex": …}`); admission rule §9.2 | block | `rpc::MAX_REQUEST_BYTES` (a maximum-size block in hex) |
 | POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool | submit | `guard::MAX_TX_BODY_BYTES` (the largest transaction of any kind in hex) |
 | GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100, at most 64 MiB of hex), for wallet scanning | bulk | none |
 | GET | `/headers?from=h&count=n` | the headers of connected blocks `h…h+n−1` (fewer at the tip, none above it), 172 bytes each, concatenated as hex, with the tip height (`1 ≤ n ≤ rpc::MAX_HEADERS_PER_REQUEST`); the wallet's header check reads the chain from the genesis with it (§10) | read | none |
-| GET | `/distribution?to=h` | cumulative output counts per block, for tools (the wallet derives its decoy distribution from its own output index and never requests it, transactions.md §11.3.1) | read | none |
+| GET | `/distribution?to=h` | cumulative output counts per block, at most `h + 1` entries; kept for external tools (no wallet spend path uses it: the wallet derives its decoy distribution from its own output index, transactions.md §11.3.1). The client caps the answer's bytes by `h` (`rpc::DISTRIBUTION_ENTRY_RESPONSE_BYTES` per entry) | read | none |
 | POST | `/outputs` | output keys and commitments for up to 1 024 global indices | read | `guard::MAX_OUTPUTS_BODY_BYTES` |
 | GET | `/px/commitments?from=f&limit=l` | a page of PX commitments in tree order (px.md §11.4) | read | none |
 | GET | `/px/contracts?from=f` | contract registrations in block order (at most 1 024 per page) | read | none |

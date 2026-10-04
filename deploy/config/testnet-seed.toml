@@ -10,7 +10,7 @@ log = "info"
 
 [p2p]
 bind = "0.0.0.0:29334"
-# REQUIRED for a seed: its stable public address (IP or DNS name the operator controls).
+# REQUIRED for a seed: its stable public address, IP:port or <name>.onion:port only (a DNS name is refused).
 public_address = "203.0.113.10:29334"
 # Other seeds, so seeds find each other even with empty address tables.
 peers = []

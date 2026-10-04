@@ -10,7 +10,7 @@ Wrapped schemes:
 - Falcon512 (pure Rust, via falcon-rust)
 
 ## Features
-- Secure key handling (zeroize)
+- Secret keys are the upstream crates' types; no zeroization is added (see Security Notes)
 - Property-based and negative testing
 - Idiomatic error handling
 - Serialization/deserialization helpers
@@ -47,5 +47,7 @@ assert!(Dilithium2::verify(&pk, tx_bytes, &sig));
 - Falcon512 fuzzing is limited for performance reasons.
 
 ## Security Notes
-- All secret keys are zeroized on drop.
+- Zeroization on drop is not provided by this crate: `Dilithium2` and `Falcon512`
+  return the upstream crates' secret-key types unwrapped (`hybrid.rs` and
+  `mldsa44.rs` are not compiled: they are not modules of `lib.rs`).
 - Constant-time behaviour is not verified; it depends on the upstream crates.

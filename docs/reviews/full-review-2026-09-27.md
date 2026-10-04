@@ -1,5 +1,7 @@
 # BlackSilk full-project review, 2026-09-27: consolidated report
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5); RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca); the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending); the v3 candidate was merged into `rebuild/core` in 9e422d8. Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 **Internal review. Not an audit.** No external auditors were engaged, and none are planned (owner policy, docs/reviews/review-status.md). Nothing in this report states or implies that BlackSilk, or any component of it, is secure, audited, proven, production-ready or perfectly zero-knowledge. Zero knowledge is claimed only as **statistical and conditional**, under the conditions in docs/reviews/zk-coverage.md §3.
 
 - **Report writer:** consolidation agent. Read-only on the repository; no builds, no tests run by this writer.

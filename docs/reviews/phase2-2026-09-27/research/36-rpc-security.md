@@ -1,5 +1,7 @@
 # 36 rpc-security: research dossier (phase 2, research and briefing)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the wallet derives the decoy distribution from its own output index and makes no spend-time `/distribution` request (1902761). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Agent 36, 2026-09-27. Repository `rebuild/core` at **`9e422d8`**. This was read-only work: no builds and no tests were run. This is internal engineering work, not an audit.
 
 Evidence classes used below: **[math]** mathematically established, **[test: name]** proven by the named test, **[src]** read in the source, **[ext]** a primary external source (cited in §8), **[assumed]**, **[unknown]**.

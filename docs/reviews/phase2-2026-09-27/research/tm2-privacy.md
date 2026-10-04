@@ -1,5 +1,7 @@
 # TM2-PRIV: second threat-model round, privacy and deanonymization lens
 
+> Historical record (2026-10-02). Superseded where it conflicts with the code: the wallet derives the decoy distribution from its own output index and makes no spend-time `/distribution` request (1902761). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Agent TM2-PRIV, phase 2. This is an internal engineering review, not an audit. It does
 not claim that BlackSilk is secure, private "by proof", production-ready or audited.
 Zero knowledge is described only as statistical and conditional (computational in

@@ -1,5 +1,7 @@
 # SKC-1: combined research summary (independent cross-check of Reports A and B)
 
+> Historical record (2026-10-04). Superseded where it conflicts with the code: RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca), so the "rx/0 for testnet" recommendation was not followed; the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5). Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 - Role: independent cross-checker, fresh context. **Internal research, not an audit.** Nothing here authorises a PoW or consensus change, or production activation.
 - Date: 2026-10-04. Repository read-only (`rebuild/core` @ 8ccc24c). No builds, tests or benchmarks were run. Nothing was written outside `C:/bszkeval/skc1-combined/`.
 - Inputs:

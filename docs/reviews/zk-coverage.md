@@ -1,8 +1,12 @@
 # Zero knowledge of PX proofs: what is covered, and what remains assumed
 
-Status: **internal analysis, 2026-09-26, parameter set BS-ZK-2. No external audit.**
+Status: **internal analysis, 2026-09-26, first written for the former parameter set BS-ZK-2;
+updated 2026-10-05 to the current set BS-ZK-3 (`zk/src/params.rs`). No external audit.**
+BS-ZK-4 (20 query grinding bits) is pending on branch `bszk4`; figures will be updated
+after it merges.
 
-- The target is **statistical zero knowledge**, not perfect zero knowledge (§4).
+- The target is zero knowledge that is **statistical and conditional (computational in
+  practice)**, not perfect zero knowledge (§4).
 - This document does **not** claim that the ZK system is proven or security-complete.
 - It records which ingredients follow a published construction (and whether our
   configuration meets that construction's stated conditions), which rest on our own
@@ -36,14 +40,14 @@ the non-interactive proof, per the paper. It needs three things.
    witness". In most cases this is "not an obstacle for **statistical**
    zero-knowledge"; perfect zero knowledge needs further modifications.
 
-## 2. How BS-ZK-2 relates to it
+## 2. How BS-ZK-3 relates to it
 
-| Ingredient | In BlackSilk (BS-ZK-2) | Status | Checked by |
+| Ingredient | In BlackSilk (BS-ZK-3) | Status | Checked by |
 |---|---|---|---|
-| Witness randomization, eq. (17) | e = 8, n_F = 1 (one ζ, opened at ζ and ζ·g), n_D = 108: **2·(8 + 108) = 232**. Plonky3 interleaves one random row per trace row, so `h = |H|`. **Minimum table height 256** | **Condition met for every table, with a margin of 24.** The former minimum of 64 (and the former 128-row tables) did not meet it (ZK-F30) | `const` assertion in `zk/src/params.rs`, every build; the minimum height is enforced by prover and verifier (`zk/src/lib.rs`) |
-| Quotient randomization, eq. (16) and eqs. 13–14 | Plonky3's `get_quotient_ldes` follows §4.2 (chunk randomizers `v_{H_i}·t_i`, the last chunk compensating); `h_p` equals the chunk height `|H| ≥ 256 ≥ 109` | Condition met (read in source, internal review round 3) | Source; the chunk count depends on `get_log_num_quotient_chunks` (U) |
-| FRI mask `R` | Plonky3 commits a **separate randomization polynomial per table** (`get_opt_randomization_poly_commitment`) with `NUM_RANDOM_CODEWORDS + EXTENSION_DEGREE` = 12 base-field columns, at the table's height. The first 8 dimensions make `R` span the extension field | Present for every table. Upstream calls this construction **"only statistically ZK"** (R is built from base-field polynomials) | The **verifier** rejects a missing `R` or a public `R` opening other than 8 wide, and checks `R` on each table's extended trace domain (its height). Test `zkvm/tests/vm.rs::every_table_commits_a_full_extension_randomization_polynomial`: in a real proof, one `R` per table, 12 columns wide at every query (the hidden columns are not pinned by the verifier). The vendored `p3-fri` test `randomization_polynomial_spans_the_extension_at_each_table_height` checks `get_opt_randomization_poly_commitment` under upstream's test configuration (2 codewords, degree-4 extension); it runs only in the manual upstream checkout (third_party/README.md), not in our suite or CI |
-| Per-matrix codewords (`NUM_RANDOM_CODEWORDS` = 4) | Extra random columns in every committed matrix | **Additional masking, not the paper's `R`** (§5) | — |
+| Witness randomization, eq. (17) | e = 8, n_D = 108, n_F counted as **both** opening points ζ and ζ·g (n_F = 2), as the Plonky3 0.8 hiding budget does: **2·(108 + 8·2) = 248**. (The paper's n_F = 1, with the translate folded into the factor 2, gave the weaker 2·(8 + 108) = 232 used in earlier versions of this note.) Plonky3 interleaves one random row per trace row, so `h = |H|`. **Minimum table height 256**; at that height the query ceiling is 112 | **Condition met for every table, with a margin of 8.** The former minimum of 64 (and the former 128-row tables) did not meet it (ZK-F30) | `const` assertion in `zk/src/params.rs`, every build; the minimum height is enforced by prover and verifier (`zk/src/lib.rs`) |
+| Quotient randomization, eq. (16) and eqs. 13–14 | Plonky3's `get_quotient_ldes` follows §4.2 (chunk randomizers `v_{H_i}·t_i`, the last chunk compensating); `h_p` equals the chunk height `|H| ≥ 256 ≥ 110` (n_F + n_D = 2 + 108, also a `const` assertion) | Condition met (read in source, internal review round 3) | Source; the chunk count depends on `get_log_num_quotient_chunks` (U) |
+| FRI mask `R` | Plonky3 commits a **separate randomization polynomial per table** (`get_opt_randomization_poly_commitment`) with `NUM_RANDOM_CODEWORDS + EXTENSION_DEGREE` = 16 base-field columns, at the table's height. The first 8 dimensions make `R` span the extension field | Present for every table. Upstream calls this construction **"only statistically ZK"** (R is built from base-field polynomials) | The **verifier** rejects a missing `R` or a public `R` opening other than 8 wide, and checks `R` on each table's extended trace domain (its height). Test `zkvm/tests/vm.rs::every_table_commits_a_full_extension_randomization_polynomial`: in a real proof, one `R` per table, 16 columns wide at every query. Since the v3 rule set the verifier also pins the number of hidden values to `NUM_RANDOM_CODEWORDS` per opened point (`zk/src/lib.rs`, canonical form). The vendored `p3-fri` test `randomization_polynomial_spans_the_extension_at_each_table_height` checks `get_opt_randomization_poly_commitment` under upstream's test configuration (2 codewords, degree-4 extension); it runs only in the manual upstream checkout (third_party/README.md), not in our suite or CI |
+| Per-matrix codewords (`NUM_RANDOM_CODEWORDS` = 8, the extension degree; BS-ZK-2 had 4) | Extra random columns in every committed matrix. Plonky3 0.8 requires at least the extension degree "to mask extension-field batching"; BS-ZK-3 adopts that rule (decision F24-1) | **Additional masking, not the paper's `R`** (§5) | `const` assertion `NUM_RANDOM_CODEWORDS >= EXTENSION_DEGREE` in `zk/src/params.rs`; the verifier pins the count |
 | LogUp terminals | Published by Plonky3, not treated by the paper. **Our terminal blinding** (terminal-blinding.md) | Covered by our own argument (C), about 2^−124 | constraints and tests in `zkvm` |
 
 The tests listed are **additional safety checks**: they confirm that the mechanisms
@@ -93,7 +97,9 @@ These are the limits of carrying the paper's result over to our system. Each is
 
 ## 4. What can be said
 
-- **Statistical zero knowledge, conditionally.** It holds if the items of §3 hold. The
+- **Statistical and conditional zero knowledge (computational in practice).** It holds
+  if the items of §3 hold; the salted Merkle commitments (item 8) hide only
+  computationally. The
   per-table randomization and masking conditions of the published construction are
   met and checked in every build or by tests.
 - **Not claimed:**
@@ -115,3 +121,8 @@ These are the limits of carrying the paper's result over to our system. Each is
   therefore already spanned the extension. The author verified this in the source.
 - **Outcome.** The change was reverted before any commit (owner decision: Option A).
   Z2 is withdrawn (internal-review-log.md).
+- **Later (testnet v3).** 8 codewords were adopted after all, as BS-ZK-3, for a
+  different reason: Plonky3 0.8 rejects fewer random codewords than the extension
+  degree, and no written proof of either position exists, so the conservative upstream
+  rule was taken (decision F24-1; `zk/src/params.rs`; docs/reviews/v3-consensus-changes.md).
+  The correction above still stands: the mask `R` is the separate polynomial.

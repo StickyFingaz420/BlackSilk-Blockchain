@@ -1,5 +1,7 @@
 # SX1: senior cross-review of the core reports (wave 2)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 - **Reviewer:** SX1. Internal review, not an audit. Read-only. No builds were run.
 - **Code read at:** `rebuild/core` @ `58f25ec`.
 - **Commits since `87278ac` that change the picture:**

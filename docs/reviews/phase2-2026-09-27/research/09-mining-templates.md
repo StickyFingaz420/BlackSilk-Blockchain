@@ -1,5 +1,7 @@
 # 09 mining-templates: research dossier (phase 2, phase 1)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Agent 09. Internal engineering work, not an audit. Read-only on the repository; no builds
 or tests run by me. The one "measurement" below is a re-analysis of the log files of the
 coordinator's labnet run that is still in progress (`C:/bszkeval/seedrun2`), not a new run.
