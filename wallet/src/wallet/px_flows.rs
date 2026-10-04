@@ -12,7 +12,7 @@ use blacksilk_crypto::Point;
 use blacksilk_px::wallet as pxw;
 use blacksilk_px_core::call::Window;
 use blacksilk_tx::builder::{Decoy, InputPlan, Payment};
-use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS};
+use blacksilk_tx::params::{TxRules, MAX_INPUTS};
 use blacksilk_tx::px::PxTx;
 use blacksilk_tx::px_builder::{build_px, px_standard_fee, PxPlan};
 use blacksilk_tx::types::{OutputKey, Transaction};
@@ -228,24 +228,17 @@ impl Wallet {
         self.complete_index(node, total)?;
         let target = self.params.target_block_time;
         let decoy_err = |e| WalletError::Decoys(format!("{e:?}"));
-        let usable = blacksilk_tx::decoy::usable_outputs(cumulative, next).map_err(decoy_err)?;
-        // Coinbase outputs of blocks `0..=next − 60` are mature.
-        let coinbase_limit = next
-            .checked_sub(COINBASE_MATURITY)
-            .and_then(|h| cumulative.get(h as usize).copied())
-            .unwrap_or(0);
+        // The ring-member age rule (C1), from blacksilk-tx.
+        let rule =
+            blacksilk_tx::decoy::RingEligibility::new(cumulative, next).map_err(decoy_err)?;
+        let usable = rule.usable();
         let index = &self.index;
         // Eligibility depends on position and maturity only. Outputs sharing
         // a one-time key with another output (allowed since D8 option B) are
         // NOT filtered out (dossier 13 F13-7): the wallet cannot tell a copy
         // from the genuine output, and excluding both would make the genuine
         // one a never-decoy whose later spend is then identified.
-        let eligible = |i: u64| {
-            i < usable
-                && index
-                    .get(i)
-                    .is_some_and(|e| !(e.coinbase && i >= coinbase_limit))
-        };
+        let eligible = |i: u64| index.get(i).is_some_and(|e| rule.allows(i, e.coinbase));
         let member = |i: u64| -> Result<Decoy, WalletError> {
             let e = index
                 .get(i)

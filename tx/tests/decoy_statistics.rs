@@ -15,10 +15,17 @@
 //! where `F` is the CDF of Gamma(shape 19.28, rate 1.61) over log-seconds and
 //! `T` the block time, renormalised over the depths the chain has. (The first
 //! term is the uniform draw over the last 15 blocks taken when the age falls
-//! inside the 10-block lock; the second the age past the lock.) An off-by-one
-//! in the lock shift, the spendable age or the index-to-block mapping moves
-//! mass between adjacent depths, which the goodness-of-fit and boundary tests
-//! below see.
+//! inside the 10-block lock; the second the age past the lock.)
+//!
+//! What the statistics do and do not catch: an off-by-one in the spendable
+//! age or the consensus eligibility rule is caught here (depth-10 and
+//! depth-60 boundaries, the C1 property). A one-block error in the lock
+//! *shift* (a lock of 9 or 11 blocks) moves too little mass to be seen at
+//! these sample sizes; it, and the neighbourhood bounds (clamp 9..=720,
+//! divisor 4), are pinned deterministically by the unit tests in
+//! `tx/src/decoy.rs` (`the_lock_shift_starts_the_age_at_the_spendable_age`,
+//! `the_neighbourhood_is_a_quarter_of_the_depth_within_bounds`) (review
+//! RT-ASTATS M1, L2).
 //!
 //! Conventions:
 //! - fixed ChaCha seeds; assertions are on statistics with tolerances, never on
@@ -29,13 +36,13 @@
 //! - the measured values are printed (`--nocapture`); docs/transactions.md
 //!   §11.3.1 cites them.
 //!
-//! The wallet's eligibility closure (`wallet/src/wallet/px_flows.rs`,
-//! `plans_for`) is mirrored in [`Chain::eligible`]; this crate cannot depend
-//! on the wallet.
+//! The eligibility rule is `decoy::RingEligibility`, the same function the
+//! wallet's `plans_for` (`wallet/src/wallet/px_flows.rs`) passes to the
+//! picker, so the C1 property test checks the wallet's rule itself.
 
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
 use blacksilk_px_core::Digest;
-use blacksilk_tx::decoy::{select_ring, select_ring_keeping, usable_outputs};
+use blacksilk_tx::decoy::{select_ring, select_ring_keeping, usable_outputs, RingEligibility};
 use blacksilk_tx::params::{COINBASE_MATURITY, RING_SIZE, SPENDABLE_AGE};
 use blacksilk_tx::types::{Input, OutputKey};
 use blacksilk_tx::validate::{resolve_input_rings, ChainView, OutputRecord, PxProgram};
@@ -50,6 +57,9 @@ const GAMMA_RATE: f64 = 1.61;
 /// The uniform draw below the lock covers this many blocks.
 const RECENT_WINDOW: u64 = 15;
 const DECOYS: usize = RING_SIZE - 1;
+// The model's formula hard-codes these ages (the lock, the 15-block window
+// and the depth-60 boundary tests); a change to them must revisit it.
+const _: () = assert!(SPENDABLE_AGE == 10 && COINBASE_MATURITY == 60);
 /// p-value below which a chi-square statistic fails.
 const P_MIN: f64 = 1e-4;
 /// |z| above which a binomial count fails.
@@ -307,17 +317,14 @@ impl Chain {
         i < self.coinbase_end[self.block_of(i) as usize]
     }
 
-    /// The wallet's eligibility rule (`px_flows.rs`, `plans_for`): usable
-    /// (at least 10 blocks deep) and, for a coinbase output, in a block at
-    /// most `height − 60`.
+    /// The ring-member rule wallets pass to the picker
+    /// (`decoy::RingEligibility`, used by `px_flows.rs` `plans_for`); nothing
+    /// is eligible on a chain with fewer than 16 usable outputs.
     fn eligible(&self) -> impl Fn(u64) -> bool + '_ {
-        let next = self.height();
-        let usable = usable_outputs(&self.cum, next).unwrap_or(0);
-        let coinbase_limit = next
-            .checked_sub(COINBASE_MATURITY)
-            .and_then(|h| self.cum.get(h as usize).copied())
-            .unwrap_or(0);
-        move |i| i < usable && !(self.is_coinbase(i) && i >= coinbase_limit)
+        let rule = RingEligibility::new(&self.cum, self.height()).ok();
+        // Like the wallet's index lookup, only existing outputs have a flag.
+        let total = self.cum.last().copied().unwrap_or(0);
+        move |i| i < total && rule.is_some_and(|r| r.allows(i, self.is_coinbase(i)))
     }
 
     fn ring(&self, rng: &mut ChaCha20Rng, real: u64) -> [u64; RING_SIZE] {
@@ -629,8 +636,8 @@ fn real_input_rank_is_uniform_when_spends_follow_the_model() {
 ///   quarter of a model draw.
 ///
 /// Each measurement must match the model's prediction (decoys as independent
-/// draws from the model) within 0.025 and lie in the range docs/transactions.md
-/// §11.3.1 states.
+/// draws from the model) within 4.5 standard errors of the measurement and
+/// lie in the range docs/transactions.md §11.3.1 states.
 #[test]
 fn guess_newest_success_on_a_mature_chain() {
     const RINGS: usize = 3_000;
@@ -679,7 +686,7 @@ fn guess_newest_success_on_a_mature_chain() {
     for (what, got, expected, (lo, hi)) in rows {
         println!("{what}: guess-newest {got:.3}, model {expected:.3}, stated range {lo}-{hi}");
         assert!(
-            (got - expected).abs() < 0.025,
+            (got - expected).abs() < 4.5 * (expected * (1.0 - expected) / RINGS as f64).sqrt(),
             "{what}: {got} vs {expected}"
         );
         assert!((lo..=hi).contains(&got), "{what}: {got} outside {lo}-{hi}");
@@ -706,7 +713,13 @@ fn coinbase_decoys_appear_in_proportion_at_each_age() {
             .collect::<Vec<_>>()
             .into_iter(),
     );
-    let bucket = |d: u64| EDGES.partition_point(|&e| e <= d) - 1;
+    let bucket = |d: u64| {
+        assert!(
+            d >= EDGES[0],
+            "a decoy {d} blocks deep, below the spendable age"
+        );
+        EDGES.partition_point(|&e| e <= d) - 1
+    };
     let eligible = chain.eligible();
     let buckets = EDGES.len() - 1;
     let (mut pool_cb, mut pool_all) = (vec![0u64; buckets], vec![0u64; buckets]);
