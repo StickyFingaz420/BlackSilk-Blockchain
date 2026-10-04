@@ -15,3 +15,8 @@ docs/evidence/labnet-w4-*/runs/*/*.dat binary
 # lists (*.tests) feed scripts that read one name per line; a checkout with
 # CRLF endings made the names end in CR (RT-MUTD). Always LF.
 docs/evidence/mutation-*/** text eol=lf
+
+# The golden PX fixture (node/src/px_fixture.*, RT-PXR2 L2): consensus-pinned.
+# The transaction is binary; the deploy's hex is LF on every checkout.
+node/src/px_fixture.bin binary
+node/src/px_fixture.txt text eol=lf

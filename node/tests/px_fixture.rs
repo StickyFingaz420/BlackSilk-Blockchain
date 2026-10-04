@@ -275,23 +275,44 @@ fn the_ciphertext_r_rule_refuses_the_golden_variants() {
     }
 }
 
-/// Any other change of a ciphertext byte keeps the `R` rule satisfied but
+/// A change of any other ciphertext byte keeps the `R` rule satisfied but
 /// is bound: the CLSAG signs the prefix (and `h_tx`, the proof's binding,
 /// covers it), so the signature check, which precedes PX5, refuses it.
+/// Probed in both ciphertexts at the view tag, the first, a middle and the
+/// last byte of the KEM ciphertext, and the first and last byte of the body
+/// (RT-PXR2 I1).
 #[test]
 fn a_changed_ciphertext_byte_is_bound() {
     let p = PxFixture::get();
-    let mut v = p.px.clone();
-    v.ciphertexts[1][100] ^= 1;
-    for with_proof in [false, true] {
-        assert!(
-            matches!(
-                px_fixture_verdict(&v, with_proof),
-                Err(TxError::InvalidSignature { .. })
-            ),
-            "{with_proof}"
-        );
+    let n = blacksilk_px::delivery::CIPHERTEXT_BYTES;
+    for index in 0..2 {
+        for offset in [32, 33, 600, 33 + 1088 - 1, 33 + 1088, n - 1] {
+            let mut v = p.px.clone();
+            v.ciphertexts[index][offset] ^= 1;
+            for with_proof in [false, true] {
+                assert!(
+                    matches!(
+                        px_fixture_verdict(&v, with_proof),
+                        Err(TxError::InvalidSignature { .. })
+                    ),
+                    "ciphertext {index} byte {offset}, PX5 {with_proof}"
+                );
+            }
+        }
     }
+}
+
+/// The checked-in transaction re-encodes to the file's exact bytes: the
+/// fingerprint pins the decoded transaction, so this pins the file itself
+/// (RT-PXR2 L1).
+#[test]
+fn the_golden_px_transaction_round_trips_byte_for_byte() {
+    let p = PxFixture::get();
+    let bytes = Transaction::Px(Box::new(p.px.clone())).encode();
+    assert!(
+        bytes == include_bytes!("../src/px_fixture.bin"),
+        "px_fixture.bin is not the canonical encoding of the decoded transaction"
+    );
 }
 
 /// The deploy decodes, re-encodes and keeps its fixed fields.
