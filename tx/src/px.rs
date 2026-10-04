@@ -1125,8 +1125,9 @@ mod tests {
         }
     }
 
-    /// The rule is part of `check_px_structure` (every path: mempool, P2P
-    /// admission, blocks, the builder's self-check), with stateless errors.
+    /// The rule is part of `check_px_structure` (every full validation:
+    /// mempool admission, P2P admission, blocks, the builder's self-check),
+    /// with stateless errors.
     #[test]
     fn check_px_structure_applies_the_rule() {
         assert_eq!(check_px_structure(&px_ok()), Ok(()));

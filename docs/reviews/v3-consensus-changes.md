@@ -3103,14 +3103,25 @@ one fingerprint re-pin) follows after a red-team pass of this change.
 6. **Affected components.** `tx/src/px.rs` (`check_ciphertext_r`, called from
    `check_px_structure` after the nullifier-repeat check, before the counts and the
    fee) and `tx/src/validate.rs` (the two variants, `is_stateless` and its table). The
-   rule runs on every path through `check_px_structure`:
-   - mempool admission, RPC submission, readmission and revalidation (`validate_px`,
-     `validate_px_without_proof`);
+   rule runs wherever `check_px_structure` runs, that is wherever a PX transaction
+   is validated in full:
+   - mempool admission and RPC submission, and `Mempool::readmit` (full validation:
+     `validate_mempool_tx`, then `validate_px`);
    - P2P admission off the chain actor (`p2p/src/net/admission.rs`, `px_stateless`);
    - block validation (`validate_block_transactions`);
    - the builder's self-check.
 
    It runs before the proof is decoded, at the cost of two point decompressions.
+   Pool revalidation after an extension (`Mempool::revalidate`,
+   chain/src/mempool.rs) and after a reorganization (`check_after_reorg`,
+   chain/src/mempool/reorg.rs), and the readmission of transactions returned by a
+   disconnected block (`Mempool::readmit_returned`), use
+   `revalidate_after_extension`, which by design re-checks only the rules an
+   extension can change and no intrinsic rule (tx/tests/revalidate_after_extension.rs,
+   `intrinsic_rules_are_not_rechecked_by_design`). They inherit this rule's verdict
+   from the full validation that admitted the transaction or connected its block: a
+   stateless rule cannot change with the chain. `validate_px_without_proof` (which
+   would apply it) has no production caller.
 7. **Proof statement.** `R` is not in the kernel statement (`PxTx::public`). It is
    bound only through `h_tx`: the ciphertexts are in the prefix, and the binding is a
    public input of the proof. A prover can prove any `R`; this rule, not the proof,

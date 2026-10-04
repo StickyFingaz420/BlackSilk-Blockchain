@@ -806,8 +806,9 @@ pub fn validate_px(
 }
 
 /// Every rule of [`validate_px`] except PX5 (the proof is neither decoded
-/// nor checked): for revalidating pooled transactions whose proof was
-/// verified on admission.
+/// nor checked). It has no production caller: the pool revalidates with
+/// [`revalidate_after_extension`], which re-checks only the rules a chain
+/// change can affect; tests use this function.
 pub fn validate_px_without_proof(
     tx: &PxTx,
     chain: &impl ChainView,

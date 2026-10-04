@@ -631,6 +631,129 @@ mod tests {
         );
     }
 
+    /// A ciphertext with `R` = identity, crafted so that everything else is
+    /// right for the recipient: with `R` the identity, `ss_ec` is the identity
+    /// encoding for every view key, so the sender knows it; the view tag, the
+    /// KEM ciphertext and the body under the v2 key all match. Only `open`'s
+    /// identity check refuses it (removing that check makes `open` accept
+    /// the record).
+    #[test]
+    fn open_refuses_an_identity_r_that_is_otherwise_well_formed() {
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let keys = bob.delivery_keys(0);
+        let (rec, cm) = record(to.owner, 9);
+
+        let r_pub = [0u8; 32];
+        let ss_ec = [0u8; 32]; // v·identity = identity, for every v
+        assert_eq!(
+            (keys.view * CompressedRistretto(r_pub).decompress().unwrap())
+                .compress()
+                .to_bytes(),
+            ss_ec
+        );
+        let ek_arr = ml_kem::Key::<Ek>::try_from(to.ek.as_slice()).unwrap();
+        let ek = Ek::new(&ek_arr).unwrap();
+        let (ct, ss_kem) = ek.encapsulate_deterministic(&[9u8; 32].into());
+        let ek_hash = h32(tags::PX_DELIVERY_EK, &[&to.ek]);
+        let k = key(
+            &ss_ec,
+            ss_kem.as_slice(),
+            &r_pub,
+            ct.as_slice(),
+            &Recipient {
+                view: &to.view,
+                ek_hash: &ek_hash,
+            },
+            &cm,
+        );
+        let mut plain = Vec::with_capacity(PLAIN_BYTES);
+        plain.extend_from_slice(&digest_bytes(&rec.contract));
+        plain.extend_from_slice(&rec.value.to_le_bytes());
+        plain.extend_from_slice(&digest_bytes(&rec.data));
+        plain.extend_from_slice(&digest_bytes(&rec.rcm));
+        let body = ChaCha20Poly1305::new(&k.into())
+            .encrypt(
+                &[0u8; 12].into(),
+                Payload {
+                    msg: &plain,
+                    aad: &digest_bytes(&cm),
+                },
+            )
+            .unwrap();
+        let mut c = Vec::with_capacity(CIPHERTEXT_BYTES);
+        c.extend_from_slice(&r_pub);
+        c.push(view_tag(&ss_ec, &r_pub));
+        c.extend_from_slice(ct.as_slice());
+        c.extend_from_slice(&body);
+        assert_eq!(c.len(), CIPHERTEXT_BYTES);
+
+        // Everything but `R` is right: the recipient's own derivation gives
+        // the same key, and the body opens under it.
+        let (_, ss_ec_rx, ss_kem_rx, ct_rx) = shared_secrets(&keys, &c);
+        let k_rx = key(
+            &ss_ec_rx,
+            &ss_kem_rx,
+            &r_pub,
+            &ct_rx,
+            &Recipient {
+                view: &keys.view_pub,
+                ek_hash: &keys.ek_hash,
+            },
+            &cm,
+        );
+        assert_eq!(k_rx, k);
+        assert!(body_opens(&k_rx, &c, &cm));
+        // `open` refuses it.
+        assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), None);
+    }
+
+    /// Known answer for combiner v2: a fixed seed, address and record,
+    /// sealed with a constant RNG and a fixed sender secret (the hedged
+    /// derivation makes the ciphertext deterministic), give pinned bytes
+    /// for `V`, `H(ek)`, the AEAD key and the whole ciphertext. A change of
+    /// the delivery format, a tag or the hedge fails here. Wallet-side, not a
+    /// consensus value; generated once from this code (2026-10-04).
+    #[test]
+    fn delivery_v2_known_answer() {
+        fn hex(b: &[u8]) -> String {
+            b.iter().map(|x| format!("{x:02x}")).collect()
+        }
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let keys = bob.delivery_keys(0);
+        let (rec, cm) = record(to.owner, 42);
+        let c = seal(&mut ConstRng, &SENDER, &to, &rec, &cm).unwrap();
+        assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), Some(rec));
+        let (r_pub, ss_ec, ss_kem, ct) = shared_secrets(&keys, &c);
+        let k = key(
+            &ss_ec,
+            &ss_kem,
+            &r_pub,
+            &ct,
+            &Recipient {
+                view: &keys.view_pub,
+                ek_hash: &keys.ek_hash,
+            },
+            &cm,
+        );
+        let got = [
+            hex(&keys.view_pub),
+            hex(&keys.ek_hash),
+            hex(&k),
+            hex(&h32("test/delivery-kat", &[&c])),
+        ];
+        assert_eq!(got, KAT_V2, "delivery v2 known answer changed: {got:?}");
+    }
+
+    /// `[V, H(ek), key, H32("test/delivery-kat", ciphertext)]`.
+    const KAT_V2: [&str; 4] = [
+        "5ae45f4b33aff064aa4bb0c022b90fed5eb3fec47ad5477c8c2f62facf60997a",
+        "d866ef636fa6aa4617545163c2693df3017e26b1d355f334625ff09cbeb5cb30",
+        "2d232e5c52a6e74c8100080aba406a754fa1e08807ebdc285d56f25ed7879596",
+        "10ced377070efa1a0009188eb05a3dabcc3b5e5fd2aaf69b7c4a559ff85ce61d",
+    ];
+
     /// The cached public keys are the address's: `V` and `H(ek)` of the
     /// published address.
     #[test]
