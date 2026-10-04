@@ -1,6 +1,11 @@
 # pqsignatures
 
-Production-grade, secure, constant-time Rust post-quantum signature schemes:
+Research code, unreviewed and not used by the chain: post-quantum signature
+scheme wrappers in Rust. It is outside the workspace (root `Cargo.toml`
+`exclude`), and no CI job builds or tests it. Nothing here is claimed to be
+production-grade or constant-time.
+
+Wrapped schemes:
 - Dilithium2 (pure Rust, via crystals-dilithium)
 - Falcon512 (pure Rust, via falcon-rust)
 
@@ -37,9 +42,10 @@ assert!(Dilithium2::verify(&pk, tx_bytes, &sig));
 ```
 
 ## Test Suite
-- Run `cargo test -p pqsignatures` for all positive, negative, and fuzz tests.
+- Run `cargo test --manifest-path research/pqsignatures/Cargo.toml` for the
+  positive, negative and fuzz tests. There are no known-answer (KAT) tests.
 - Falcon512 fuzzing is limited for performance reasons.
 
 ## Security Notes
 - All secret keys are zeroized on drop.
-- All operations are intended to be constant-time (pending upstream implementation).
+- Constant-time behaviour is not verified; it depends on the upstream crates.
