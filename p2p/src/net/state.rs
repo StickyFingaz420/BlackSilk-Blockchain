@@ -461,6 +461,10 @@ pub(super) struct HeaderBatch {
     /// Its queue and budget (`header_budget::HeaderLane`), fixed when it
     /// was queued.
     pub(super) lane: super::header_budget::HeaderLane,
+    /// When it arrived (unix seconds): the live-tip age of
+    /// `Peer::pow_proven` is judged at arrival, not after the batch waited
+    /// for the budget (RT-HDRDOS2 R2-1).
+    pub(super) received: u64,
     pub(super) headers: Vec<BlockHeader>,
 }
 
@@ -479,6 +483,11 @@ pub(super) struct Inner {
     /// To the header worker (`header_worker`): batches are verified there, one
     /// at a time, never on a peer's read loop.
     pub(super) header_queue: mpsc::UnboundedSender<HeaderBatch>,
+    /// Wakes the header worker when a peer disconnects: its waiting
+    /// untrusted batch is released (pre-check only) at once, so it does not
+    /// hold queue room while the worker sleeps until the next token
+    /// (RT-HDRDOS2 R2-3).
+    pub(super) header_wake: Notify,
     /// To the block worker (`block_worker`): bodies are validated and
     /// connected there, never on a peer's read loop. Bounded by the peers'
     /// request windows plus `UNREQUESTED_QUEUE`.

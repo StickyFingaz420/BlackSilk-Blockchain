@@ -284,6 +284,7 @@ mod tests {
             proxied: false,
             solicited: false,
             lane,
+            received: 0,
             headers: Vec::new(),
         }
     }

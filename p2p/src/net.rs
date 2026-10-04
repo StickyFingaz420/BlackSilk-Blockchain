@@ -200,6 +200,7 @@ fn new_inner(
         cfg,
         genesis_id,
         header_queue,
+        header_wake: Notify::new(),
         block_queue,
         state: Mutex::new(state),
         next_id: AtomicU64::new(1),

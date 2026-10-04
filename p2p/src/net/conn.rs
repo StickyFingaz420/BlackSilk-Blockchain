@@ -628,6 +628,8 @@ pub(super) async fn run_connection<S>(
         inner.apply_tx_actions(&mut st, out, now);
         gone
     };
+    // Its waiting header batch, if any, is released now (`header_worker`).
+    inner.header_wake.notify_one();
     // Logged outside the state lock (RT2 F8).
     if let Some(addr) = gone {
         log::info!("disconnected peer {addr}");

@@ -498,8 +498,12 @@ is a violation (100 points). The only exception is `Version`'s extension area (Â
        2. **Proven** inbound peers (`Peer::pow_proven`). A peer is proven once it
           delivers a *live* new tip with valid proof of work. Live means the batch
           stored new headers ending on our best chain, above our previous best
-          header, was not a full batch, and its tip is at most `max_tip_age` old
-          (48 minutes on testnet; no bound on regtest).
+          header, was not a full batch, and its tip was at most `max_tip_age` old
+          when the batch **arrived** (48 minutes on testnet; no bound on regtest).
+          The age is judged at arrival, not at verification: under a flood an
+          untrusted batch can wait about as long as that bound for its token, and
+          would otherwise never prove its sender (RT-HDRDOS2 R2-1). The future-time
+          limit is still judged at verification.
           - During initial sync and catch-up the tips are old, so identities cannot
             each relay the next header to collect the status in bulk. That is at most
             one new proven identity per new tip of the network.
@@ -534,15 +538,28 @@ is a violation (100 points). The only exception is `Version`'s extension area (Â
          and the peer is asked again at once. Its reply then waits in the queue.
        - Waiting batches of senders that left are released at once without a
          token: they are only pre-checked (no hash), so a rule-breaking sender is
-         still banned.
+         still banned. A disconnect wakes the header worker, so a departed batch
+         never holds queue room while the worker sleeps until the next token
+         (RT-HDRDOS2 R2-3).
        - Untrusted batches have their own queue bound (`max_inbound`), so they
          never take a trusted batch's room.
-     - **The untrusted floor.** With `k` junk batches waiting in its class, an honest
-       untrusted batch waits `(k + 1) / class_rate` on average.
+     - **The untrusted floor.** With `k` junk batches waiting in its class, each
+       token is a draw with chance `1/(k + 1)`, so an honest untrusted batch waits a
+       geometric number of tokens: `(k + 1) / class_rate` on average, with a long
+       tail. Every flooding identity keeps one batch waiting: it reconnects at once
+       after its junk is hashed and announces again.
        - **Test value.** Measured in
          `an_honest_untrusted_peer_progresses_under_a_two_class_flood`: 8 onion and 8
-         IPv4 flooding identities, 1 token/s. An honest IPv4 identity's header was
-         stored after a mean of 9.9 s and 6.3 s in two runs (single waits 1.0â€“17.2 s, 5 rounds each; the model gives 9 s).
+         IPv4 flooding identities, 1 token/s, so `k = 8` and a model mean of 9 s
+         (median about 6 s).
+         - The sampled queue held 16.8 batches on average across both classes,
+           against 17 in the model, which confirms `k`.
+         - Honest IPv4 identities' headers were stored after a median of 8.4 s
+           and 6.1 s, and a mean of 9.9 s and 7.4 s, in two runs of 9 rounds
+           (single waits 1.0â€“29.5 s). Earlier runs of 5 rounds had means of 9.9,
+           6.3 and 15.8 s.
+         - The test fails only on a collapse: a median above 30 s, or any single
+           wait above 90 s (probability about 2.5e-5 per round under the model).
        - **Defaults, `k` up to 63.** The model gives about 48 minutes on average per
          untrusted batch, while the flood lasts.
        - **What this means for sync.** It does not touch sync from outbound peers.

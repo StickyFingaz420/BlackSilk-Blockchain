@@ -458,13 +458,19 @@ async fn a_junk_header_flood_from_unbannable_peers_is_budgeted_and_honest_sync_g
 /// listener and 8 IPv4 identities, while fresh honest IPv4 identities each
 /// announce the next valid header. Classes have separate buckets (no
 /// node-wide one), and within the IPv4 class the next batch is drawn at
-/// random, so each honest header waits about `(k + 1) / class_rate` on
-/// average (a geometric number of draws) with `k` junk batches waiting in its
-/// class: here 1 token/s and k <= 8, about 9 s (measured: means 9.9 s and
-/// 6.3 s in two runs of 5 rounds, single waits 1.0 to 17.2 s). The onion flood takes nothing from the IPv4 class.
+/// random among the waiting ones. Model: every IPv4 attacker keeps one
+/// batch waiting (it reconnects at once after its junk is hashed and
+/// re-announces within 20 ms), so `k = 8` junk batches compete with the
+/// honest one, and each token (1/s) is a draw with chance `1/(k + 1)`: the
+/// honest wait is geometric with mean `(k + 1)/rate = 9 s`, median about
+/// 6 s, and P(wait > 90 s) = (8/9)^90, about 2.5e-5 per round. The
+/// sampled untrusted queue (both classes) confirms k. The test fails only
+/// on a collapse: the median of 9 rounds above 30 s (about 3x the model
+/// mean), or any single wait above 90 s (RT-HDRDOS2 R2-2: a mean of 5
+/// samples flaked). The onion flood takes nothing from the IPv4 class.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_honest_untrusted_peer_progresses_under_a_two_class_flood() {
-    const ROUNDS: u8 = 5;
+    const ROUNDS: u8 = 9;
     let pow = Arc::new(SlowJunkPow {
         delay: Duration::from_millis(30),
         junk: AtomicU64::new(0),
@@ -483,6 +489,18 @@ async fn an_honest_untrusted_peer_progresses_under_a_two_class_flood() {
     let counter = Arc::new(AtomicU64::new(0));
     let mut tasks = flood(onion, proto, 8, &stop, &counter);
     tasks.extend(flood(clear, proto, 8, &stop, &counter));
+    // Samples the waiting batches (both untrusted classes) every 100 ms.
+    let sampler = {
+        let (net, stop) = (net.clone(), stop.clone());
+        tokio::spawn(async move {
+            let mut samples = Vec::new();
+            while !stop.load(Relaxed) {
+                samples.push(net.header_queue_len());
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            samples
+        })
+    };
     tokio::time::sleep(Duration::from_millis(1000)).await;
     let mut waits = Vec::new();
     for k in 1..=ROUNDS {
@@ -490,27 +508,38 @@ async fn an_honest_untrusted_peer_progresses_under_a_two_class_flood() {
         let (_, _r, mut w) = raw_handshake(clear, 0, 5.0).await.expect("handshake");
         let sent = Instant::now();
         w.send(&Message::Headers(vec![h]).encode()).await.unwrap();
-        wait_for("honest untrusted header stored", 90, || stored(&chain, &id)).await;
+        wait_for("honest untrusted header stored", 120, || {
+            stored(&chain, &id)
+        })
+        .await;
         waits.push(sent.elapsed().as_secs_f64());
     }
     stop.store(true, Relaxed);
     for t in tasks {
         t.abort();
     }
+    let samples = sampler.await.unwrap();
+    let queued = samples.iter().sum::<usize>() as f64 / samples.len().max(1) as f64;
+    let mut sorted = waits.clone();
+    sorted.sort_by(f64::total_cmp);
+    let median = sorted[sorted.len() / 2];
     let mean = waits.iter().sum::<f64>() / waits.len() as f64;
-    let max = waits.iter().cloned().fold(0.0, f64::max);
+    let max = sorted[sorted.len() - 1];
     let s = net.stats();
     eprintln!(
-        "untrusted floor under a two-class flood: honest waits {waits:.2?} s (mean {mean:.2}, \
-         max {max:.2}); {} junk hashes, {} throttled",
+        "untrusted floor under a two-class flood: honest waits {waits:.2?} s \
+         (median {median:.2}, mean {mean:.2}, max {max:.2}; model mean 9, median ~6); \
+         {queued:.1} batches waiting on average (both classes; model 8 + 8 + the honest \
+         one); {} junk hashes, {} throttled",
         pow.junk.load(Relaxed),
         s.header_pow_throttled
     );
     assert!(s.header_pow_throttled > 0, "the flood was throttled");
     assert!(
-        mean < 20.0,
-        "the untrusted floor collapsed: mean {mean:.2} s"
+        median < 30.0,
+        "the untrusted floor collapsed: median {median:.2} s"
     );
+    assert!(max < 90.0, "an honest batch waited {max:.2} s");
 }
 
 /// RT-HDRDOS F1: identities that proved themselves (a live new tip each)
@@ -651,6 +680,14 @@ async fn junk_spends_the_budget_and_later_untrusted_batches_wait_unhashed() {
     assert_eq!((s.header_pow_failed, s.header_pow_throttled), (1, 2));
     assert_eq!(pow.junk.load(Relaxed), 1, "one junk hash, then none");
     assert_eq!(net.header_queue_len(), 2, "the other two wait");
+    // RT-HDRDOS2 R2-3: a waiting sender that disconnects frees its room at
+    // once (the worker is woken; with no refill it would otherwise sleep
+    // until the next batch arrives).
+    drop(keep);
+    wait_for("the departed batches are released", 10, || {
+        net.header_queue_len() == 0
+    })
+    .await;
 }
 
 /// RT-HDRDOS F3: a batch that waits for the budget is verified once a token

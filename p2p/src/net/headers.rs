@@ -275,6 +275,7 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
                 proxied: p.proxied,
                 solicited,
                 lane,
+                received: unix_now(),
                 headers,
             };
             let key = queue_key(&batch.addr, batch.proxied);
@@ -435,8 +436,12 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                 Some(d) => tokio::select! {
                     b = rx.recv() => Some(b),
                     _ = tokio::time::sleep(d) => None,
+                    _ = inner.header_wake.notified() => None,
                 },
-                None => Some(rx.recv().await),
+                None => tokio::select! {
+                    b = rx.recv() => Some(b),
+                    _ = inner.header_wake.notified() => None,
+                },
             };
             match received {
                 Some(Some(b)) => {
@@ -455,7 +460,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         let last_height = headers.last().map_or(0, |h| h.height);
         let inner2 = inner.clone();
         let addr = batch.addr.clone();
-        let lane = batch.lane;
+        let (lane, received) = (batch.lane, batch.received);
         // Our header height after the batch is read before the peer's
         // claimed height is corrected below under the same state lock that
         // ends `headers_busy`, so the maintenance loop never sees the peer
@@ -463,7 +468,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         // (R8-15 request loops). The snapshot is published before the
         // actor answers the batch's last command, so it includes the batch.
         let result = tokio::task::spawn_blocking(move || {
-            let outcome = verify_headers(&inner2, peer, &addr, lane, &headers);
+            let outcome = verify_headers(&inner2, peer, &addr, lane, received, &headers);
             let ours = inner2.summary.load().header_height;
             (outcome, ours)
         })
@@ -721,6 +726,7 @@ fn verify_headers(
     peer: PeerId,
     addr: &NetAddr,
     lane: HeaderLane,
+    received: u64,
     headers: &[BlockHeader],
 ) -> HeaderOutcome {
     let now = unix_now();
@@ -892,7 +898,9 @@ fn verify_headers(
     // A live new tip that is also recent proves its sender (`pow_proven`):
     // during initial sync tips are old, so identities cannot collect it in
     // bulk by relaying the next header each.
-    let live_tip = proves_sender(live, last.timestamp, now, tip_age);
+    // Judged at arrival: under a flood an untrusted batch may wait about as
+    // long as the tip-age bound for its token (RT-HDRDOS2 R2-1).
+    let live_tip = proves_sender(live, last.timestamp, received.min(now), tip_age);
     HeaderOutcome::Accepted {
         last: last.height,
         last_id,
@@ -1477,7 +1485,7 @@ mod tests {
         let verify = |inner: Arc<Inner>| {
             let addr = addr.clone();
             tokio::task::spawn_blocking(move || {
-                verify_headers(&inner, 999, &addr, HeaderLane::Outbound, &[bad])
+                verify_headers(&inner, 999, &addr, HeaderLane::Outbound, unix_now(), &[bad])
             })
         };
         // Departed (no peer 999), not banned: pre-checked, refused.
