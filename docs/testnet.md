@@ -513,8 +513,9 @@ Use a separate data directory for each network. The default data directory is th
 for every testnet generation, so after a reset the node finds the old store there: a
 store of another network or genesis is refused ("wrong network data directory"), and so
 are stores written before the v3 store format, which are never migrated: a store
-without a file header ("format 0", written before 2026-09-27) and a "format version 1"
-store, on every network (regtest included since 2026-10-05). In each case the node
+without a file header ("format 0", written before 2026-09-27; regtest included since
+2026-10-05) and a "format version 1" or "format version 2" store (before the 172-byte
+header and the mining blob), on every network. In each case the node
 starts only after `blocks.dat` is moved aside; it then resyncs from its peers.
 
 ## 5. Mining
@@ -960,7 +961,7 @@ column), `journal.log`, and each process's log.
 | `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
 | `N stored block(s) descend from blocks found invalid` at start | Harmless: blocks refused before the restart are refused again |
 | `block store: … wrong network data directory` at start | The data directory holds another network's (or an old testnet's) store. Use a separate data directory per network, or move `blocks.dat` aside to resync (§4.5) |
-| `block store: … format 0, no file header` or `… format version 1` at start | A store from before the v3 store format; it is never migrated. Stop the node, move `blocks.dat` aside and start again to resync (§4.5). `--repair-store` does not apply |
+| `block store: … format 0, no file header`, `… format version 1` or `… format version 2` at start | A store from before the v3 store format; it is never migrated. Stop the node, move `blocks.dat` aside and start again to resync (§4.5). `--repair-store` does not apply |
 | `block store: … damaged file header` or `… not a block store` at start | The first 48 bytes of `blocks.dat` are damaged, or the file is something else. Back up the data directory, move `blocks.dat` aside and resync |
 | `block store: … record at offset … is not valid` or `… unknown record type` at start | A record with a correct checksum that this build cannot read: the store was written by a newer build (run that build) or is corrupt. Nothing is truncated; back up the data directory, then move `blocks.dat` aside to resync |
 

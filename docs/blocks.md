@@ -523,10 +523,13 @@ body    = type (1) ‖ payload
     too, with the same advice (before, regtest read it and appended to it in its own
     `"BSB1"` layout; its blocks and stored proof-of-work hashes predate the 172-byte
     header and the mining blob). Format 1 (file header, untyped `"BSB1"` records; stores
-    of pre-freeze labnet runs) is refused on every network with the same advice.
+    of pre-freeze labnet runs) and format 2 (the 100-byte header, or an intermediate
+    build whose stored proof-of-work hashes are of another input than the mining blob)
+    are refused on every network with the same advice.
   - Tested in `store.rs` (`a_new_store_is_bound_to_its_network`,
     `a_legacy_headerless_store_is_refused_on_every_network`,
-    `damaged_torn_and_foreign_file_headers`, `unknown_and_malformed_records`) and
+    `damaged_torn_and_foreign_file_headers`, which also refuses format versions 1, 2
+    and an unknown one, `unknown_and_malformed_records`) and
     `chain/tests/store_format.rs` (`a_legacy_headerless_store_is_refused_on_every_network`,
     `a_format_1_store_is_refused_with_resync_advice`,
     `a_store_of_another_network_or_genesis_is_refused`: the chain manager refuses format
@@ -681,8 +684,8 @@ body    = type (1) ‖ payload
     `chain/tests/rt_w3_regressions.rs::repair_keeps_operator_verdicts_written_after_the_damage`.
     A missing store (fresh data directory) is "nothing to repair". Repair handles the
     current format (3) only; it refuses a store without a file header (format 0), a
-    damaged file header or another format version and changes nothing (the operator moves the store aside and
-    resyncs).
+    damaged file header or another format version and changes nothing (the operator
+    moves the store aside and resyncs).
 - **Known limitations** (acceptable for a controlled testnet; to be measured in the
   trial):
   - every block body and every block's undo data stays in memory (PX-F1, PX-F2);
