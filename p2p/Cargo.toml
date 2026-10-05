@@ -42,7 +42,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 [features]
 # The stateful fuzz targets' hooks (`net::fuzzing`): a network state without
 # listeners for a harness-driven connection, and the admission steps of a
-# relayed transaction. Never enabled in a node build: only the fuzz
+# relayed transaction; and the test-only probes of `Network` and `AddrMan`
+# (`maintenance_seen_height`, `queued_announcements`, `stem_peers`,
+# `announce_for_tests`, `AddrMan::check`). Never enabled in a node build: only the fuzz
 # workspace and this crate's own tests (dev-dependencies) turn it on.
 test-hooks = []
 

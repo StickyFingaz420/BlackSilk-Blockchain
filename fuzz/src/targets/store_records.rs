@@ -99,7 +99,8 @@ pub fn file_header() -> Vec<u8> {
 }
 
 /// A frame of `body` in the typed (`BSR2`, checksum over length and body) or
-/// the legacy (`BSB1`, checksum over the body) layout.
+/// the legacy (`BSB1`, checksum over the body) layout. Legacy frames only
+/// build raw format 0 inputs, which `bind` must refuse on every network.
 pub fn frame(typed: bool, body: &[u8]) -> Vec<u8> {
     let n = (body.len() as u32).to_le_bytes();
     let crc = if typed {
@@ -157,18 +158,15 @@ fn text(out: &mut Vec<u8>, s: &str) {
 }
 
 /// The body of `record` as docs/blocks.md §8 specifies it.
-fn spec_body(typed: bool, record: &Record) -> Vec<u8> {
+fn spec_body(record: &Record) -> Vec<u8> {
     let mut b = Vec::new();
     match record {
         Record::Block((pow, block)) => {
-            if typed {
-                b.push(0x01);
-            }
+            b.push(0x01);
             b.extend_from_slice(pow);
             b.extend_from_slice(block);
         }
         Record::Marker(Marker::Invalid(m)) => {
-            assert!(typed, "a legacy store holds blocks only");
             assert!(m.reason.len() <= MAX_REASON);
             b.push(0x02);
             b.extend_from_slice(&m.id);
@@ -180,12 +178,10 @@ fn spec_body(typed: bool, record: &Record) -> Vec<u8> {
         }
         Record::Marker(Marker::Reconsider(id)) => {
             // 0x03, the block id (W3-35b; docs/blocks.md §8).
-            assert!(typed, "a legacy store holds blocks only");
             b.push(0x03);
             b.extend_from_slice(id);
         }
         Record::Marker(Marker::Checkpoint(c)) => {
-            assert!(typed, "a legacy store holds blocks only");
             assert!(c.build_commit.len() <= MAX_BUILD_COMMIT);
             b.push(0x81);
             b.extend_from_slice(&c.tip_id);
@@ -201,8 +197,8 @@ fn spec_body(typed: bool, record: &Record) -> Vec<u8> {
 /// Checks that `kept` (a file `load` accepted) consists of whole, checked
 /// frames that are exactly the spec encodings of `records`, in order, plus
 /// skipped advisory frames. Returns `kept` without those advisory frames.
-fn check_kept(typed: bool, kept: &[u8], records: &[Record]) -> Vec<u8> {
-    let mut pos = if typed { FILE_HEADER } else { 0 };
+fn check_kept(kept: &[u8], records: &[Record]) -> Vec<u8> {
+    let mut pos = FILE_HEADER;
     let mut canonical = kept[..pos].to_vec();
     let mut next = records.iter();
     while pos < kept.len() {
@@ -210,7 +206,7 @@ fn check_kept(typed: bool, kept: &[u8], records: &[Record]) -> Vec<u8> {
             pos + FRAME_HEADER <= kept.len(),
             "a partial frame header was kept"
         );
-        let magic = if typed { TYPED } else { LEGACY };
+        let magic = TYPED;
         assert_eq!(
             &kept[pos..pos + 4],
             magic,
@@ -222,13 +218,13 @@ fn check_kept(typed: bool, kept: &[u8], records: &[Record]) -> Vec<u8> {
         let body = &kept[pos + FRAME_HEADER..end];
         assert_eq!(
             &kept[pos..end],
-            &frame(typed, body)[..],
+            &frame(true, body)[..],
             "a frame with a wrong checksum was kept"
         );
-        let unknown_advisory = typed && body[0] & 0x80 != 0 && body[0] != 0x81;
+        let unknown_advisory = body[0] & 0x80 != 0 && body[0] != 0x81;
         if !unknown_advisory {
             let r = next.next().expect("a kept frame without a record");
-            assert_eq!(spec_body(typed, r), body, "not the canonical encoding");
+            assert_eq!(spec_body(r), body, "not the canonical encoding");
             canonical.extend_from_slice(&kept[pos..end]);
         }
         pos = end;
@@ -286,7 +282,9 @@ fn check(mode: u8, rest: &[u8], dir: &Path) {
         assert_eq!(read(&path), file, "a refused bind changes nothing");
         return;
     }
-    let typed = store.format_version() == FORMAT_VERSION;
+    // Format 0 (headerless) is refused at `bind` on every network: an
+    // accepted store is always the current format.
+    assert_eq!(store.format_version(), FORMAT_VERSION);
     // `bind` rewrites a torn header (a prefix of the expected one).
     let before = read(&path);
     let loaded = store.load();
@@ -295,13 +293,7 @@ fn check(mode: u8, rest: &[u8], dir: &Path) {
     match loaded {
         Ok(records) => {
             assert!(before.starts_with(&kept), "load only truncates");
-            let canonical = check_kept(typed, &kept, &records);
-            if kept.is_empty() {
-                // A legacy store that was all torn tail is now empty: the
-                // next bind makes it a new store (with a v2 header).
-                assert!(!typed && records.is_empty());
-                return;
-            }
+            let canonical = check_kept(&kept, &records);
             // Loading again: the same records, and nothing else changes.
             let mut again = FileStore::open(&path).expect("open the store");
             again.bind(&id).expect("an accepted store binds again");
@@ -311,21 +303,19 @@ fn check(mode: u8, rest: &[u8], dir: &Path) {
             );
             drop(again);
             assert_eq!(read(&path), kept, "a second load changes nothing");
-            if typed {
-                // Re-encoding through the store's own writer.
-                let copy = dir.join("copy.dat");
-                let mut s = FileStore::open(&copy).expect("open the copy");
-                s.bind(&id).expect("bind the copy");
-                for r in &records {
-                    match r {
-                        Record::Block((pow, block)) => s.append(pow, block),
-                        Record::Marker(m) => s.append_marker(m),
-                    }
-                    .expect("a loaded record is written again");
+            // Re-encoding through the store's own writer.
+            let copy = dir.join("copy.dat");
+            let mut s = FileStore::open(&copy).expect("open the copy");
+            s.bind(&id).expect("bind the copy");
+            for r in &records {
+                match r {
+                    Record::Block((pow, block)) => s.append(pow, block),
+                    Record::Marker(m) => s.append_marker(m),
                 }
-                drop(s);
-                assert_eq!(read(&copy), canonical, "re-encoding is canonical");
+                .expect("a loaded record is written again");
             }
+            drop(s);
+            assert_eq!(read(&copy), canonical, "re-encoding is canonical");
         }
         Err(e) => {
             assert_eq!(e.kind(), ErrorKind::InvalidData, "{e}");
