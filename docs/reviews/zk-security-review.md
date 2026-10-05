@@ -45,10 +45,11 @@ invertible public permutation, R2-C6). The PX commitment tree relies instead on 
 extractability argument of ePrint 2026/089 Theorem 3 (about 122.6 bits by our
 evaluation; the adaptation to BlackSilk's tree is argued, not proven), with leaves that
 are always sponge outputs at fixed depth (zk.md §4.5, §12.1). A6's "4 random codewords
-per matrix" was BS-ZK-2; BS-ZK-3 uses 8, the extension degree (`NUM_RANDOM_CODEWORDS`,
+per matrix" was BS-ZK-2; since BS-ZK-3 it is 8, the extension degree (`NUM_RANDOM_CODEWORDS`,
 `zk/src/params.rs`; decision F24-1), and the verifier pins that count. A6's zero
 knowledge is statistical and conditional (computational in practice; zk-coverage.md
-§4). BS-ZK-4 (20 query grinding bits) is pending on branch `bszk4`.
+§4). BS-ZK-4, the current set, keeps these hiding parameters and raises the query
+grinding to 20 bits.
 
 **Correction (2026-10-05): external review.** "External review" in the rows above and
 in §8 marks work that an independent reviewer could check. It is optional and future,
