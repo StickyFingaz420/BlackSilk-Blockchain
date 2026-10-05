@@ -1,5 +1,9 @@
 # Coordinator decisions log (phase 2)
 
+Status: append-only coordinator log; later entries supersede earlier ones (for example
+D1, the wallet's local decoy distribution, is built: `wallet/src/index.rs`). Current
+state: [docs/STATUS.md](../../STATUS.md).
+
 ## Agent 07 dossier (randomx-cache-seed)
 
 - **`miner/src/main.rs` ownership:** single owner is 09 (mining-templates). Agent 07 delivers `SeedPlanner` and the prebuild inside `miner/src/lib.rs`. Agent 09 wires `main.rs`.
