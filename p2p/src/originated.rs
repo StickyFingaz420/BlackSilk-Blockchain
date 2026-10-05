@@ -248,10 +248,9 @@ impl Originated {
         for (id, r) in raw {
             let e = relayed.entry(id).or_insert(r);
             if r != *e {
-                problems.push(format!(
-                    "{} is listed twice; the highest height is kept",
-                    hex::encode(id)
-                ));
+                // No id: every entry is a transaction this node originated,
+                // and problems are logged at error (net/stem.rs module doc).
+                problems.push("an entry is listed twice; the highest height is kept".into());
                 *e = (*e).max(r);
             }
         }
@@ -482,11 +481,23 @@ mod tests {
     /// highest height; formats 1 and 2 and mixed entry shapes are read; a
     /// missing or unknown version does not stop the entries; a torn file
     /// keeps the entries before the tear. Every damage is reported and
-    /// marks the set for a clean rewrite.
+    /// marks the set for a clean rewrite. No problem string names an id
+    /// (each is a local transaction, and problems are logged at error).
     #[test]
     fn a_damaged_file_keeps_every_entry_that_parses() {
         let h = |n: u64| hex::encode(id(n));
-        let read = |json: String| Originated::decode(json.as_bytes());
+        let names_no_id = |p: &[String]| {
+            p.iter().all(|s| {
+                !s.as_bytes()
+                    .windows(64)
+                    .any(|w| w.iter().all(u8::is_ascii_hexdigit))
+            })
+        };
+        let read = |json: String| {
+            let (o, p) = Originated::decode(json.as_bytes());
+            assert!(names_no_id(&p), "a problem names an id: {p:?}");
+            (o, p)
+        };
         let (o, p) = read(format!(
             r#"{{"version":2,"entries":[["{}",5,7],["{}",6],["{}",-1],["zz",8],["{}",900],["{}",4]]}}"#,
             h(1),
@@ -509,6 +520,7 @@ mod tests {
         );
         assert_eq!(o.len(), 3);
         assert_eq!(p.len(), 3, "{p:?}");
+        assert!(p.iter().any(|s| s.contains("listed twice")), "{p:?}");
         assert!(o.is_dirty());
         let (o, p) = read(format!(r#"{{"entries":[["{}",5]],"x":1}}"#, h(1)));
         assert_eq!((o.relayed(&id(1)), p.len()), (Some(5), 1), "no version");

@@ -15,7 +15,6 @@ pub mod score {
     pub const UNCONNECTED_HEADERS: u32 = 20;
     pub const INVALID_TX: u32 = 20;
     pub const UNSOLICITED: u32 = 10;
-    pub const TIMEOUT: u32 = 5;
     pub const RATE: u32 = 1;
 }
 

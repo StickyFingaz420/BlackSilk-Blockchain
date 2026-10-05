@@ -130,13 +130,13 @@ impl std::fmt::Display for StorePowMismatch {
 impl std::error::Error for StorePowMismatch {}
 
 /// One stored hash to recompute: the block's stored index, height and id,
-/// its RandomX key and header, and the stored hash.
+/// its RandomX key and mining blob, and the stored hash.
 struct PowCheck {
     index: Option<usize>,
     height: u64,
     id: Hash,
     seed: Hash,
-    header: [u8; blacksilk_consensus::POW_BLOB_SIZE],
+    blob: [u8; blacksilk_consensus::POW_BLOB_SIZE],
     stored: Hash,
 }
 
@@ -154,7 +154,8 @@ impl ChainManager {
     /// last verdict for an id wins.
     ///
     /// Refused (`InvalidInput`, nothing written): invalidating genesis. A
-    /// legacy headerless (regtest) store keeps no markers (`Unsupported`).
+    /// store that keeps no markers (the trait default) refuses with
+    /// `Unsupported`.
     pub fn mark_stored_block(
         params: &ChainParams,
         store: &mut dyn BlockStore,
@@ -463,7 +464,7 @@ impl ChainManager {
                         height: header.height,
                         id: block.id(self.params.network_id),
                         seed,
-                        header: bytes,
+                        blob: bytes,
                         stored: pow_hash,
                     });
                 }
@@ -503,7 +504,7 @@ impl ChainManager {
                     height: h,
                     id,
                     seed,
-                    header: bytes,
+                    blob: bytes,
                     stored,
                 })
             })
@@ -542,7 +543,7 @@ impl ChainManager {
                             .enumerate()
                             .skip(t)
                             .step_by(threads)
-                            .map(|(k, c)| (k, pow.recompute(&c.seed, &c.header) != c.stored))
+                            .map(|(k, c)| (k, pow.recompute(&c.seed, &c.blob) != c.stored))
                             .collect::<Vec<_>>()
                     })
                 })

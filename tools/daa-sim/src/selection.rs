@@ -111,13 +111,6 @@ impl RaceQ {
     pub fn excess(&self) -> f64 {
         self.p(self.compressed.max(self.best_hits)) - self.p(self.honest)
     }
-    pub fn worst_label(&self) -> String {
-        if self.best_hits > self.compressed {
-            self.best.label()
-        } else {
-            "compressed".into()
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

@@ -523,13 +523,38 @@ pub(super) fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-pub(super) fn short(h: &Hash) -> String {
+/// The first 6 bytes of a hash, in hex.
+fn short_hex(h: &Hash) -> String {
     hex::encode(&h[..6])
+}
+
+/// How a log line names a **block** id. Transaction ids go through
+/// [`tx_log_id`] instead (privacy, net/stem.rs module doc).
+pub(super) fn short_block_id(id: &Hash) -> String {
+    short_hex(id)
+}
+
+/// How a log line names transaction `id`: its short id, or `"a local tx"`
+/// when this node originated it (`originated`), so that no log line, at any
+/// level, ties a local transaction's id to this node (net/stem.rs module
+/// doc).
+pub(super) fn tx_log_id(originated: &Originated, id: &Hash) -> String {
+    if originated.relayed(id).is_some() {
+        "a local tx".into()
+    } else {
+        short_hex(id)
+    }
 }
 
 impl Inner {
     pub(super) fn state(&self) -> MutexGuard<'_, State> {
         lock_or_exit(&self.state, "network state")
+    }
+
+    /// [`tx_log_id`] under the state lock. Takes the lock: never call it
+    /// while holding it.
+    pub(super) fn tx_log_id(&self, id: &Hash) -> String {
+        tx_log_id(&self.state().originated, id)
     }
 
     pub(super) fn clock(&self) -> MutexGuard<'_, ClockMonitor> {
@@ -623,6 +648,21 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Privacy (net/stem.rs module doc): a transaction in the originated
+    /// set is never named by its id in a log line; any other keeps its short
+    /// id; once forgotten (not originated after all) it is named again.
+    #[test]
+    fn log_lines_never_name_a_locally_originated_tx() {
+        let mut o = Originated::new();
+        let (local, relayed) = ([1u8; 32], [2u8; 32]);
+        o.record(local, 10);
+        assert_eq!(tx_log_id(&o, &local), "a local tx");
+        assert!(!tx_log_id(&o, &local).contains(&short_hex(&local)));
+        assert_eq!(tx_log_id(&o, &relayed), short_hex(&relayed));
+        o.forget(&local);
+        assert_eq!(tx_log_id(&o, &local), short_hex(&local));
+    }
 
     /// RT-1 and RTW1-1: one reporter never triggers the operator warning,
     /// however often it reports or reconnects (same key); a second distinct

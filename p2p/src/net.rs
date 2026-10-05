@@ -381,6 +381,7 @@ impl Network {
     /// The next-block height the chain maintenance loop last finished,
     /// pool re-announcement included (tests wait on it instead of on
     /// time; 0 before its first look).
+    #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn maintenance_seen_height(&self) -> u64 {
         self.inner
@@ -398,6 +399,7 @@ impl Network {
 
     /// Announcements queued for the trickle, over all peers (tests: once 0,
     /// every queued `InvTx` is in an outbox).
+    #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn queued_announcements(&self) -> usize {
         self.inner
@@ -408,14 +410,9 @@ impl Network {
             .sum()
     }
 
-    /// Bytes of `GetTx` answers held node-wide (reserved or queued).
-    #[doc(hidden)]
-    pub fn serving_bytes(&self) -> usize {
-        self.inner.serve_budget.used()
-    }
-
     /// The current Dandelion epoch's stem peers (tests: a stem peer is
     /// never dropped by an honest burst, TM2-17).
+    #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn stem_peers(&self) -> Vec<crate::dandelion::PeerId> {
         self.inner.state().dandelion.stems().to_vec()

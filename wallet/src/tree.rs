@@ -617,16 +617,6 @@ impl WalletTree {
         Ok((path, root))
     }
 
-    /// Whether a witness is kept for leaf `pos`.
-    pub fn has_witness(&self, pos: u64) -> bool {
-        self.witnesses.contains_key(&pos)
-    }
-
-    /// The leaf a witness is kept for.
-    pub fn witnessed_leaf(&self, pos: u64) -> Option<Digest> {
-        self.witnesses.get(&pos).map(|w| w.leaf)
-    }
-
     /// Keeps only the witnesses of the leaves `keep` accepts.
     pub fn retain_witnesses(&mut self, keep: impl Fn(u64) -> bool) {
         self.witnesses.retain(|&p, _| keep(p));
@@ -639,11 +629,6 @@ impl WalletTree {
             .iter()
             .find(|b| pos >= b.size - b.commitments.len() as u64 && pos < b.size)
             .map(|b| b.height)
-    }
-
-    /// The oldest block whose commitments are logged.
-    pub fn oldest_logged(&self) -> Option<u64> {
-        self.blocks.front().map(|b| b.height)
     }
 
     /// A witness for the leaf `cm` of a scanned block the tree still logs

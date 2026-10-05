@@ -971,6 +971,7 @@ impl AddrMan {
     }
 
     /// Checks every internal invariant (tests).
+    #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn check(&self) -> Result<(), String> {
         let mut seen = std::collections::HashSet::new();

@@ -174,7 +174,9 @@ pub struct NetStats {
     /// Header proof-of-work hashes run for untrusted inbound peers that
     /// failed (charged to the header PoW budget and not refunded).
     pub header_pow_failed: u64,
-    /// Header batches of untrusted inbound peers dropped unhashed because
-    /// the header PoW budget was exhausted (docs/p2p.md §6).
+    /// Times a header batch of an untrusted inbound peer had to wait,
+    /// unhashed, because its class of the header PoW budget had no token
+    /// (queued, or cut off between two chunks); it is taken up when a token
+    /// frees, never dropped (docs/p2p.md §6, RT-HDRDOS F3).
     pub header_pow_throttled: u64,
 }

@@ -2,7 +2,7 @@
 name = "pqsignatures"
 version = "0.1.0"
 edition = "2021"
-description = "Production-grade, secure, constant-time Rust post-quantum signature schemes (Dilithium2, Falcon512)"
+description = "Parked research prototype, not reviewed and not used by BlackSilk: wrappers around third-party post-quantum signature crates (Dilithium2, Falcon512)"
 
 [dependencies]
 crystals-dilithium = "1.0"

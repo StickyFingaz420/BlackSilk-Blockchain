@@ -495,8 +495,7 @@ body    = type (1) ‖ payload
     and a block that breaks a rule stays invalid.
   - **Refused:** genesis (`InvalidInput`, nothing written; the node exits with status
     2), and a malformed id (status 2). A verdict already in force (invalidating an
-    invalidated block, reconsidering one that is not) writes nothing. A legacy
-    headerless regtest store keeps no markers.
+    invalidated block, reconsidering one that is not) writes nothing.
   - **Durability.** The record is appended with `sync_data` before the verdict takes
     effect. A crash while writing it loses only that record (a torn tail); a crash
     while writing a later record keeps it.
@@ -523,19 +522,21 @@ body    = type (1) ‖ payload
     before 2026-09-27, so every one belongs to a network from before the v3 reset) is
     refused on testnet and mainnet (F35-1): its network cannot be verified, and
     accepting it would append the v3 chain after an old network's orphaned blocks. The
-    error says to move `blocks.dat` aside and resync. On regtest it is still read and
-    appended to as it is (block records only, in its own `"BSB1"` layout, never
-    rewritten), with a warning. Format 1 (file header, untyped `"BSB1"` records; stores
-    of pre-freeze labnet runs) is refused on every network with the same advice, and so
-    is format 2 (the 100-byte header, or an intermediate output-root build whose stored
-    PoW hashes are of the header, not the mining blob).
+    error says to move `blocks.dat` aside and resync. Since 2026-10-05 regtest refuses it
+    too, with the same advice (before, regtest read it and appended to it in its own
+    `"BSB1"` layout; its blocks and stored proof-of-work hashes predate the 172-byte
+    header and the mining blob). Format 1 (file header, untyped `"BSB1"` records; stores
+    of pre-freeze labnet runs) and format 2 (the 100-byte header, or an intermediate
+    build whose stored proof-of-work hashes are of another input than the mining blob)
+    are refused on every network with the same advice.
   - Tested in `store.rs` (`a_new_store_is_bound_to_its_network`,
-    `a_legacy_headerless_store_is_refused_except_on_regtest`,
-    `damaged_torn_and_foreign_file_headers` (formats 1 and 2 and an unknown version),
-    `unknown_and_malformed_records`) and
-    `chain/tests/store_format.rs` (the chain manager refuses format 0 on testnet and
-    mainnet, format 1 everywhere, another network or genesis; regtest still reads format
-    0).
+    `a_legacy_headerless_store_is_refused_on_every_network`,
+    `damaged_torn_and_foreign_file_headers`, which also refuses format versions 1, 2
+    and an unknown one, `unknown_and_malformed_records`) and
+    `chain/tests/store_format.rs` (`a_legacy_headerless_store_is_refused_on_every_network`,
+    `a_format_1_store_is_refused_with_resync_advice`,
+    `a_store_of_another_network_or_genesis_is_refused`: the chain manager refuses format
+    0 and format 1 on every network, and another network or genesis).
 - **What is stored:** every block whose header was accepted and whose body passes the
   low-work policy below (main chain and side branches). The record is written and
   flushed (`fsync`) *before* the block is applied, so a crash cannot lose an applied
@@ -684,10 +685,10 @@ body    = type (1) ‖ payload
     compares the logged ids with the verdicts they gave. Tested:
     `store.rs::repair_keeps_the_operator_records_of_the_moved_region`,
     `chain/tests/rt_w3_regressions.rs::repair_keeps_operator_verdicts_written_after_the_damage`.
-    A missing store (fresh data directory) is "nothing to repair". Repair handles format
-    3 and headerless (format 0) stores only; it refuses a damaged file header or another
-    format version and changes nothing (the operator moves the store aside and
-    resyncs).
+    A missing store (fresh data directory) is "nothing to repair". Repair handles the
+    current format (3) only; it refuses a store without a file header (format 0), a
+    damaged file header or another format version and changes nothing (the operator
+    moves the store aside and resyncs).
 - **Known limitations** (acceptable for a controlled testnet; to be measured in the
   trial):
   - every block body and every block's undo data stays in memory (PX-F1, PX-F2);

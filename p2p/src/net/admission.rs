@@ -2,7 +2,7 @@
 //! admission and invalid-transaction scoring, fluff and stem receipt.
 
 use super::chain_access;
-use super::state::{short, Inner, State};
+use super::state::{Inner, State};
 use super::stem::{stem_keys, stem_or_fluff, unstem_key_images};
 use super::tx_requests::Actions;
 use crate::dandelion::{PeerId, Source};
@@ -161,7 +161,7 @@ async fn admit_tx(
     if conflict {
         log::debug!(
             "transaction {} conflicts with a pooled one; dropped",
-            short(&id)
+            inner.tx_log_id(&id)
         );
         return Admit::Done;
     }
@@ -181,7 +181,7 @@ async fn admit_tx(
     if let Some(reason) = over {
         log::debug!(
             "peer {peer}: transaction {} over its {reason}; dropped (not penalized)",
-            short(&id)
+            inner.tx_log_id(&id)
         );
         return Admit::Busy;
     }
@@ -206,7 +206,10 @@ async fn admit_tx(
     if matches!(cheap, Ok(false)) {
         // Refused like any contextual failure: not scored, not verified
         // again at this tip.
-        log::debug!("PX transaction {} expires soon; not relayed", short(&id));
+        log::debug!(
+            "PX transaction {} expires soon; not relayed",
+            inner.tx_log_id(&id)
+        );
         ctx_reject(&mut inner.state(), id, tip);
         return Admit::Done;
     }
@@ -219,7 +222,7 @@ async fn admit_tx(
                 &format!("invalid transaction: {e:?}"),
             );
         } else {
-            log::debug!("transaction {} not valid here: {e:?}", short(&id));
+            log::debug!("transaction {} not valid here: {e:?}", inner.tx_log_id(&id));
             ctx_reject(&mut inner.state(), id, tip);
         }
         return Admit::Done;
@@ -240,7 +243,7 @@ async fn admit_tx(
             // penalized; the id pauses node-wide (`TxTracker::pause`).
             log::debug!(
                 "PX transaction {} dropped: node-wide relay limit",
-                short(&id)
+                inner.tx_log_id(&id)
             );
             return Admit::BusyGlobal;
         }
@@ -427,7 +430,7 @@ fn on_invalid_tx(
             &format!("invalid transaction: {e:?}"),
         );
     } else {
-        log::debug!("transaction {} not valid here: {e:?}", short(&id));
+        log::debug!("transaction {} not valid here: {e:?}", inner.tx_log_id(&id));
         ctx_reject(&mut inner.state(), id, tip);
     }
 }
@@ -447,7 +450,7 @@ async fn verify_on_tx_lane<T: Send + 'static>(
             inner.state().tx_lane_drops += 1;
             log::debug!(
                 "transaction {} dropped: the chain's transaction lane is full",
-                short(&id)
+                inner.tx_log_id(&id)
             );
             None
         }

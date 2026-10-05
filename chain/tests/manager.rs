@@ -818,7 +818,7 @@ fn pow_jobs_reject_a_height_gap() {
     assert!(src.pow_jobs(&[blocks[2].header]).is_some());
 }
 
-/// The PoW cache is keyed by the RandomX key as well as the header bytes: a
+/// The PoW cache is keyed by the RandomX key as well as the mining blob: a
 /// hash computed under one seed is never returned for another.
 #[test]
 fn the_pow_cache_key_includes_the_seed() {
@@ -1619,8 +1619,8 @@ impl Recheck {
 }
 
 impl PowFunction for Recheck {
-    fn pow_hash(&self, _: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
-        let height = blob_height(header);
+    fn pow_hash(&self, _: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
+        let height = blob_height(blob);
         self.heights.lock().unwrap().push(height);
         if Some(height) == self.forged {
             [0xee; 32]
@@ -1755,13 +1755,13 @@ struct SeedPow {
 }
 
 impl PowFunction for SeedPow {
-    fn pow_hash(&self, seed: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
-        let height = blob_height(header);
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
+        let height = blob_height(blob);
         self.seen.lock().unwrap().push((height, *seed));
         let mut out = [0u8; 32];
         for (k, chunk) in out.chunks_mut(8).enumerate() {
             let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ k as u64;
-            for b in seed.iter().chain(header) {
+            for b in seed.iter().chain(blob) {
                 h ^= u64::from(*b);
                 h = h.wrapping_mul(0x0100_0000_01b3);
             }

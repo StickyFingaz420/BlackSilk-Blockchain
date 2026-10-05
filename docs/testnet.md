@@ -520,13 +520,12 @@ Use a separate data directory for each network. The default data directory is th
 for every testnet generation, so after a reset the node finds the old store there: a
 store of another network or genesis is refused ("wrong network data directory"), and so
 are stores written before the v3 store format, which are never migrated: a store
-without a file header ("format 0", written before 2026-09-27) on testnet or mainnet, and
-a "format version 1" or "format version 2" store on any network (format 2 was
-written before the 172-byte header and the mining-blob proof of work, or by an
-intermediate build; the node names it: `block store format version 2 (written before the
-172-byte header and the mining-blob proof of work, …)`). In each case the node starts only after
-`blocks.dat` is moved aside; it then resyncs from its peers. Regtest still reads a
-format 0 store as it is.
+without a file header ("format 0", written before 2026-09-27; regtest included since
+2026-10-05) and a "format version 1" or "format version 2" store, on every network
+(format 2 was written before the 172-byte header and the mining-blob proof of work, or
+by an intermediate build; the node names it: `block store format version 2 (written
+before the 172-byte header and the mining-blob proof of work, …)`). In each case the
+node starts only after `blocks.dat` is moved aside; it then resyncs from its peers.
 
 ## 5. Mining
 
