@@ -27,8 +27,9 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 
 **What it is not (yet):**
 - **Not post-quantum secure.** No part of the v1 transaction layer resists a quantum
-  adversary ([transactions.md §11.6](docs/transactions.md)). Post-quantum work is a
-  separate research track (`research/`).
+  adversary ([transactions.md §11.6](docs/transactions.md)). The tree holds no
+  post-quantum code: the earlier signature research crate was removed on 2026-10-05
+  and stays in the git history.
 - **No authenticated peers, no I2P.** P2P encryption hides message contents from
   passive observers, not message sizes and timing, and not from an active man in the
   middle ([p2p.md §1](docs/p2p.md)); a closed network can add a pre-shared key. Tor works through its SOCKS5
@@ -71,7 +72,6 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | `tools/supply-audit/` | closed-set supply check for a trial |
 | `tools/daa-sim/` | difficulty-rule simulation harness (evidence, not consensus) |
 | `fuzz/` | coverage-guided fuzz targets (separate workspace, nightly toolchain) |
-| `research/` | the post-quantum research track (outside the workspace) |
 | `third_party/` | four Plonky3 0.7.0 crates with local patches: lock scope (`p3-dft`, `p3-fri`, `p3-merkle-tree`) and prover determinism, PXDET-1 (`p3-batch-stark`), checked by the third-party gate `tools/tpgate` ([third_party/README.md](third_party/README.md)) |
 | `deploy/` | node configuration templates, systemd units, Docker image, install scripts |
 

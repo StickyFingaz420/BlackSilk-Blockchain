@@ -135,7 +135,7 @@ Errors found so far that do not depend on the toolchain:
 | S4 | C | `node/src/lib.rs:529-601` | There is **no balance check** (Σinputs = Σoutputs + fee via commitments), and inputs carry no amount or pseudo-output commitments. Unlimited coins can be created. |
 | S5 | C | `primitives/src/quantum_ring.rs` | The "post-quantum ring signature" is not a ring signature. `verify` ignores the message and requires every member's response to verify under that member's key, so no honest signer with decoys can pass. Key images are `Keccak(pk)`, which exposes each member's public key. `build()` panics (`responses[i] = …` on an empty `Vec`). No practical, audited lattice-based linkable ring signature is available off the shelf. |
 | S6 | H | `pqcrypto_native` | Wraps PQClean **C code via FFI** (`pqcrypto-dilithium`, `pqcrypto-falcon`), which conflicts with the pure-Rust requirement. `keypair_from_seed` ignores the seed, so deterministic wallet recovery is impossible. `verify()` is `unimplemented!()`. |
-| S7 | M | `pqsignatures` | Pure Rust, but uses `crystals-dilithium` (round-3 Dilithium, **not** FIPS 204 ML-DSA) and `falcon-rust` 0.1.x (young, unaudited). The only practical use today is the optional `quantum_signature`, which again signs `tx.extra`. |
+| S7 | M | `pqsignatures` | Pure Rust, but uses `crystals-dilithium` (round-3 Dilithium, **not** FIPS 204 ML-DSA) and `falcon-rust` 0.1.x (young, unaudited). The only practical use today is the optional `quantum_signature`, which again signs `tx.extra`. (Later parked in `research/`, then removed from the tree on 2026-10-05; see the finding status after R1–R6.) |
 | S8 | H | `ml-dsa-44/build.rs` | Compiles C sources with `cc` (not pure Rust; needs a C toolchain). |
 
 ### 2.4 Keys and privacy (details in Phase 3)
@@ -356,7 +356,7 @@ new crates.
 | Deleted | the old miner with its three private RandomX copies |
 | Deleted | stray files |
 | Parked in `legacy/` (outside the workspace; removed from the tree on 2026-10-04, see git history up to 57dd81a) | the old node, wallet, `primitives`, smart contracts, marketplace, GUI and web wallets, faucet, explorer, deploy files, and the old README and testnet docs, which advertised unverified features |
-| Moved to `research/` | `pqsignatures` (pure Rust) |
+| Moved to `research/` (removed from the tree on 2026-10-05 in 5038b1a; it stays in the git history) | `pqsignatures` (pure Rust) |
 | Workspace | now only the pure-Rust rebuilt crates; the moving `iced` git pins are gone |
 | Toolchain | switched to `stable-x86_64-pc-windows-msvc` |
 
@@ -1578,7 +1578,7 @@ costs.
 | S1–S4 (forgeable, unlinkable ring signatures; signatures over constants; no balance) | **Closed** | R3 (43 tx tests), R4 e2e |
 | S5 (fake PQ ring) | **Closed:** deleted, not advertised | spec §11.6, README |
 | S6, S8 (C/FFI PQ) | **Closed:** deleted | — |
-| S7 (unaudited PQ crates) | **Parked** in `research/`; not used by any shipped crate | — |
+| S7 (unaudited PQ crates) | **Closed by removal:** parked in `research/` (not built, not used by any shipped crate) until 2026-10-05, then removed from the tree (owner decision); it stays in the git history. A future post-quantum design would start from FIPS 204 ML-DSA | `5038b1a`; decisions log, "research/pqsignatures removed" |
 | K1, K2 (shared seed, no stealth/ring) | **Closed** | R3 key/stealth tests, R4 wallet |
 | K3 (Tor inbound rejection) | **Closed:** SOCKS5/Tor outbound, proxy-only mode, onion addresses; inbound through the operator's hidden service. I2P is not yet supported. | R5 |
 | D1–D3 (remote-exec `build.rs`, moving git pins, stray files) | **Closed** | R4 repository changes |
