@@ -1742,3 +1742,9 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   value changes.
 - The records' step-15 lines now carry these verdicts; "verdict open" and "re-review
   pending" are replaced where a verdict was given.
+
+## research/pqsignatures removed (owner decision, 2026-10-05)
+- **2026-10-05:** `research/pqsignatures` removed from the tree (owner decision), as `legacy/` was on 2026-10-04.
+  - Reasons: not built, not in any workspace, used pre-standard round-3 Dilithium (not FIPS 204) and young falcon crates, parts did not compile, parked since AUDIT.md finding S7.
+  - It stays in git history (removed in `5038b1a`); a future post-quantum design would start fresh from FIPS 204 ML-DSA.
+  - `research/` is gone with it: the root `Cargo.toml` `exclude`, `.dockerignore` and the doc-lint, unicode-scan, sys-crates and hazmat-policy gates no longer name it.
