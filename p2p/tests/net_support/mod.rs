@@ -251,7 +251,12 @@ impl TestNode {
             nonce,
             output_count,
             output_root,
-            px_root: t.px_root,
+            // B-PXR: the root after exactly this block's PX commitments (the
+            // template's `px_root` covers its pool selection, which `!with_pool`
+            // dropped), computed by the manager the validator shares.
+            px_root: c
+                .px_root_with(&txs)
+                .expect("the block's PX commitments fit the tree"),
         };
         let b = Block { header, txs };
         let now = b.header.timestamp;

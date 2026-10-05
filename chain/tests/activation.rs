@@ -126,7 +126,12 @@ impl Miner {
         m: &mut ChainManager,
         txs: Vec<Transaction>,
     ) -> Result<Hash, SubmitError> {
-        let t = m.template_on(&m.tip_id()).unwrap();
+        let mut t = m.template_on(&m.tip_id()).unwrap();
+        // B-PXR: the template's root covers a coinbase-only block; this one
+        // appends the commitments of `txs` to the tip's PX tree.
+        t.px_root = m
+            .px_root_with(&txs)
+            .expect("the block's PX commitments fit the tree");
         let b = self.build(&t, txs);
         let now = b.header.timestamp;
         m.submit_block(b, now).map(|s| s.id)
@@ -528,8 +533,16 @@ fn a_pooled_px_proof_vouches_for_nothing_under_other_rules() {
 
     // A side branch from T1's block, its first block (old rules) carrying T2,
     // grown heavier than the main chain.
-    let t = m.template_on(&fork).unwrap();
+    let mut t = m.template_on(&fork).unwrap();
     assert!(t.height < ACTIVATION);
+    // B-PXR runs before the proofs: the carrier commits to the honest root,
+    // so that only PX5 can refuse it. The main chain added no PX commitment
+    // after T1's block (`t.px_root` is that block's root), so the root after
+    // T2 on the connected tip is the root after T2 on `fork`.
+    assert_eq!(t.px_root, m.tip_header().px_root);
+    t.px_root = m
+        .px_root_with(std::slice::from_ref(&t2))
+        .expect("T2's commitments fit the tree");
     let carrier = miner.build(&t, vec![t2]);
     let carrier_id = carrier.id(params().network_id);
     let now = carrier.header.timestamp;
