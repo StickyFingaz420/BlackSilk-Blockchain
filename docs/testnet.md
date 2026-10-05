@@ -1018,12 +1018,12 @@ so within 18 blocks of its confirmation (about 36 minutes at 120 s).
 
 **Capacity:** the 8 MiB block PX budget holds 3 transfers (about 2.40 MB each on the
 frozen kernel) or 2 one-function or two-function vault calls (about 3.0 MB and
-3.63 MB), measured in docs/evidence/freeze-b2-b3-2026-10-04/ (freeze gate B3). The
-widest shape a deploy can register today is modelled at about 4.09–4.13 MB, above the
-3.8 MB budget (freeze gate B2: **FAIL**) but below the 4 MiB `MAX_PROOF_BYTES`
-cap in every sampled case; 2 such proofs fit in a block. The fix, a deploy-time proof-size bound (V12),
-is in progress, not done. Such a shape cannot be proven on today's hardware anyway
-(about 100 GB of prover memory, same evidence).
+3.63 MB), measured in docs/evidence/freeze-b2-b3-2026-10-04/ (freeze gate B3). Under
+the former deploy rule the widest registrable shape was modelled at about 4.09–4.13 MB,
+above the 3.8 MB budget (freeze gate B2 failed). The deploy-time row caps (V12,
+px-deploy-row-caps, merged in f2b7fbd) bring the widest shape to about 3.70 MB by model
+(3.78 MB worst over the query positions); 2 such proofs fit in a block. Its prover
+memory is modelled at 10.4–13.1 GB, not measured (docs/evidence/budget-cap-2026-10-04/).
 
 ## 11. Security notes for operators
 

@@ -4,8 +4,10 @@
 [phase-2 decisions](reviews/phase2-2026-09-27/decisions.md)). Other documents link here
 instead of stating status themselves; a status line anywhere else is historical.
 
-- **As of:** `rebuild/core` at `c13eef2` (2026-10-05) for §5, the rows added for the
-  work merged on 2026-10-04 and the rows touched by the pre-freeze cleanup; the rows
+- **As of:** `rebuild/core` at `059d730` (2026-10-05) for the BS-ZK-4,
+  px-deploy-row-caps and freeze-gate B2/B6 rows and the rows touched by the pre-freeze
+  cleanup (merges `c13eef2` to `b3380cf`); at `c13eef2` for the rest of §5 and the rows
+  added for the work merged on 2026-10-04; the rows
   touched by the freeze-commit reconciliation at `de9e2ca` (2026-10-04); the rest was
   reconciled row by row at `a144d94`
   against the code and the decisions after the second threat-model round (2026-10-02),

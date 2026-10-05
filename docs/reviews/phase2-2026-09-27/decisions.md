@@ -1747,6 +1747,18 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
 - The records' step-15 lines now carry these verdicts; "verdict open" and "re-review
   pending" are replaced where a verdict was given.
 
+## Old wallet files in published history (owner decision, 2026-10-04)
+
+- Four plaintext wallet files with BIP39 mnemonics and private spend and view keys were
+  committed early in the project's history (first added: `test_wallet/wallet.json` in
+  09a48dc, `wallet_data/wallet.json` in dd86ec3, `wallet/wallet_data/wallet.json` in
+  31e0768, `wallet_data/miner-wallet.json` in e45bbee). None is in the current tree.
+- **Decision:** git history is not rewritten and nothing is force-pushed. Every key and
+  phrase in those files is treated as permanently compromised: they belonged to
+  experimental wallets, never held funds, and must never be reused on any network.
+- The pre-freeze cleanup also removed `legacy/` from the tree (cd7b728); it stays in
+  history up to 57dd81a. The cleaned current tree is the source of truth.
+
 ## research/pqsignatures removed (owner decision, 2026-10-05)
 - **2026-10-05:** `research/pqsignatures` removed from the tree (owner decision), as `legacy/` was on 2026-10-04.
   - Reasons: not built, not in any workspace, used pre-standard round-3 Dilithium (not FIPS 204) and young falcon crates, parts did not compile, parked since AUDIT.md finding S7.
