@@ -378,3 +378,158 @@ fn kernel_budgets_grow_with_the_function_count() {
         }
     }
 }
+
+/// A function program that writes `words`, then runs `nops` no-ops and a
+/// spin loop of `spins` iterations, and halts with exit code 0.
+fn padded_writer(words: &[u32], spins: u32, nops: u32) -> std::sync::Arc<blacksilk_zkvm::Program> {
+    use blacksilk_zkvm::asm::{
+        reg::{T0, T1, ZERO},
+        Asm,
+    };
+    use blacksilk_zkvm::isa::Op;
+    let mut a = Asm::new(0x1_0000);
+    for &w in words {
+        a.li(T0, w).write_reg(T0);
+    }
+    for _ in 0..nops {
+        a.imm(Op::Addi, ZERO, ZERO, 0);
+    }
+    if spins > 0 {
+        a.li(T1, spins)
+            .label("spin")
+            .imm(Op::Addi, T1, T1, -1)
+            .branch(Op::Bne, T1, ZERO, "spin");
+    }
+    a.halt(0);
+    std::sync::Arc::new(a.finish().expect("assembles"))
+}
+
+/// A `padded_writer` of `words` that halts after exactly `cycles` cycles.
+fn writer_of_cycles(words: &[u32], cycles: usize) -> std::sync::Arc<blacksilk_zkvm::Program> {
+    let steps = |p: &blacksilk_zkvm::Program| run(p, &[], MAX_CYCLES).unwrap().steps.len();
+    // Each spin is two cycles (`li` of a large count can take two
+    // instructions): leave a margin of spins, then fill the rest with no-ops.
+    let base = steps(&padded_writer(words, 1, 0));
+    let spins = 1 + (cycles - base).saturating_sub(16) / 2;
+    let short = steps(&padded_writer(words, spins as u32, 0));
+    let p = padded_writer(words, spins as u32, (cycles - short) as u32);
+    assert_eq!(steps(&p), cycles);
+    p
+}
+
+/// The prover's early stop at the cycle cap (red team I2, record
+/// `px-deploy-row-caps`), at its boundary, without proving: every case is
+/// refused before any proving work.
+/// - Budget 2^15, a run of exactly 2^15 cycles: the run completes and its
+///   cycles fit (the check moves on to the next table, `keys`, which the
+///   budget leaves at 0).
+/// - Budget 2^15, a run of 2^15 + 1 cycles: completes (the stop is one cycle
+///   past the limit) and is refused as over budget in `cycles`, used 2^15 + 1.
+/// - Budget 2^15, a run longer than 2^15 + 1: stopped early, `OverBudget`
+///   with `used` = 2^15 + 1 (the limit plus one, a lower bound).
+/// - A zero budget, a run past 2^15 and a wrong prefix: the early stop comes
+///   first, so the error is `OverBudget` in `cycles`, not `FunctionMismatch`
+///   (for runs up to 2^15 cycles the prefix is still checked first:
+///   `a_functions_prefix_is_checked_before_its_budget`).
+#[test]
+fn the_function_run_stops_at_the_cycle_cap() {
+    use blacksilk_px::prove::{TransferError, FN_RUN_LOG_CYCLES};
+    use blacksilk_px::vault::{self, Terms};
+    use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION};
+    let cap = 1usize << FN_RUN_LOG_CYCLES;
+    let mut rng = ChaCha20Rng::seed_from_u64(7);
+    let c = CONTRACTS[0];
+    let secret = wallet::random_digest(&mut rng);
+    let terms = Terms::claim_only(&c, &secret);
+    let blind = wallet::random_digest(&mut rng);
+    let (_, fw) = vault::lock_call(&c, 500, &terms, 0, &blind, &Window::UNBOUNDED);
+    let mut w = wallet::witness(
+        Tree::new(&mut HostPerm::new()).root(),
+        500,
+        0,
+        [wallet::dummy_input(&mut rng), wallet::dummy_input(&mut rng)],
+        [
+            wallet::contract_output(&mut rng, c, 500, terms.data(&c)),
+            wallet::empty_output(&mut rng),
+        ],
+    );
+    w.n_fn = 1;
+    w.functions[0] = Some(fw);
+    let words = witness_words(&w);
+    let public = kernel::transfer(&mut HostPerm::new(), &mut SliceSource::new(&words)).unwrap();
+    let (contract, io_hash) = &public.functions[0];
+    let prefix = function_prefix(ABI_VERSION, io_hash, contract, &Window::UNBOUNDED);
+    let budget = |cycles| Budget {
+        cycles,
+        keys: 0,
+        add: 0,
+        bit: 0,
+        lt: 0,
+        shift: 0,
+        mul: 0,
+        poseidon: 0,
+    };
+    let attempt = |program, b: Budget, rng: &mut ChaCha20Rng| {
+        prove::prove(
+            &w,
+            &[(program, vec![], b)],
+            &Window::UNBOUNDED,
+            [3; 32],
+            rng,
+        )
+        .map(|_| ())
+    };
+    let cycles_over = |r: Result<(), TransferError>| match r {
+        Err(TransferError::OverBudget {
+            execution: 1,
+            table: "cycles",
+            used,
+            budget,
+        }) => Some((used, budget)),
+        _ => None,
+    };
+
+    // Exactly 2^15 cycles within a 2^15 budget: past the cycle check.
+    match attempt(writer_of_cycles(&prefix, cap), budget(cap), &mut rng) {
+        Err(TransferError::OverBudget {
+            execution: 1,
+            table: "keys",
+            ..
+        }) => {}
+        other => panic!("expected the keys table to be the first over budget, got {other:?}"),
+    }
+    // 2^15 + 1 cycles: the run completes and is over budget by one.
+    assert_eq!(
+        cycles_over(attempt(
+            writer_of_cycles(&prefix, cap + 1),
+            budget(cap),
+            &mut rng
+        )),
+        Some((cap + 1, cap))
+    );
+    // Longer: stopped at the limit plus one.
+    assert_eq!(
+        cycles_over(attempt(
+            writer_of_cycles(&prefix, cap + 100),
+            budget(cap),
+            &mut rng
+        )),
+        Some((cap + 1, cap))
+    );
+    // A zero budget, past the cap, with a wrong prefix: the early stop wins.
+    let mut wrong = prefix;
+    wrong[0] ^= 1;
+    assert_eq!(
+        cycles_over(attempt(
+            writer_of_cycles(&wrong, cap + 100),
+            budget(0),
+            &mut rng
+        )),
+        Some((cap + 1, 0))
+    );
+    // The same wrong prefix within the cap: the prefix is checked first.
+    assert!(matches!(
+        attempt(writer_of_cycles(&wrong, cap), budget(0), &mut rng),
+        Err(TransferError::FunctionMismatch(0))
+    ));
+}

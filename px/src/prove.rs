@@ -86,8 +86,9 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
 pub const PX_MAX_LOG_HEIGHT: usize = 16;
 
 /// log2 of the deploy cap on a registered function's cycles (record
-/// `px-deploy-row-caps`; `blacksilk-tx` params `PX_FN_LOG_CYCLES`, which a tx
-/// test requires to be equal): [`prove`] runs a function at most one cycle past
+/// `px-deploy-row-caps`; `blacksilk-tx` params `PX_FN_LOG_CYCLES`, which a
+/// compile-time `const` assertion in `tx/src/params.rs` requires to be equal):
+/// [`prove`] runs a function at most one cycle past
 /// `max(budget.cycles, 2^FN_RUN_LOG_CYCLES)`. Prover-side only.
 pub const FN_RUN_LOG_CYCLES: u32 = 15;
 
@@ -135,8 +136,9 @@ pub enum TransferError {
     /// execution before proving: the shared tables are padded to a power of
     /// two of the budgets' sum, so an over-budget execution could otherwise
     /// be proven or not depending on the other executions' budgets. For a
-    /// function's `cycles`, the run stops one cycle past the budget, so `used`
-    /// is then `budget + 1`, a lower bound.
+    /// function's `cycles`, a run that does not halt within
+    /// `max(budget, 2^FN_RUN_LOG_CYCLES)` cycles is stopped one cycle past
+    /// that limit, and `used` is then the limit plus one, a lower bound.
     OverBudget {
         execution: usize,
         table: &'static str,

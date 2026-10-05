@@ -48,7 +48,7 @@ Memory-widest two-function statement (every field at its cap):
 
 | Scheme | Million cells | Memory (L / M) |
 |---|---|---|
-| R7-5 (today) | 6,801.8 | about 961 GB / 1.6 TB |
+| R7-5 (before V12) | 6,801.8 | about 961 GB / 1.6 TB |
 | uniform 2^16 | 167.1 | 24.3 / 36.2 GB |
 | V12 (chosen) | 68.5 | 10.4 / 13.1 GB |
 | V10 | 52.5 | 8.2 / 9.3 GB |
