@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # `unsafe` inventory of the shipped dependency graph (W3-44, dossier 44 §2.4):
 # a reviewable report, not a gate. BlackSilk's own crates forbid unsafe code
-# (the `lint` CI job checks every crate root); "pure Rust" means no foreign
-# code, and std-level dependencies (tokio, getrandom, the SIMD backends) do
+# (the `lint` CI job checks every crate root of the root workspace; the zkVM
+# guests, a separate workspace, use none but are not yet marked); "pure Rust"
+# means no foreign code, and std-level dependencies (tokio, getrandom, the SIMD backends) do
 # contain `unsafe`. This lists every crates.io crate in the release graph with
 # the number of source lines that use the keyword, so a new crate or a jump
 # in a count is visible in review.
@@ -109,9 +110,13 @@ is correct. None of these crates has been reviewed line by line by the
 project; docs/reviews/dependency-review.md records what was read.
 
 **BlackSilk's own crates** declare \`#![forbid(unsafe_code)]\` at every crate
-root (CI job \`lint\`); the only \`unsafe\` in the repository outside
-\`third_party/\` is the zkVM guest SDK's \`ecall\`, which runs inside the VM,
-not in a shipped binary. \`third_party/\` holds four patched Plonky3 crates
+root of the root workspace (CI job \`lint\`); the only \`unsafe\` in the
+repository outside \`third_party/\` is the zkVM guest SDK's \`ecall\`, which runs
+inside the VM, not in a shipped binary. The guest programs (\`zkvm/guests/\`)
+are a separate workspace: they use no \`unsafe\` but are not yet marked
+\`#![forbid(unsafe_code)]\` (deferred: their pinned binaries must stay
+byte-identical, so adding it needs a guest rebuild).
+\`third_party/\` holds four patched Plonky3 crates
 that keep upstream's \`unsafe\` unchanged; they are path crates and so not
 listed below (their registry originals \`p3-batch-stark\`, \`p3-dft\`, \`p3-fri\`,
 \`p3-merkle-tree\` 0.7.0 are the reviewed baseline, third_party/README.md).
