@@ -3893,8 +3893,9 @@ Revision: ZK:BS-ZK-4-query-grinding-20
 
 Owner: BS-ZK-4 (zk, px, node). Decision: "BS-ZK-4" (Lead, 2026-10-04, approved by the
 owner), after "RES-FREEZE dossier, first pass" item 5, "Mixed-height soundness term" and
-"RT-FREEZE-V". Research: `C:/bszkeval/fri-margin/NOTES.md` (local study, summarized in
-item 3; not in the repository). Internal engineering work, not an audit.
+"RT-FREEZE-V". Research: docs/evidence/fri-margin-2026-10-04/README.md (the option
+table, size estimates and the literature check; summarized in item 3). Internal
+engineering work, not an audit.
 
 1. **Problem.** With the mixed-height union term (Follow-up (mixed-height term) of
    "Soundness figures"), BS-ZK-3's unique-decoding figure is ≥ 100.54 bits over the
@@ -3910,7 +3911,8 @@ item 3; not in the repository). Internal engineering work, not an audit.
    same way; Plonky3's `p3-security` adds `query_pow_bits` to the query term. Options
    measured by the study (total bits; with the H = 32 term of the time):
    - 108 queries, 16 bits (BS-ZK-3): 105.58; 100.58 with the term.
-   - **108 queries, 20 bits (chosen): 109.58; 104.58 with the term.** No proof-byte cost.
+   - **108 queries, 20 bits (chosen): 109.58; 104.58 with the term.** No expected-size
+     cost (item 7).
    - 112 queries, 16 bits: 108.90; 103.90. About +3.4 % proof bytes, and 112 is the
      ceiling of eq. 17 at `MIN_LOG_HEIGHT` 8 (2·(q + 16) ≤ 256); the widest PX proof
      (3.63 MB measured for W28-3, unmeasured for the widest shape, freeze gate B2) would
@@ -3941,8 +3943,14 @@ item 3; not in the repository). Internal engineering work, not an audit.
    published on a network.
 7. **Compatibility.** BS-ZK-3 proofs do not verify under BS-ZK-4 (another `PARAMS_ID`
    in the transcript, and a 16-bit witness fails the 20-bit check with probability
-   15/16) and vice versa. Records, nullifiers, the tree and the proof encoding are
-   unchanged; proof sizes are unchanged.
+   15/16) and vice versa. Records, nullifiers, the tree and the proof format are
+   unchanged, and so is the expected proof size. *Corrected (red team, 2026-10-05):*
+   this item first said "proof sizes are unchanged" (and item 3 "no proof-byte cost",
+   the commit message "no proof-byte change"), which is literally false: every
+   proof's bytes change (another transcript, another witness), and individual
+   lengths vary with the query positions (the regenerated golden fixture is 4,704
+   bytes shorter). The claim is no proof-format or expected-size change, and no
+   verifier code change.
 8. **Reorg, wallet, mining, P2P.** Wallets prove with the new set (same binary). The
    prover's grinding grows from about 2^16 to about 2^20 Poseidon2 permutations per
    proof: about 1.3 s mean, 0.95 s median, up to 5.2 s (item 11), small against proving times
@@ -4003,7 +4011,32 @@ item 3; not in the repository). Internal engineering work, not an audit.
     analogue), §11.3 (grinding time, the 2^20 smallest-nonce cost), §12, §12.1;
     docs/proof-system.md §2; docs/px.md §9.1; `zk/src/config.rs` (grinding doc);
     decisions "BS-ZK-4"; res-freeze.md §8.5 annotated; STATUS.md.
-15. **Review status.** Implemented and tested by BS-ZK-4; red-team review pending.
+15. **Review status.** Implemented and tested by BS-ZK-4. Red team (internal, not an
+    audit, 2026-10-05): **MERGE WITH FIXES**, nothing blocking. Follow-up below.
+
+### Follow-up (red team on ee0e96f)
+
+Not a rule change: documentation, a test and an evidence summary; no pin moves.
+- **L1:** README.md (two lines), zk-security-review.md and assumptions.md Z7 named
+  BS-ZK-3 as the current set; now BS-ZK-4.
+- **L2:** "no proof-byte change" / "proof sizes are unchanged" were literally false;
+  corrected in item 7 (see there), docs/zk.md §9.3, decisions "BS-ZK-4" and STATUS:
+  no proof-format or expected-size change, no verifier code change; every proof's
+  bytes differ and individual lengths vary with the query positions.
+- **L3:** docs/proof-system.md §2 lists `QUERY_POW_BITS ≤ 20` as compile-time relation
+  R7 (R6 was taken).
+- **L4:** docs/zk.md §9.3: Zhang et al. is "a close peer-reviewed analogue", not "the
+  closest analysis".
+- **L6:** the research is summarized in the repository:
+  docs/evidence/fri-margin-2026-10-04/README.md, cited in the header above.
+- **Test gap:** `zk/tests/grinding.rs::a_witness_valid_at_16_bits_but_not_20_is_refused`:
+  over 36 transcript states, the smallest 16-bit witness that is not also a 20-bit one
+  is refused by `check_witness(QUERY_POW_BITS)`, the check the verifier runs (the
+  `FriParameters` of `zk::config` are built from `params::QUERY_POW_BITS` for prover
+  and verifier alike). A full-`verify` variant needs the challenger state at the
+  grinding step, which no API exposes without a new test hook; the existing
+  `upstream_advisories.rs` test that a changed `query_pow_witness` fails `verify`
+  covers the full path for one tampering.
 
 ---
 

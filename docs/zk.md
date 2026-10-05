@@ -606,7 +606,7 @@ owner): a STARK on Plonky3 0.7.**
     BVM-1 statement, `DecodeLimits::ENVELOPE`; 23 for PX, `PROOF_LIMITS`) and at most
     the 15 committed heights of the envelope; the calculator charges H = 33 (5.04 bits,
     against 3.9 for H = 15). It is a heuristic stand-in for a missing theorem, not a
-    proof (§12.1). The closest peer-reviewed analysis is Zhang et al., USENIX Security
+    proof (§12.1). A close peer-reviewed analogue is Zhang et al., USENIX Security
     2024, Protocol 1 and Theorem 3.1 ("rolling batch FRI": arity 2, unique decoding),
     whose query term has no factor in the number of rolled-in polynomials; it does
     not cover Plonky3's exact construction (arity up to 16, skipped heights,
@@ -640,8 +640,10 @@ owner): a STARK on Plonky3 0.7.**
   the figures below hold for it.
 - **Current set: BS-ZK-4** (testnet v3; the normative proof format and verifier
   rules are in docs/proof-system.md): BS-ZK-3 with 20 query grinding bits instead of
-  16 (decisions "BS-ZK-4"; docs/reviews/v3-consensus-changes.md, "bs-zk-4"). No proof
-  byte, no verifier step and no other constant changes; eq. 16 and 17 below depend on
+  16 (decisions "BS-ZK-4"; docs/reviews/v3-consensus-changes.md, "bs-zk-4"). No change
+  to the proof format or its expected size (individual lengths vary with the query
+  positions, and every proof's bytes differ), no verifier code change and no other
+  constant change; eq. 16 and 17 below depend on
   the query count only and are unaffected. Minimum table height 2^8, so that the
   witness-randomization bound of ePrint 2024/1037 §4.2, eq. 17, holds with **both**
   opening points counted, as Plonky3 0.8's hiding budget counts them:

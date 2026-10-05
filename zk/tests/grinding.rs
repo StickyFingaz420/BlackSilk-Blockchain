@@ -371,3 +371,34 @@ fn grinding_time_at_the_parameter_sets_bits() {
         1u64 << bits
     );
 }
+
+/// BS-ZK-4: a query proof-of-work witness that meets 16 bits (BS-ZK-3's
+/// grinding) but not 20 is refused by the verifier's check at the parameter
+/// set's `QUERY_POW_BITS`. For each transcript state the smallest 16-bit
+/// witness is taken; with probability 15/16 it fails the 20-bit check, and
+/// every such witness must be refused. The verifier uses exactly this check
+/// (`DuplexChallenger::check_witness` with the `FriParameters` built from
+/// `params::QUERY_POW_BITS` in `zk::config`, shared by prover and verifier).
+#[test]
+fn a_witness_valid_at_16_bits_but_not_20_is_refused() {
+    use blacksilk_zk::params::QUERY_POW_BITS;
+    assert_eq!(QUERY_POW_BITS, 20);
+    let mut refused = 0;
+    for c in states() {
+        let w16 = smallest_pow_witness(&c, 16);
+        assert!(c.clone().check_witness(16, w16));
+        let w20 = smallest_pow_witness(&c, QUERY_POW_BITS);
+        if w16 == w20 {
+            // This 16-bit witness happens to meet 20 bits too (probability 1/16).
+            continue;
+        }
+        // Smaller than the smallest 20-bit witness, so it cannot meet 20 bits.
+        assert!(w16.as_canonical_u64() < w20.as_canonical_u64());
+        assert!(
+            !c.clone().check_witness(QUERY_POW_BITS, w16),
+            "a 16-bit witness passed the 20-bit check"
+        );
+        refused += 1;
+    }
+    assert!(refused >= 20, "{refused} of {} states", states().len());
+}

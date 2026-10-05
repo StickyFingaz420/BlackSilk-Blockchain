@@ -1751,8 +1751,10 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   docs/reviews/v3-consensus-changes.md#bs-zk-4.
 - **Why:** with the mixed-height union term (H = 33), BS-ZK-3 sat about 0.5 bits above
   the 100-bit floor. The floor counts total bits, grinding included, and docs/zk.md
-  §9.3 caps grinding at 20 bits. BS-ZK-4 gives 109.58 bits, 104.54 with the term, at no
-  proof-byte cost and with no verifier change. 112 queries (the eq. 17 ceiling at
+  §9.3 caps grinding at 20 bits. BS-ZK-4 gives 109.58 bits, 104.54 with the term, with
+  no change to the proof format or its expected size and no verifier code change
+  (every proof's bytes differ, and individual lengths vary with the query positions:
+  the regenerated golden fixture is 4,704 bytes shorter). 112 queries (the eq. 17 ceiling at
   `MIN_LOG_HEIGHT` 8) would cost about 3.4 % proof bytes and leave about 1.2 % to the
   3.8 MB bound for the widest proof, which is still unmeasured (gate B2).
 - **The term stays.** res-freeze.md §8.5's "absence" is narrowed: a close peer-reviewed

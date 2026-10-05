@@ -39,7 +39,7 @@ reviews: `privacy-review.md`, `dependency-review.md`, `aggregation-study.md`.
 | A7 | Delivery: IND-CCA of the hybrid KEM (Ristretto ECDH and ML-KEM-768) and of ChaCha20-Poly1305 | Standard assumptions; RustCrypto `ml-kem` 0.3.2 | Wallet-side only |
 
 **Corrections (2026-09-28, historical rows kept):** A1's figures are superseded by the
-adopted headline (zk.md §9.3; the current set is BS-ZK-3). A2 does not hold for the
+adopted headline (zk.md §9.3; the current set is BS-ZK-4). A2 does not hold for the
 Merkle tree nodes: `node(l, r) = P(l ‖ r)[0..8]` alone has trivial collisions (an
 invertible public permutation, R2-C6). The PX commitment tree relies instead on the
 extractability argument of ePrint 2026/089 Theorem 3 (about 122.6 bits by our
