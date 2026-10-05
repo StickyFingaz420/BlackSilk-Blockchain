@@ -540,6 +540,15 @@ private. Tests (`px/tests/unified.rs`):
 
 Measured on this machine, idle, one proof at a time.
 
+**Proving class (testnet v3, px-deploy-row-caps).** The deploy caps (§11.3, "Deploy")
+bound every statement: the widest PX proof is about 3.70 MB (3.78 MB worst over the
+query positions) and a call of any two registered functions is modelled at
+10.4–13.1 GB of prover memory, so the proving class for arbitrary contracts is a
+**16 GB** device. **8 GB** devices can prove transfers, single calls and the vault pair
+(6.45 GB measured for the vault pair). The 16 GB figure is a model fitted to measured
+peaks, not a measurement of the memory-widest pair (reviews/v3-consensus-changes.md,
+`px-deploy-row-caps`, items 8 and 12).
+
 **Verification cost** was 1.3–1.5 s, 76% of it spent recommitting the public tables
 on every verification. They are now periodic columns the verifier evaluates itself
 (zkvm.md §6.1): 188 ms.
@@ -706,7 +715,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 | PX6 (window) | The block's height is inside the transaction's validity window: `not_before ≤ h` and (`not_after = 0` or `h ≤ not_after`) (`PxWindow`, contextual and never penalized; testnet v3). An inverted window is a stateless structure error (`PxWindowInverted`). Checked for every PX transaction of a block, including those whose proof the node verified before (the verified-proof cache vouches only for the proof). The mempool admits for the next height, revalidates at every new height (`revalidate_after_extension` takes it) and templates select by it |
 | B8 (capacity) | The block's PX output commitments, one tree leaf each, fit in the `2^32 − size` leaves left (`BlockError::PxTreeFull`); for a mempool transaction, contextual `TxError::PxTreeFull`. Checked with the byte budgets, before any cryptography. Templates never exceed it |
 | PX5 | The proof verifies with the registered programs and budgets. Checked in three steps, in blocks and on every single-transaction path alike (transactions.md §8.3, §8.5): strict decoding with the stateless rules, the statement's table shape once PX3 holds and before any ring is resolved, and the verification last (the most expensive check). A malformed proof therefore costs no CLSAG (dossier 10 F10-2, red team RTW1-2) |
-| Deploy | Every budget is provable: `cycles ≤ MAX_CYCLES` (2^21), `keys ≤ 2^22`, and each ALU and Poseidon2 field plus the kernel's `kernel_budget(1)` share ≤ 2^22 (stateless, `PxBudgetTooLarge`; R7-5). Every ABI is `ABI_VERSION` (stateless, `PxUnsupportedAbi`; F-28-1). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
+| Deploy | Every budget is within the deploy-time row caps (testnet v3, reviews/v3-consensus-changes.md#px-deploy-row-caps; replaces R7-5): `cycles ≤ 2^15`, `keys ≤ 2^14`, and for each shared field, with `K = kernel_budget(MAX_FN)`, `K.x + MAX_FN·b.x ≤ 2^H` with H = add 16, lt 16, bit 14, shift 14, mul 14, Poseidon2 11 (stateless, `PxBudgetTooLarge`). Every loaded program has a program table and a padded image of at most 2^14 rows (stateless, `PxProgramTooLarge`). So any `MAX_FN` registered functions fit together with the kernel, every PX table is at most 2^16 rows (PX5's shape check refuses a taller one), and the widest PX proof is about 3.70 MB (3.78 MB worst over the query positions, by model). Every ABI is `ABI_VERSION` (stateless, `PxUnsupportedAbi`; F-28-1). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
 | Block | Coinbase = reward + all fees; block weight ≤ limit, where the v1 part of a PX or deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` (transactions.md B6; R12-2); PX and deploy bytes ≤ 8 MiB |
 
 **Chain state.** The state (`MemoryChain`) keeps the PX state, the registry and a

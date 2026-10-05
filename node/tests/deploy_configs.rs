@@ -246,24 +246,28 @@ fn consensus_fingerprints_are_pinned() {
 /// output-root (all three: the 172-byte header moves every genesis id; the
 /// rules gain the output-range and mining-hash tags, the mining-blob
 /// constants, their samples and the revision
-/// OMR:header-output-mmr-px-root-and-mining-blob, after RX-SALT's).
+/// OMR:header-output-mmr-px-root-and-mining-blob, after RX-SALT's); re-pinned
+/// once by bs-zk-4 and px-deploy-row-caps together (rules and consensus: the
+/// parameter set BS-ZK-4, the regenerated golden PX fixture, the deploy caps
+/// and their verdict sample, `PX_MAX_LOG_HEIGHT`, and the revisions
+/// ZK:BS-ZK-4-query-grinding-20 and B2:px-deploy-row-caps; identity unchanged).
 const TESTNET: [&str; 3] = [
-    "e1f86036450fdbe95ae9682b5ad6a566bd8cd53aa4795a58fa503435b52ea3d0",
-    "41eb61ba3c5c4b4fc1e51f096ba9eb348edf44ac0010c8a716437873560373f8",
+    "f6d04adf7e19dc04820f665f8e3d948907af57ccb12eb625747642178251f9e8",
+    "68aff77abdebf4daa143f94e412ba03f5b4227b1d8823ce215c872341dad0253",
     "3ad61ec9d375629ebcc56fa9231bb2d946a50c26c913d471495a7c10b3f62603",
 ];
 /// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
-/// output-root).
+/// output-root; bs-zk-4 with px-deploy-row-caps).
 const REGTEST: [&str; 3] = [
-    "35ba46ef41b7501d0c8cd925db1ba419e4c1e56b260701c1517488c6de86c1a8",
-    "c88c3f9a4ef4dd722c35c39c5708cae67b26128665a25e60653d9c8b70efb5d3",
+    "a8669525661569ca5345ed0b6af610712d85e7c84802c01e40c563c4c95d7238",
+    "a5fe79371067581727d6d5682c17f1d4ff4813fea1cbe50f550a4af2908b7aae",
     "93d0d09dc0dee8070e8d0cfde0d10db3484c31bf65301eab09056f34aa72a79b",
 ];
 /// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
-/// output-root). The mainnet parameters are provisional; mainnet is not
-/// launched.
+/// output-root; bs-zk-4 with px-deploy-row-caps). The mainnet parameters are
+/// provisional; mainnet is not launched.
 const MAINNET: [&str; 3] = [
-    "51f1d22f147ffe0657d2688818a6302c698e781bdb6380c23ef725df337f80ba",
-    "3b6833cb44dd4be607f38ad84c7325c9048a07008d1af4baf93bcca99511fa6f",
+    "282d81ec26b90b9b7e5f5e55b49d92414833c04166acec7b95ac9d58508d34a6",
+    "bebfe3a7d12d57247080b25ad922794db3d90806cb3f95675eadb9aa5c875e1c",
     "4e8f80d69dccb7dc9ace4acc870f3f3dd7fa0b047e05dac91a12d298716798d8",
 ];

@@ -290,6 +290,12 @@ pub fn px_entries() -> Manifest {
             .map(|v| v as u64),
         );
     }
+    // The tallest PX table (px-deploy-row-caps): `check_shape_bits` refuses
+    // a statement with a taller one.
+    m.size(
+        "px.prove.PX_MAX_LOG_HEIGHT",
+        crate::prove::PX_MAX_LOG_HEIGHT,
+    );
     // The vault's domains, entry points, output words and registered row
     // budget (px/src/vault.rs). The vault program is compiled with all of
     // them, so its id above changes with any of them too.

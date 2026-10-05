@@ -740,6 +740,7 @@ fn every_error_variant_is_classified() {
         PxCiphertextRIdentity { ciphertext: 1 },
         PxDuplicateProgram { program: 1 },
         PxBudgetTooLarge { program: 0 },
+        PxProgramTooLarge { program: 0 },
         DeployFeeNotExact {
             fee: 0,
             required: 1,
@@ -765,8 +766,8 @@ fn every_error_variant_is_classified() {
         assert!(!e.is_stateless(), "{e:?}");
     }
     // `is_stateless` is an exhaustive match, so a new variant cannot compile
-    // unclassified; these lists cover all 39 variants.
-    assert_eq!(stateless.len() + contextual.len(), 39);
+    // unclassified; these lists cover all 40 variants.
+    assert_eq!(stateless.len() + contextual.len(), 40);
 }
 
 // ------------------------------------------------------------------ differential validity

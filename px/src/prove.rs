@@ -79,6 +79,12 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
     }
 }
 
+/// The tallest table of any PX statement, log2 (record `px-deploy-row-caps`):
+/// the byte table's height, which the deploy-time caps (`blacksilk-tx`
+/// params `PX_FN_LOG_*`, `PX_LOG_*`) keep every other table within.
+/// `check_shape_bits` refuses a statement with a taller table.
+pub const PX_MAX_LOG_HEIGHT: usize = 16;
+
 /// The proof decoder's limits for PX statements (RT-FUZZ-1,
 /// `blacksilk_zk::bounds`): the envelope's, with the table count of the
 /// widest PX statement, the kernel and `MAX_FN` functions
@@ -387,6 +393,12 @@ pub fn check_shape_bits(
     let st = statement(public, calls, &budgets, window, h_tx).ok_or(VerifyError::Shape)?;
     // Every execution has a budget here, so the statement has a fixed shape.
     let shape = st.shape().ok_or(VerifyError::Shape)?;
+    // Defence in depth (record `px-deploy-row-caps`): the deploy-time caps
+    // keep every table of every PX statement at or below 2^PX_MAX_LOG_HEIGHT
+    // rows, so this never refuses a statement of registered functions.
+    if shape.iter().any(|&h| h > 1 << PX_MAX_LOG_HEIGHT) {
+        return Err(VerifyError::Shape);
+    }
     // `degree_bits` is log2(height) + 1 under zero knowledge (as in
     // `blacksilk_zkvm::prove::verify`).
     let ok = degree_bits.len() == shape.len()

@@ -39,6 +39,7 @@ they are never renamed. Index:
 - rx-salt (randomx; RX-SALT)
 - output-root (consensus header, tx, px, chain, rpc, miner, node, wallet; OMR)
 - bs-zk-4 (zk parameter set: 20 query grinding bits; px fingerprint, golden PX fixture; BS-ZK-4)
+- px-deploy-row-caps (tx deploy rule, px shape check, node samples; B2-CAPS)
 
 New sections are appended at the end.
 
@@ -3985,7 +3986,8 @@ item 3; not in the repository). Internal engineering work, not an audit.
     - The PX-proving suites (tx `px_consensus`, `fuzz_decode`; px `proof`, `unified`;
       chain `restart_rebuilds_the_px_state_exactly`; wallet e2e PX; p2p PX) are run one
       at a time, `--test-threads=1`, at 9 GB free or more, on the branch tip before
-      merge; their results are in the merge message.
+      merge. *Done (2026-10-05), with px-deploy-row-caps on the same tip:* all passed
+      (record `px-deploy-row-caps`, item 11, which also has the final re-pin).
 12. **Open review points.** (i) Grinding is computational: against an adversary with
     cheap Poseidon2 hardware the 20 bits are worth less than statistical bits; only
     84.5 bits (89.58 − 5.04) are statistical with the term. (ii) The 20-bit cap of
@@ -4002,3 +4004,147 @@ item 3; not in the repository). Internal engineering work, not an audit.
     docs/proof-system.md §2; docs/px.md §9.1; `zk/src/config.rs` (grinding doc);
     decisions "BS-ZK-4"; res-freeze.md §8.5 annotated; STATUS.md.
 15. **Review status.** Implemented and tested by BS-ZK-4; red-team review pending.
+
+---
+
+<a id="px-deploy-row-caps"></a>
+
+## px-deploy-row-caps: deploy-time row caps on registered functions (freeze gate B2)
+
+Revision: B2:px-deploy-row-caps
+
+Owner: B2-CAPS (tx, px, node). Decision: "px-deploy-row-caps (V12)" (Lead, 2026-10-04),
+after freeze gate B2 failed. Evidence: commit `914b74f` (branch b23,
+`docs/evidence/freeze-b2-b3-2026-10-04`, not yet merged here) and the local research
+notes `C:/bszkeval/budget-cap/{notes.md,schemes.txt,model.py}` (summarized below; not in
+the repository). Internal engineering work, not an audit.
+
+1. **Problem.** The R7-5 deploy rule (`budget_is_provable`) only required that each
+   function be provable alone with the kernel: cycles ≤ 2^21, keys ≤ 2^22, and each
+   shared table ≤ 2^22 with `kernel_budget(1)`. Under it:
+   - the widest registrable two-function PX proof is about **4.09 MB** (vault programs)
+     to **4.13 MB** (any programs) expected, 4.20–4.24 MB worst over the query
+     positions: above the 3.8 MB bound of decision "Agent 22" and close to
+     `MAX_PROOF_BYTES` (4 MiB);
+   - its prover would need about **1 TB** of memory (6.8 G weighted cells), and two
+     functions each provable alone could exceed a shared table together, so some
+     registered pairs could never be proven at all.
+2. **Demonstrated failure.** `914b74f` (B2): `px/examples/freeze_b2_b3.rs` models proof
+   size by surgery on real proofs (exact on all 34 two-function proofs) and searches
+   every reachable height set: widest 4,094,185 B (vault programs) and 4,125,167 B (any
+   programs) expected. The `dense18` measurement was stopped at 11.2 GB of prover
+   memory.
+3. **Prior art.** Fixed per-program resource budgets declared at registration, as in
+   this project's own R7-5 and in the gas or cycle limits of other systems; the change
+   only lowers the caps so that every combination is provable within a stated envelope.
+4. **Alternatives** (research notes §2–§4; sizes by the B2 model, memory by fits to
+   measured peaks):
+
+   | Scheme | Widest proof, expected / worst | Memory, widest pair | Headroom for contracts |
+   |---|---|---|---|
+   | today (R7-5) | 4.13 / 4.24 MB | about 1 TB | — |
+   | uniform 2^16 on every table | 3.70 / 3.78 MB | 24–36 GB | wide |
+   | **V12 (chosen)** | **3.70 / 3.78 MB** | **10.4 GB (13.1 GB pessimistic)** | the vault ×4.7 to ×35 per field |
+   | V10 | 3.70 / 3.78 MB | 8.2–9.3 GB | less |
+   | V8 (the vault-pair heights) | 3.67 / 3.74 MB | 6.45 GB (the measured point) | almost none: Poseidon2 ≤ 52, cycles ≤ 8,192, ≤ 4,096 instructions |
+
+   A uniform cap cannot meet 8–16 GB (the Poseidon2 table alone at 2^16 is about
+   5.6 GB), so the rule needs per-field caps. V8 would fit 8 GB provers but leaves
+   almost no room for any contract beyond the vault, so it is rejected. V12 targets a
+   16 GB proving class.
+5. **Change.** `tx::px::budget_is_provable` is replaced (stateless, deploy-time), with
+   `K = kernel_budget(MAX_FN)` and checked arithmetic:
+   - the function's own tables: `cycles ≤ 2^15`, `keys ≤ 2^14`;
+   - the shared tables: `K.x + MAX_FN·b.x ≤ 2^H[x]`, with `H` = add 16, lt 16, bit 14,
+     shift 14, mul 14, Poseidon2 11;
+   - new `tx::px::program_is_provable`, checked on every loaded program:
+     `program::height(p) ≤ 2^14` and the padded image length ≤ 2^14. The image holds
+     every code word plus 32 registers, so it binds first: at most 2^14 − 32
+     instructions for a program without data. Refusal: the new stateless error
+     `PxProgramTooLarge { program }`; budgets keep `PxBudgetTooLarge { program }`.
+   - Per-function maxima: add 20,168; lt 22,493; bit 7,192; shift 7,367; mul 7,367;
+     Poseidon2 948; keys 16,384; cycles 32,768.
+   - Defence in depth: `px::prove::check_shape_bits` refuses a statement with a table
+     above `PX_MAX_LOG_HEIGHT` = 16 (`VerifyError::Shape`). Given the caps it never
+     triggers for registered functions.
+
+   Constants: `tx/src/params.rs` (`PX_FN_LOG_*`, `PX_LOG_*`, with a `const` assertion
+   that each is at most 16) and `px/src/prove.rs` (`PX_MAX_LOG_HEIGHT`).
+6. **Activation.** v3 genesis base rule (the reset). No deploy exists yet on any v3
+   network.
+7. **Compatibility.** The vault, the only shipped contract, fits with room on every
+   field. A deploy valid under R7-5 but above a cap is now invalid; none exists. Proofs,
+   their encoding and the verifier's checks are unchanged except the new height check,
+   which no statement of registered functions reaches.
+8. **Reorg, wallet, mining, P2P.**
+   - Proving class: any pair of registered functions is provable in about 10.4 GB
+     (13.1 GB pessimistic) by the memory model, so a **16 GB** proving device. **8 GB
+     devices** can prove transfers, single calls and the vault pair (6.45 GB measured);
+     they are not promised every two-function call. This is a modelled bound, not a
+     measurement: the memory-widest V12 pair has not been proven (a CI measurement is
+     arranged separately).
+   - The widest PX proof becomes 3.70 MB expected and 3.78 MB worst over the query
+     positions: under 3.8 MB, and about 413 KB below `MAX_PROOF_BYTES`. The verifier's
+     largest LDE height stays 2^20.
+   - Wallets building deploys run the same structure check. No mining or P2P change;
+     relay refuses an over-cap deploy as stateless.
+9. **Vectors.** The per-function maxima above, pinned by
+   `tx/tests/deploy_rules.rs::the_largest_allowed_budget_is_the_v12_table`. The node
+   manifest lists the caps (`tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE`,
+   `tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON`) and a deploy verdict sample "bit budget
+   above its cap" (`PxBudgetTooLarge`); the PX manifest lists
+   `px.prove.PX_MAX_LOG_HEIGHT`.
+10. **Tests.**
+    - `tx/tests/deploy_rules.rs`: `largest_allowed()` computed from the caps and the
+      kernel budget; every field at its cap accepted; cap + 1, `usize::MAX` and an
+      overflowing `MAX_FN·x` refused; Poseidon2 948 accepted, 949 refused; the vault
+      accepted; synthetic RV32I programs of 2^14 − 32 instructions (accepted), 2^14 − 31
+      (image 2^14 + 1) and 2^14 + 1 (program table 2^15), both refused with
+      `PxProgramTooLarge`; a property test over 2,000 random pairs of allowed budgets
+      (half the fields at their caps) with programs at the caps: every table of
+      `Statement::shape` is at most 2^16 rows and within its cap. No proving.
+    - `tx/tests/validation_order.rs`: the new variant is stateless (40 variants).
+    - `px/tests/proof_limits.rs::the_shape_check_refuses_a_table_above_the_px_height`.
+    - `node/src/fingerprint.rs`: the new verdict sample's class.
+    - fuzz `px_admission`: `PxProgramTooLarge` is "deploy structure".
+11. **Suite results** (2026-10-05, release, `--locked`, 4-core i7-6700, 16 GB,
+    Windows 10; other agents' builds were running on the machine):
+    - `cargo test --release -p blacksilk-tx` (lib and every test file except the
+      PX-proving `px_consensus` and `fuzz_decode`): every binary passes; `deploy_rules`
+      13 passed, `validation_order` 11 passed.
+    - `px --test proof_limits` (shape checks) 2 passed; `px --lib` 36 passed;
+      `node --lib` 25 passed, 1 ignored.
+    - The fuzz target `px_admission` builds and passes clippy.
+    - PX-proving, one at a time, `--test-threads=1`, each started at 9 GB free or more
+      (BS-ZK-4 and this rule together): px `proof` 3, `unified` 13; tx `px_consensus`
+      4, `fuzz_decode` 1; chain `restart_rebuilds_the_px_state_exactly` 1; wallet e2e
+      `private_funds_move_over_rpc`, `px_records_follow_a_reorganization`,
+      `a_vault_is_deployed…`, `an_uncertain_vault_lock` 1 each; p2p
+      `px_transactions_travel_the_stem`, `invalid_px_transactions_get_the_relaying_peer_penalized`
+      1 each. All passed, 0 failed.
+    - Re-pin, once for bs-zk-4 and this change. Entry-level manifest diff of
+      `blacksilk-node --print-manifest` for every network against `5c283a4` (release
+      builds in separate target directories): `zk.PARAMS_ID`, `zk.QUERY_POW_BITS`, the
+      transcript sample, the golden PX transaction's id, signature message and encoded
+      length (the regenerated fixture), `tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE`,
+      `tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON`, `px.prove.PX_MAX_LOG_HEIGHT`, the new
+      deploy verdict sample, `rules.revision.len` 16 → 18 with the two new revisions,
+      and the digests that hash them. No stateless PX verdict and no identity entry
+      changed. Re-pinned: `px/tests/consensus_fingerprint.rs` (`9b67345e…`) and
+      `node/tests/deploy_configs.rs` `[consensus, rules]`: testnet `f6d04adf…`,
+      `68aff77a…`; regtest `a8669525…`, `a5fe7937…`; mainnet `282d81ec…`,
+      `bebfe3a7…`. Identity unchanged. Both pin tests pass.
+    - clippy `-D warnings` (tx, px, node, zk, all targets), `cargo fmt --check` and
+      doc-lint clean.
+12. **Open review points.** (i) The memory bound is modelled (10.4–13.1 GB), not
+    measured on the memory-widest V12 pair; until it is, "16 GB proves any pair" is a
+    model claim. (ii) 8 GB provers are not covered for every two-function call.
+    (iii) The size model is calibrated on measured proofs; 3.78 MB is the worst case
+    over the query positions in the model, not a proven bound. (iv) A red-team pass is
+    owed before the freeze.
+13. **Identity impact.** The rules and consensus fingerprints of every network change
+    (new constants, a new verdict sample, `rules.revision.len` 17 → 18); the PX-side
+    digest changes (`px.prove.PX_MAX_LOG_HEIGHT`). Identity fingerprints are unchanged.
+14. **Documentation.** docs/px.md (deploy limits, proving class), docs/contracts.md
+    (author limits), decisions "px-deploy-row-caps (V12)", STATUS.md.
+15. **Review status.** Implemented and tested by B2-CAPS; red-team review pending.

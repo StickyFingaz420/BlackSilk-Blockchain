@@ -255,6 +255,37 @@ fn the_shape_check_accepts_exactly_the_statements_degree_bits() {
     );
 }
 
+/// Defence in depth (record `px-deploy-row-caps`): a registered budget above
+/// the deploy caps, which no valid deploy can register, makes a statement
+/// with a table taller than 2^PX_MAX_LOG_HEIGHT, and the shape check refuses
+/// it with `Shape` whatever the degree bits. At 2^16 rows it is accepted.
+#[test]
+fn the_shape_check_refuses_a_table_above_the_px_height() {
+    use blacksilk_px::prove::PX_MAX_LOG_HEIGHT;
+    assert_eq!(PX_MAX_LOG_HEIGHT, 16);
+    let h_tx = [9; 32];
+    let w = Window::UNBOUNDED;
+    let p = public(1);
+    let calls = vec![call()];
+    for (cycles, ok) in [(1usize << 16, true), ((1 << 16) + 1, false)] {
+        let budget = Budget {
+            cycles,
+            ..vault::BUDGET
+        };
+        let reg = |c: &Digest, id: &[u8; 32]| registered(c, id).map(|_| budget);
+        // The degree bits of this statement (the function's CPU table at
+        // `pow2(cycles)` rows).
+        let mut bits = degree_bits(&p, &calls, &w, h_tx);
+        bits[BASE_TABLES + 3] = cycles.next_power_of_two().trailing_zeros() as usize + 1;
+        let r = check_shape_bits(&p, &calls, &w, h_tx, &bits, reg);
+        if ok {
+            assert_eq!(r, Ok(()), "{cycles} cycles");
+        } else {
+            assert_eq!(r, Err(VerifyError::Shape), "{cycles} cycles");
+        }
+    }
+}
+
 /// E18's premise (docs/reviews/mutation-exemptions.md): the quotient chunk
 /// count of every table of every PX statement does not depend on the trace
 /// length, over the whole range of degree bits `verify` accepts, so the

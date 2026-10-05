@@ -349,6 +349,7 @@ fn spec_class(e: &TxError) -> Class {
         PxShape | PxFeeNotStandard { .. } => Stateless("PX structure"),
         PxInvalidProgram
         | PxBudgetTooLarge { .. }
+        | PxProgramTooLarge { .. }
         | DeployFeeNotExact { .. }
         | PxUnsupportedAbi { .. }
         | PxDuplicateProgram { .. } => Stateless("deploy structure"),

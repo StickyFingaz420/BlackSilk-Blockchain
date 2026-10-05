@@ -1771,3 +1771,25 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
 - **Re-pins:** the golden PX fixture is regenerated here (deterministic since PXDET-1);
   `PX_SIDE_DIGEST` and `deploy_configs.rs` are re-pinned once, at the end of the branch,
   together with px-deploy-row-caps. A red-team pass is owed before the freeze.
+
+## px-deploy-row-caps (V12) (Lead, 2026-10-04)
+
+- **Why:** freeze gate B2 failed (`914b74f`, branch b23): under the R7-5 deploy rule
+  the widest registrable two-function PX proof is about 4.09–4.13 MB expected (above
+  the 3.8 MB bound of "Agent 22"), and its prover would need about 1 TB.
+- **Decision (V12):** deploy-time caps, stateless, with `K = kernel_budget(MAX_FN)` and
+  checked arithmetic: cycles ≤ 2^15, keys ≤ 2^14; `K.x + MAX_FN·b.x ≤ 2^H` with H = add
+  16, lt 16, bit 14, shift 14, mul 14, Poseidon2 11; program table and padded image
+  ≤ 2^14 (new `PxProgramTooLarge`). Defence in depth: PX5's shape check refuses a table
+  above 2^16. Revision `B2:px-deploy-row-caps`, record
+  docs/reviews/v3-consensus-changes.md#px-deploy-row-caps.
+- **Effect (model):** widest PX proof 3.70 MB, 3.78 MB worst over the query positions;
+  prover memory for the memory-widest pair 10.4 GB (13.1 GB pessimistic): a 16 GB
+  proving class. 8 GB devices prove transfers, single calls and the vault pair
+  (6.45 GB measured). The memory figure is modelled, not measured; a CI measurement of
+  the memory-widest V12 pair is arranged separately.
+- **Rejected:** V8 (the vault-pair heights; 6.45 GB): almost no headroom for any new
+  contract (Poseidon2 ≤ 52, cycles ≤ 8,192, ≤ 4,096 instructions). A uniform height cap
+  (2^16 gives 24–36 GB) cannot meet 8–16 GB.
+- **Re-pins:** `PX_SIDE_DIGEST` and `deploy_configs.rs` once, at the end of the branch,
+  for BS-ZK-4 and this change together. A red-team pass is owed before the freeze.

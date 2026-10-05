@@ -225,6 +225,15 @@ Each item cites the finding it comes from. Check every item before deploying.
     under it are stuck (P-2). The prover refuses any execution over its own budget in
     any table (`TransferError::OverBudget`), even when the padded shared tables would
     have had room, so provability never depends on the other calls (RTW1C-1).
+    **Deploy caps** (consensus, `PxBudgetTooLarge` / `PxProgramTooLarge`;
+    reviews/v3-consensus-changes.md#px-deploy-row-caps): per registered function at
+    most 32,768 cycles, 16,384 memory keys, add 20,168, lt 22,493, bit 7,192,
+    shift 7,367, mul 7,367 and Poseidon2 948 rows, and a program whose code plus data
+    words plus 32 registers fit in 2^14 image rows (at most 2^14 − 32 instructions
+    without data). Any two registered functions then fit together with the kernel.
+    Proving class: a call of any two functions is modelled at 10.4–13.1 GB of prover
+    memory (a 16 GB device); 8 GB devices can prove transfers, single calls and the
+    vault pair, not every pair. The memory figure is modelled, not measured.
 13. **Canonical input.** Check every field element you read (`canonical`); halt with
     codes, never with located panics (R15-6; `px/tests/elf_paths.rs`).
 14. **Time.** Assert on the echoed window (§4.3); a function that reads the window but
