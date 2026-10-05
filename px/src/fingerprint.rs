@@ -181,7 +181,7 @@ pub fn px_entries() -> Manifest {
     use blacksilk_px_core::hash::domain;
     use blacksilk_zk::params as zk;
     let mut m = Manifest::new();
-    // The parameter set (BS-ZK-3, zk/src/params.rs) and the proof encoding version.
+    // The parameter set (BS-ZK-4, zk/src/params.rs) and the proof encoding version.
     m.text(
         "zk.PARAMS_ID",
         std::str::from_utf8(zk::PARAMS_ID).expect("PARAMS_ID is ASCII"),
@@ -290,6 +290,12 @@ pub fn px_entries() -> Manifest {
             .map(|v| v as u64),
         );
     }
+    // The tallest PX table (px-deploy-row-caps): `check_shape_bits` refuses
+    // a statement with a taller one.
+    m.size(
+        "px.prove.PX_MAX_LOG_HEIGHT",
+        crate::prove::PX_MAX_LOG_HEIGHT,
+    );
     // The vault's domains, entry points, output words and registered row
     // budget (px/src/vault.rs). The vault program is compiled with all of
     // them, so its id above changes with any of them too.

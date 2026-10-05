@@ -1748,3 +1748,68 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   - Reasons: not built, not in any workspace, used pre-standard round-3 Dilithium (not FIPS 204) and young falcon crates, parts did not compile, parked since AUDIT.md finding S7.
   - It stays in git history (removed in `5038b1a`); a future post-quantum design would start fresh from FIPS 204 ML-DSA.
   - `research/` is gone with it: the root `Cargo.toml` `exclude`, `.dockerignore` and the doc-lint, unicode-scan, sys-crates and hazmat-policy gates no longer name it.
+
+## BS-ZK-4 (Lead, 2026-10-04; approved by the owner)
+
+- **Decision:** keep `NUM_QUERIES` = 108 and raise `QUERY_POW_BITS` from 16 to 20, as
+  a new parameter set `BlackSilk/zk/BS-ZK-4` (a constant change is a new set, never an
+  in-place edit). Revision `ZK:BS-ZK-4-query-grinding-20`, record
+  docs/reviews/v3-consensus-changes.md#bs-zk-4.
+- **Why:** with the mixed-height union term (H = 33), BS-ZK-3 sat about 0.5 bits above
+  the 100-bit floor. The floor counts total bits, grinding included, and docs/zk.md
+  §9.3 caps grinding at 20 bits. BS-ZK-4 gives 109.58 bits, 104.54 with the term, with
+  no change to the proof format or its expected size and no verifier code change
+  (every proof's bytes differ, and individual lengths vary with the query positions:
+  the regenerated golden fixture is 4,704 bytes shorter). 112 queries (the eq. 17 ceiling at
+  `MIN_LOG_HEIGHT` 8) would cost about 3.4 % proof bytes and leave about 1.2 % to the
+  3.8 MB bound for the widest proof, which is still unmeasured (gate B2).
+- **The term stays.** res-freeze.md §8.5's "absence" is narrowed: a close peer-reviewed
+  analogue exists, Zhang et al., USENIX Security 2024, Protocol 1 / Theorem 3.1
+  (rolling batch FRI, arity 2, unique decoding: the query term has no factor in the
+  number of rolled-in polynomials). There is no theorem for the exact Plonky3
+  construction, so the H = 33 union term is retained as the conservative figure.
+- **Caveats, recorded:**
+  - the statistical part stays 89.58 bits (84.54 with the term); the extra 4 bits are
+    grinding, which is computational and worth less against cheap Poseidon2 hardware;
+  - the 20-bit grinding cap is used up for the chain's life;
+  - the smallest-nonce prover rule (F27-3) now costs about 2^20 permutations to check
+    (docs/zk.md §11.3); the reference search stays sequential and deterministic;
+  - prover grinding time, measured: 1.32 s mean, 0.95 s median, 25 ms to 5.2 s over 64
+    transcripts (release, 4-core i7-6700, other builds running; record item 11).
+- **Re-pins:** the golden PX fixture is regenerated here (deterministic since PXDET-1);
+  `PX_SIDE_DIGEST` and `deploy_configs.rs` are re-pinned once, at the end of the branch,
+  together with px-deploy-row-caps. A red-team pass is owed before the freeze.
+
+## px-deploy-row-caps (V12) (Lead, 2026-10-04)
+
+- **Why:** freeze gate B2 failed (`914b74f`, branch b23): under the R7-5 deploy rule
+  the widest registrable two-function PX proof is about 4.09–4.13 MB expected (above
+  the 3.8 MB bound of "Agent 22"), and its prover would need about 1 TB.
+- **Decision (V12):** deploy-time caps, stateless, with `K = kernel_budget(MAX_FN)` and
+  checked arithmetic: cycles ≤ 2^15, keys ≤ 2^14; `K.x + MAX_FN·b.x ≤ 2^H` with H = add
+  16, lt 16, bit 14, shift 14, mul 14, Poseidon2 11; program table and padded image
+  ≤ 2^14 (new `PxProgramTooLarge`). Defence in depth: PX5's shape check refuses a table
+  above 2^16. Revision `B2:px-deploy-row-caps`, record
+  docs/reviews/v3-consensus-changes.md#px-deploy-row-caps.
+- **Effect (model):** widest PX proof 3.70 MB, 3.78 MB worst over the query positions;
+  prover memory for the memory-widest pair 10.4 GB (13.1 GB pessimistic): a 16 GB
+  proving class. 8 GB devices prove transfers, single calls and the vault pair
+  (6.45 GB measured). The memory figure is modelled, not measured; a CI measurement of
+  the memory-widest V12 pair is arranged separately.
+- **Rejected:** V8 (the vault-pair heights; 6.45 GB): almost no headroom for any new
+  contract (Poseidon2 ≤ 52, cycles ≤ 8,192, ≤ 4,096 instructions). A uniform height cap
+  (2^16 gives 24–36 GB) cannot meet 8–16 GB.
+- **Re-pins:** `PX_SIDE_DIGEST` and `deploy_configs.rs` once, at the end of the branch,
+  for BS-ZK-4 and this change together. A red-team pass is owed before the freeze.
+
+## Red team on bszk4: BS-ZK-4 and px-deploy-row-caps (2026-10-05)
+
+- **Verdicts:** `ee0e96f` (BS-ZK-4) and `dcbcfe2` (px-deploy-row-caps) MERGE WITH FIXES;
+  nothing blocking. Internal review, not an audit.
+- **Applied as follow-up commits** (no amend, no rule or pin change): the BS-ZK-4
+  labels and size wording, relation R7, the FRI-margin evidence summary and a 16-bit
+  witness test (record "bs-zk-4", Follow-up); kernel-budget monotonicity, the cap
+  assertion tied to `PX_MAX_LOG_HEIGHT`, `verify` running the shape check, R7-5 marked
+  superseded, the budget-cap evidence summary, the prover's early stop at the cycle
+  cap, and `zkvm/src/program.rs` and `exec.rs` as consensus-gate paths (record
+  "px-deploy-row-caps", Follow-up).

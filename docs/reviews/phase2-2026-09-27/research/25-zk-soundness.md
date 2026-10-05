@@ -1,6 +1,6 @@
 # 25 zk-soundness: dossier (phase 1, research and briefing)
 
-> Historical record (2026-09-27). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-4 (ee0e96f; BS-ZK-3 in 73372e9). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
 
 Specialist 25, BlackSilk engineering phase 2, 2026-09-27. **Internal engineering work, not
 an audit.** I was read-only on the repository and ran no cargo builds. All figures below

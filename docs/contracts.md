@@ -43,9 +43,9 @@ What a contract can do today, and what it cannot:
 - **Throughput.** A PX transaction is about 2.40 MB with its proof (a transfer), about
   3.0 MB with one function and 3.63 MB with two (measured on the frozen kernel,
   docs/evidence/freeze-b2-b3-2026-10-04/), so a block holds 2 or 3 (px.md §8, §11.5).
-  Proving a two-function call needs about 6.4 GB of memory. The widest budgets a
-  deploy can register today give proofs of about 4.09–4.13 MB (freeze gate B2 fails;
-  a deploy-time proof-size bound, V12, is in progress). Aggregation is research (§9).
+  Proving a two-function call needs about 6.4 GB of memory. Under the deploy-time row caps
+  (V12, px.md) the widest proof a deploy can lead to is about 3.70 MB by model (3.78 MB
+  worst); its prover memory is modelled at 10.4–13.1 GB, not measured. Aggregation is research (§9).
 - **Always public** for a call (privacy review P-8): the contract id and the program id
   of every called function, the functions' public output words (a fixed number per
   program, §5), the transaction's validity window, and the bridge amounts. Private:
@@ -229,6 +229,15 @@ Each item cites the finding it comes from. Check every item before deploying.
     under it are stuck (P-2). The prover refuses any execution over its own budget in
     any table (`TransferError::OverBudget`), even when the padded shared tables would
     have had room, so provability never depends on the other calls (RTW1C-1).
+    **Deploy caps** (consensus, `PxBudgetTooLarge` / `PxProgramTooLarge`;
+    reviews/v3-consensus-changes.md#px-deploy-row-caps): per registered function at
+    most 32,768 cycles, 16,384 memory keys, add 20,168, lt 22,493, bit 7,192,
+    shift 7,367, mul 7,367 and Poseidon2 948 rows, and a program whose code plus data
+    words plus 32 registers fit in 2^14 image rows (at most 2^14 − 32 instructions
+    without data). Any two registered functions then fit together with the kernel.
+    Proving class: a call of any two functions is modelled at 10.4–13.1 GB of prover
+    memory (a 16 GB device); 8 GB devices can prove transfers, single calls and the
+    vault pair, not every pair. The memory figure is modelled, not measured.
 13. **Canonical input.** Check every field element you read (`canonical`); halt with
     codes, never with located panics (R15-6; `px/tests/elf_paths.rs`).
 14. **Time.** Assert on the echoed window (§4.3); a function that reads the window but

@@ -10,7 +10,7 @@
 #           rule: never claim it is secure, audited, production-ready or
 #           perfectly ZK (docs/STATUS.md).
 #   stale   retired identifiers: "24-word" (seed format v1 has 27 words),
-#           "BS-ZK-2" (the parameter set is BS-ZK-3), "LWMA-60" (N = 75),
+#           "BS-ZK-2" (the parameter set is BS-ZK-4), "LWMA-60" (N = 75),
 #           "4 PX per block", the pre-rebuild kernel and vault ids (prefixes
 #           0577e667 and 666f7aab), "the v2 identity is approved".
 #   link    relative Markdown links to files or directories that are not tracked

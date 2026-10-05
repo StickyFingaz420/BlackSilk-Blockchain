@@ -84,7 +84,7 @@ vector scripts (test tooling, decisions "Agent 01" and "Agent 05").
 ### 3.1 What is relied on
 
 - **Soundness** of the batch STARK with LogUp lookups, FRI with hiding, and the
-  Poseidon2 duplex challenger. Parameters: BS-ZK-3 (`zk/src/params.rs`, zk.md §9.3; BS-ZK-4 pending); the security bits are
+  Poseidon2 duplex challenger. Parameters: BS-ZK-4 (`zk/src/params.rs`, zk.md §9.3); the security bits are
   computed by the project's own tested calculator, not taken from the library.
 - **Zero knowledge** of the hiding mode (`HidingFriPcs`, `MerkleTreeHidingMmcs`),
   claimed only as statistical and conditional (zk-coverage.md). Everything private in

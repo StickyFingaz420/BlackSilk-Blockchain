@@ -22,7 +22,7 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | Amount privacy | Pedersen commitments, aggregated Bulletproofs+ | [transactions.md §6–7](docs/transactions.md) |
 | Group | Ristretto255 (prime order) | [transactions.md §1](docs/transactions.md) |
 | Emission | smooth curve to ~21 M BLK, then 0.6 BLK/block tail forever; no premine | [blocks.md §2](docs/blocks.md) |
-| Private execution (PX) | private records and nullifiers, a fixed transfer kernel and private contract functions proven in the BVM-1 zkVM (Plonky3 STARK, parameter set BS-ZK-3). Transaction kinds 2 and 3 are **consensus rules from genesis**; no network running them has launched. Zero knowledge is claimed only as **statistical and conditional**, computational in practice ([zk-coverage.md](docs/reviews/zk-coverage.md)); proofs are about 2.4 MB (transfer) ([STATUS.md](docs/STATUS.md) §5, §6) | [px.md](docs/px.md), [zk.md](docs/zk.md), [zkvm.md](docs/zkvm.md) |
+| Private execution (PX) | private records and nullifiers, a fixed transfer kernel and private contract functions proven in the BVM-1 zkVM (Plonky3 STARK, parameter set BS-ZK-4). Transaction kinds 2 and 3 are **consensus rules from genesis**; no network running them has launched. Zero knowledge is claimed only as **statistical and conditional**, computational in practice ([zk-coverage.md](docs/reviews/zk-coverage.md)); proofs are about 2.4 MB (transfer) ([STATUS.md](docs/STATUS.md) §5, §6) | [px.md](docs/px.md), [zk.md](docs/zk.md), [zkvm.md](docs/zkvm.md) |
 | Network | encrypted (unauthenticated) transport, header-first sync, Dandelion++, bucketed address manager with eclipse mitigations (not tested against a real Sybil attack), peer scoring and bans, outbound SOCKS5/Tor | [p2p.md](docs/p2p.md) |
 
 **What it is not (yet):**
@@ -57,7 +57,7 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | `crypto/` | Ristretto255 primitives, stealth outputs, Janus anchor, CLSAG, Bulletproofs+ (and the Wasm research's signatures, membership proofs and claims, used by no consensus crate) |
 | `tx/` | transaction format, validation rules (v1 and PX), builder, scanner, decoy selection |
 | `chain/` | blocks, emission, chain manager (reorgs), mempool, block storage, addresses |
-| `zk/` | proof-system configuration (Plonky3 0.7.0, parameter set BS-ZK-3) and its security parameters |
+| `zk/` | proof-system configuration (Plonky3 0.7.0, parameter set BS-ZK-4) and its security parameters |
 | `zkvm/` | BVM-1 zero-knowledge virtual machine: interpreter, constraint tables, guest SDK and guest programs |
 | `px-core/` | PX hash `Hk`, records and the transfer kernel (`no_std`, shared with the guest) |
 | `px/` | PX node state, wallet side, record delivery, kernel proofs, the vault |

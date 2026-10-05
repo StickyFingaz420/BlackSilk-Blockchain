@@ -850,33 +850,47 @@ pub fn check_px_balance(tx: &PxTx) -> Result<(), TxError> {
     }
 }
 
-/// Whether a function with budget `b` can be proven, alone, with the kernel
-/// (R7-5): every table of the one-function statement stays within its height
-/// limit (`blacksilk_zkvm::prove::limits`).
-/// - The function's CPU table: at most `MAX_CYCLES` rows.
-/// - Its memory-init table (`keys`): at most `2^MAX_LOG_HEIGHT` rows.
-/// - The ALU and Poseidon2 tables are shared with the kernel, whose budget
-///   for one function is `kernel_budget(1)`: their sum is at most
-///   `2^MAX_LOG_HEIGHT` rows.
+/// Whether a function with budget `b` is within the deploy-time row caps
+/// (record `px-deploy-row-caps`, freeze gate B2; replaces R7-5's
+/// "provable alone" rule):
+/// - its own tables: `cycles ≤ 2^PX_FN_LOG_CYCLES`, `keys ≤ 2^PX_FN_LOG_KEYS`;
+/// - the tables shared with the kernel (ALU and Poseidon2): with the kernel's
+///   budget for the most functions, `K = kernel_budget(MAX_FN)`,
+///   `K.x + MAX_FN·b.x ≤ 2^cap` in checked arithmetic.
 ///
-/// A call of two large functions can still exceed a shared table; such a
-/// combination cannot be proven, and the verifier refuses the heights.
+/// So any `MAX_FN` registered functions fit together with the kernel, every
+/// PX table stays at or below 2^16 rows, and the widest PX proof stays below
+/// 3.8 MB (about 3.70 MB expected, 3.78 MB worst over the query positions,
+/// by the B2 model). The function's program and image are capped separately
+/// ([`program_is_provable`]).
 pub fn budget_is_provable(b: &Budget) -> bool {
-    let max = 1usize << blacksilk_zk::params::MAX_LOG_HEIGHT;
-    let k = blacksilk_px::prove::kernel_budget(1);
-    let shared = [
-        (b.add, k.add),
-        (b.bit, k.bit),
-        (b.lt, k.lt),
-        (b.shift, k.shift),
-        (b.mul, k.mul),
-        (b.poseidon, k.poseidon),
-    ];
-    b.cycles <= blacksilk_zkvm::MAX_CYCLES as usize
-        && b.keys <= max
-        && shared
-            .iter()
-            .all(|&(x, kx)| x.checked_add(kx).is_some_and(|s| s <= max))
+    let k = blacksilk_px::prove::kernel_budget(blacksilk_px_core::call::MAX_FN);
+    let within = |x: usize, kx: usize, log: u32| {
+        x.checked_mul(blacksilk_px_core::call::MAX_FN)
+            .and_then(|s| s.checked_add(kx))
+            .is_some_and(|s| s <= 1usize << log)
+    };
+    b.cycles <= 1usize << PX_FN_LOG_CYCLES
+        && b.keys <= 1usize << PX_FN_LOG_KEYS
+        && within(b.add, k.add, PX_LOG_ADD)
+        && within(b.bit, k.bit, PX_LOG_BIT)
+        && within(b.lt, k.lt, PX_LOG_LT)
+        && within(b.shift, k.shift, PX_LOG_SHIFT)
+        && within(b.mul, k.mul, PX_LOG_MUL)
+        && within(b.poseidon, k.poseidon, PX_LOG_POSEIDON)
+}
+
+/// Whether a registered program's own fixed tables are within the deploy
+/// caps (record `px-deploy-row-caps`): its program table
+/// (`program::height`) at most `2^PX_FN_LOG_PROGRAM` rows and its image
+/// table (the initial image, code words, data and registers, padded to a
+/// power of two) at most `2^PX_FN_LOG_IMAGE` rows. The image holds every
+/// code word, so in practice the image bound is the tighter one.
+pub fn program_is_provable(p: &blacksilk_zkvm::Program) -> bool {
+    use blacksilk_zkvm::air::{program, trace, MIN_HEIGHT};
+    let image = trace::image(p).len().max(MIN_HEIGHT).next_power_of_two();
+    program::height(p, MIN_HEIGHT) <= 1usize << PX_FN_LOG_PROGRAM
+        && image <= 1usize << PX_FN_LOG_IMAGE
 }
 
 /// Structure of a deploy: the transfer rules on its v1 part, the exact fee
@@ -913,6 +927,13 @@ pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxEr
         }
     }
     let programs = tx.load_programs()?;
+    // px-deploy-row-caps: the program and image tables of every registered
+    // program are within their caps.
+    for (i, (program, _)) in programs.iter().enumerate() {
+        if !program_is_provable(program) {
+            return Err(TxError::PxProgramTooLarge { program: i });
+        }
+    }
     // R5-7: the registry answers `(contract, program id)` with the first
     // match, so a repeated program would be unreachable. Ids of the loaded
     // programs are compared: different ELF files can load to one program.

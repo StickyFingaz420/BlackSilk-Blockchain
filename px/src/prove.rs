@@ -79,6 +79,19 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
     }
 }
 
+/// The tallest table of any PX statement, log2 (record `px-deploy-row-caps`):
+/// the byte table's height, which the deploy-time caps (`blacksilk-tx`
+/// params `PX_FN_LOG_*`, `PX_LOG_*`) keep every other table within.
+/// `check_shape_bits` refuses a statement with a taller table.
+pub const PX_MAX_LOG_HEIGHT: usize = 16;
+
+/// log2 of the deploy cap on a registered function's cycles (record
+/// `px-deploy-row-caps`; `blacksilk-tx` params `PX_FN_LOG_CYCLES`, which a
+/// compile-time `const` assertion in `tx/src/params.rs` requires to be equal):
+/// [`prove`] runs a function at most one cycle past
+/// `max(budget.cycles, 2^FN_RUN_LOG_CYCLES)`. Prover-side only.
+pub const FN_RUN_LOG_CYCLES: u32 = 15;
+
 /// The proof decoder's limits for PX statements (RT-FUZZ-1,
 /// `blacksilk_zk::bounds`): the envelope's, with the table count of the
 /// widest PX statement, the kernel and `MAX_FN` functions
@@ -122,7 +135,10 @@ pub enum TransferError {
     /// `used` rows of `table`, more than its budget `budget`. Checked for each
     /// execution before proving: the shared tables are padded to a power of
     /// two of the budgets' sum, so an over-budget execution could otherwise
-    /// be proven or not depending on the other executions' budgets.
+    /// be proven or not depending on the other executions' budgets. For a
+    /// function's `cycles`, a run that does not halt within
+    /// `max(budget, 2^FN_RUN_LOG_CYCLES)` cycles is stopped one cycle past
+    /// that limit, and `used` is then the limit plus one, a lower bound.
     OverBudget {
         execution: usize,
         table: &'static str,
@@ -268,8 +284,32 @@ pub fn prove<R: RngCore + CryptoRng>(
     )?;
     drop(kernel_exec);
     for (k, (program, input, budget)) in functions.iter().enumerate() {
-        let exec = blacksilk_zkvm::run(program, input, blacksilk_zkvm::MAX_CYCLES)
-            .map_err(|t| TransferError::Execution(format!("function {k}: {t:?}")))?;
+        // Run at most one cycle past the larger of the function's budget and
+        // the deploy cap on a registered function's cycles (red team I2 on
+        // px-deploy-row-caps), not to `MAX_CYCLES`. An execution within its
+        // budget halts first and is unchanged, and the prefix is still checked
+        // before the budget for every run up to the cap (mutation run E); a
+        // run past the cap stops early and is refused as over budget.
+        let limit = budget
+            .cycles
+            .max(1 << FN_RUN_LOG_CYCLES)
+            .saturating_add(1)
+            .min(blacksilk_zkvm::MAX_CYCLES as usize) as u32;
+        let exec = match blacksilk_zkvm::run(program, input, limit) {
+            Ok(exec) => exec,
+            Err(t)
+                if t.kind == blacksilk_zkvm::TrapKind::CycleLimit
+                    && budget.cycles < limit as usize =>
+            {
+                return Err(TransferError::OverBudget {
+                    execution: k + 1,
+                    table: "cycles",
+                    used: limit as usize,
+                    budget: budget.cycles,
+                })
+            }
+            Err(t) => return Err(TransferError::Execution(format!("function {k}: {t:?}"))),
+        };
         if exec.exit_code != 0 {
             return Err(TransferError::Execution(format!(
                 "function {k} halted with {}",
@@ -332,9 +372,12 @@ pub fn verify(
     proof: &Proof,
     registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
 ) -> Result<(), VerifyError> {
-    if public.n_fn > MAX_FN || calls.len() != public.n_fn {
-        return Err(VerifyError::Shape);
-    }
+    // The cheap shape check first (red team L3 on px-deploy-row-caps), so that
+    // `verify` alone also applies the PX table-height bound; the consensus
+    // paths already run it before `verify`. Every proof it refuses, `verify`
+    // refused before, except a statement with a table above 2^16 rows, which
+    // no registered function can produce.
+    check_shape_bits(public, calls, window, h_tx, &proof.degree_bits, &registered)?;
     let mut budgets = Vec::with_capacity(calls.len());
     for (k, call) in calls.iter().enumerate() {
         match registered(&public.functions[k].0, &call.program.id()) {
@@ -387,6 +430,12 @@ pub fn check_shape_bits(
     let st = statement(public, calls, &budgets, window, h_tx).ok_or(VerifyError::Shape)?;
     // Every execution has a budget here, so the statement has a fixed shape.
     let shape = st.shape().ok_or(VerifyError::Shape)?;
+    // Defence in depth (record `px-deploy-row-caps`): the deploy-time caps
+    // keep every table of every PX statement at or below 2^PX_MAX_LOG_HEIGHT
+    // rows, so this never refuses a statement of registered functions.
+    if shape.iter().any(|&h| h > 1 << PX_MAX_LOG_HEIGHT) {
+        return Err(VerifyError::Shape);
+    }
     // `degree_bits` is log2(height) + 1 under zero knowledge (as in
     // `blacksilk_zkvm::prove::verify`).
     let ok = degree_bits.len() == shape.len()

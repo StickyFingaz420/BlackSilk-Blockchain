@@ -34,6 +34,6 @@ These reports are historical records. Where they state a fact in the present ten
 held for the tree they read, not for the current code. Superseded since then, among
 others: the header is 172 bytes and the PoW input is the 47-byte mining blob with the
 nonce at byte 39 (not the 100-byte header with the nonce at 92); RandomX uses the salt
-"BlackSilk/RandomX/v1" (not Monero's rx/0 salt); the ZK parameter set is BS-ZK-3
-(BS-ZK-4 pending); the v3 candidate was merged in 9e422d8. Current:
+"BlackSilk/RandomX/v1" (not Monero's rx/0 salt); the ZK parameter set is BS-ZK-4
+(ee0e96f); the v3 candidate was merged in 9e422d8. Current:
 [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).

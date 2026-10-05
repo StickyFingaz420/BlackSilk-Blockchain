@@ -47,6 +47,7 @@ is_consensus_path() {
     tx/src/types.rs | tx/src/codec.rs | tx/src/state.rs) return 0 ;;
     tx/src/mmr.rs) return 0 ;; # the output range of the headers (output-root)
     zkvm/src/prove.rs | node/src/fingerprint.rs | px/src/fingerprint.rs) return 0 ;;
+    zkvm/src/program.rs | zkvm/src/exec.rs) return 0 ;; # program id, image (red team I3)
     node/src/fingerprint_fixture.txt) return 0 ;;
     node/src/px_fixture.bin | node/src/px_fixture.txt) return 0 ;;
     chain/src/block.rs | chain/src/emission.rs | chain/src/manager/*) return 0 ;;

@@ -349,10 +349,11 @@ fn the_independent_calculator_agrees_with_p3_security() {
         worst_jb20 = worst_jb20.min(jb20.algebraic());
         points += 1;
     }
-    // The envelope's minimum with the mixed-height term: 105.58 − 5.04 at the
-    // smallest height, where ρ⁺ is largest.
+    // The envelope's minimum with the mixed-height term: 109.58 − 5.04 at the
+    // smallest height, where ρ⁺ is largest (BS-ZK-4: 89.58 statistical + 20
+    // grinding, before the term).
     assert!(
-        (100.5..100.7).contains(&worst_udr_mixed),
+        (104.5..104.7).contains(&worst_udr_mixed),
         "{worst_udr_mixed}"
     );
     println!(
@@ -366,10 +367,11 @@ fn the_independent_calculator_agrees_with_p3_security() {
 
 /// Golden values at the largest shape (2^22 rows, i.e. degree bits 23; 5,000
 /// constraints of degree 8; 65,536 batched functions), from the formulas
-/// above: unique decoding ≈ 105.6 bits, of which 16 are grinding and ≈ 89.6
+/// above: unique decoding ≈ 109.6 bits, of which 20 are grinding and ≈ 89.6
 /// statistical (query phase alone); Johnson reported = `COLLISION_BITS`.
 /// With the mixed-height union term (log2 33 = 5.04 bits, `MIXED_HEIGHTS`):
-/// unique decoding ≈ 100.6 bits, just above the 100-bit floor; Johnson unchanged.
+/// unique decoding ≈ 104.6 bits, about 4.6 above the 100-bit floor; Johnson
+/// unchanged.
 #[test]
 fn headline_figures_at_the_largest_shape() {
     let shape = ProofShape {
@@ -382,16 +384,16 @@ fn headline_figures_at_the_largest_shape() {
     let udr = inst.udr();
     let statistical = udr.query - params::QUERY_POW_BITS as f64;
     assert!((89.5..89.8).contains(&statistical), "{statistical}");
-    assert!((105.5..105.8).contains(&udr.reported()), "{udr:?}");
+    assert!((109.5..109.8).contains(&udr.reported()), "{udr:?}");
     let mixed = udr.with_mixed_height_union();
     assert!((5.0..5.1).contains(&MIXED_HEIGHTS.log2()));
-    assert!((100.5..100.8).contains(&mixed.reported()), "{mixed:?}");
+    assert!((104.5..104.8).contains(&mixed.reported()), "{mixed:?}");
     assert!(
         mixed.reported() >= params::MIN_PROVEN_BITS as f64,
         "{mixed:?}"
     );
     let p3 = params::security(&shape);
-    assert_eq!(p3.unique_decoding_bits, 105);
+    assert_eq!(p3.unique_decoding_bits, 109);
     assert_eq!(p3.johnson_bits, params::COLLISION_BITS);
     assert_eq!(params::COLLISION_BITS, 122);
     let (m, jb) = inst.best_johnson(false);

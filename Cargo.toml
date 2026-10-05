@@ -11,7 +11,7 @@ members = [
     "node",      # blacksilk-node: the node binary (RPC)
     "miner",     # blacksilk-miner: RandomX miner
     "wallet",    # blacksilk-wallet: CLI wallet
-    "zk",        # blacksilk-zk: zero-knowledge proof layer (Plonky3 STARK, parameter set BS-ZK-3)
+    "zk",        # blacksilk-zk: zero-knowledge proof layer (Plonky3 STARK, parameter set BS-ZK-4)
     "zkvm",      # blacksilk-zkvm: BVM-1 zero-knowledge virtual machine (RV32I + Zmmul)
     "px-core",   # blacksilk-px-core: PX hash, records and transfer kernel (no_std, shared with the guest)
     "px",        # blacksilk-px: PX node state, wallet side, record delivery, kernel proofs

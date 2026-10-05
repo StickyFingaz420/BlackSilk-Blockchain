@@ -1,6 +1,6 @@
 # 24 plonky3-verifier-security: research dossier (phase 2, phase 1)
 
-> Historical record (2026-09-27). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-4 (ee0e96f; BS-ZK-3 in 73372e9). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
 
 **Internal engineering research, not an audit.** Nothing here claims that BlackSilk, Plonky3
 or any configuration of them is secure, audited or proven. Zero knowledge is discussed only

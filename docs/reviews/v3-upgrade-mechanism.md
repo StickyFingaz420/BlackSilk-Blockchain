@@ -284,6 +284,12 @@ So a function with `cycles > 2^21` is registrable but can never be proven. It is
 useless state paid at the deploy price (SX1: "overstated as DoS; a valid
 tightening").
 
+> **Superseded (testnet v3, 2026-10-05):** this R7-5 rule is replaced by the deploy-time
+> row caps of docs/reviews/v3-consensus-changes.md#px-deploy-row-caps (freeze gate B2):
+> per-function and shared-table caps with `kernel_budget(MAX_FN)`, program and image
+> caps, and every PX table at most 2^16 rows. The text below is kept as the history of
+> R7-5.
+
 **Rule (stateless).** For each registered budget `b`, with `K = kernel_budget(1)` (the
 kernel's budget when it calls one function):
 - `b.cycles ≤ MAX_CYCLES` (2^21);

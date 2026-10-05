@@ -26,8 +26,10 @@ use blacksilk_px::fingerprint::px_entries;
 /// Changing this is a consensus change (fingerprint v3: see the module text;
 /// re-pinned by RT-FP3 for the crypto, tree and transcript entries, and by
 /// output-root for the three `output-mmr/*` tags and `mining-hash` it adds to
-/// `tags::CONSENSUS`, which this manifest lists).
-const PX_SIDE_DIGEST: &str = "79d589d8352fb392e93cbbe404b839653efadd14ffe73a34229d8630bda9fee6";
+/// `tags::CONSENSUS`, which this manifest lists), and once for bs-zk-4
+/// (`zk.PARAMS_ID`, `zk.QUERY_POW_BITS`, the transcript sample) and
+/// px-deploy-row-caps (`px.prove.PX_MAX_LOG_HEIGHT`) together.
+const PX_SIDE_DIGEST: &str = "9b67345edec7fff3fbb9e86d83a438bdaeb38b9169a981c8bf10510f45aa5821";
 
 #[test]
 fn px_side_consensus_constants_are_pinned() {

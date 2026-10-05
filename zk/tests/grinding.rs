@@ -328,3 +328,77 @@ fn proofs_from_the_upstream_grinding_prover_still_verify() {
         assert_eq!(verify(&v, &AIRS, &proof, &pv, &LIMITS), Ok(()));
     }
 }
+
+/// Grinding time at the parameter set's `QUERY_POW_BITS` (BS-ZK-4: 20 bits),
+/// for the record of decision "BS-ZK-4" (docs/zk.md §11.3): the deterministic
+/// smallest-nonce search over 64 transcript states, with the minimum, median,
+/// mean and maximum time, and a brute-force cross-check of the result on the
+/// first four states. Release only (timing):
+/// `cargo test --release -p blacksilk-zk --test grinding -- --ignored --nocapture grinding_time`
+#[test]
+#[ignore = "timing; run in release"]
+fn grinding_time_at_the_parameter_sets_bits() {
+    use blacksilk_zk::params::QUERY_POW_BITS;
+    use std::time::Instant;
+    let bits = QUERY_POW_BITS;
+    let mut times = Vec::new();
+    let mut nonces = Vec::new();
+    for s in 0..64u32 {
+        let c = transcript(s);
+        let t = Instant::now();
+        let w = smallest_pow_witness(&c, bits);
+        times.push(t.elapsed().as_secs_f64());
+        assert!(c.clone().check_witness(bits, w));
+        if s < 4 {
+            assert_eq!(
+                w.as_canonical_u64(),
+                smallest_by_brute_force(&c, bits),
+                "state {s}"
+            );
+        }
+        nonces.push(w.as_canonical_u64());
+    }
+    let mut sorted = times.clone();
+    sorted.sort_by(f64::total_cmp);
+    let mean = times.iter().sum::<f64>() / times.len() as f64;
+    let mean_nonce = nonces.iter().sum::<u64>() as f64 / nonces.len() as f64;
+    println!(
+        "{bits} bits, 64 states: min {:.1} ms, median {:.1} ms, mean {:.1} ms, max {:.1} ms; mean nonce {mean_nonce:.0} (2^{bits} = {})",
+        sorted[0] * 1e3,
+        sorted[32] * 1e3,
+        mean * 1e3,
+        sorted[63] * 1e3,
+        1u64 << bits
+    );
+}
+
+/// BS-ZK-4: a query proof-of-work witness that meets 16 bits (BS-ZK-3's
+/// grinding) but not 20 is refused by the verifier's check at the parameter
+/// set's `QUERY_POW_BITS`. For each transcript state the smallest 16-bit
+/// witness is taken; with probability 15/16 it fails the 20-bit check, and
+/// every such witness must be refused. The verifier uses exactly this check
+/// (`DuplexChallenger::check_witness` with the `FriParameters` built from
+/// `params::QUERY_POW_BITS` in `zk::config`, shared by prover and verifier).
+#[test]
+fn a_witness_valid_at_16_bits_but_not_20_is_refused() {
+    use blacksilk_zk::params::QUERY_POW_BITS;
+    assert_eq!(QUERY_POW_BITS, 20);
+    let mut refused = 0;
+    for c in states() {
+        let w16 = smallest_pow_witness(&c, 16);
+        assert!(c.clone().check_witness(16, w16));
+        let w20 = smallest_pow_witness(&c, QUERY_POW_BITS);
+        if w16 == w20 {
+            // This 16-bit witness happens to meet 20 bits too (probability 1/16).
+            continue;
+        }
+        // Smaller than the smallest 20-bit witness, so it cannot meet 20 bits.
+        assert!(w16.as_canonical_u64() < w20.as_canonical_u64());
+        assert!(
+            !c.clone().check_witness(QUERY_POW_BITS, w16),
+            "a 16-bit witness passed the 20-bit check"
+        );
+        refused += 1;
+    }
+    assert!(refused >= 20, "{refused} of {} states", states().len());
+}

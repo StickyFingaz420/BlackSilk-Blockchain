@@ -1,6 +1,6 @@
 # R12: Performance and scalability of the whole system (internal review, 2026-09-27)
 
-> Historical record (2026-09-27). Superseded where it conflicts with the code: RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca); the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+> Historical record (2026-09-27). Superseded where it conflicts with the code: RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca); the ZK parameter set is BS-ZK-4 (ee0e96f; BS-ZK-3 in 73372e9). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
 
 **Reviewer:** R12. This is internal review, not an audit.
 **Tree reviewed:** `f677e55` (includes WIP `7826289`), read-only. No builds were run.

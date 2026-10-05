@@ -134,23 +134,35 @@ fn a_repeated_program_in_other_elf_bytes_is_rejected() {
     assert_eq!(e, Err(TxError::PxDuplicateProgram { program: 1 }));
 }
 
-// ------------------------------------------------------------------ R7-5
+// ------------------------------------------------------------------ px-deploy-row-caps
 
-const MAX_ROWS: usize = 1 << blacksilk_zk::params::MAX_LOG_HEIGHT;
+use blacksilk_px::prove::kernel_budget;
+use blacksilk_px_core::call::MAX_FN;
+use blacksilk_tx::params::{
+    PX_FN_LOG_CYCLES, PX_FN_LOG_IMAGE, PX_FN_LOG_KEYS, PX_FN_LOG_PROGRAM, PX_LOG_ADD, PX_LOG_BIT,
+    PX_LOG_LT, PX_LOG_MUL, PX_LOG_POSEIDON, PX_LOG_SHIFT,
+};
+use blacksilk_tx::px::{budget_is_provable, program_is_provable};
 
-/// Every budget field at its largest provable value, with the kernel's share
-/// of the shared tables (`kernel_budget(1)`) subtracted.
-fn largest_provable() -> Budget {
-    let k = blacksilk_px::prove::kernel_budget(1);
+/// The largest value a shared field may take: `K.x + MAX_FN·b.x ≤ 2^log`.
+fn shared_max(kx: usize, log: u32) -> usize {
+    ((1usize << log) - kx) / MAX_FN
+}
+
+/// Every budget field at its largest allowed value (record
+/// `px-deploy-row-caps`), computed here from the caps and the kernel budget,
+/// independently of `budget_is_provable`.
+fn largest_allowed() -> Budget {
+    let k = kernel_budget(MAX_FN);
     Budget {
-        cycles: blacksilk_zkvm::MAX_CYCLES as usize,
-        keys: MAX_ROWS,
-        add: MAX_ROWS - k.add,
-        bit: MAX_ROWS - k.bit,
-        lt: MAX_ROWS - k.lt,
-        shift: MAX_ROWS - k.shift,
-        mul: MAX_ROWS - k.mul,
-        poseidon: MAX_ROWS - k.poseidon,
+        cycles: 1 << PX_FN_LOG_CYCLES,
+        keys: 1 << PX_FN_LOG_KEYS,
+        add: shared_max(k.add, PX_LOG_ADD),
+        bit: shared_max(k.bit, PX_LOG_BIT),
+        lt: shared_max(k.lt, PX_LOG_LT),
+        shift: shared_max(k.shift, PX_LOG_SHIFT),
+        mul: shared_max(k.mul, PX_LOG_MUL),
+        poseidon: shared_max(k.poseidon, PX_LOG_POSEIDON),
     }
 }
 
@@ -167,13 +179,35 @@ const FIELDS: [Field; 8] = [
     ("poseidon", |b| &mut b.poseidon),
 ];
 
+/// The per-function maxima of the B2 research (V12), pinned: a cap or
+/// kernel-budget change shows up here. The vault fits with room on every
+/// field.
 #[test]
-fn provable_budget_boundaries() {
-    use blacksilk_tx::px::budget_is_provable;
-    assert_eq!(blacksilk_zkvm::MAX_CYCLES, 1 << 21);
-    assert_eq!(MAX_ROWS, 1 << 22);
-    let top = largest_provable();
-    assert!(budget_is_provable(&top));
+fn the_largest_allowed_budget_is_the_v12_table() {
+    let top = largest_allowed();
+    assert_eq!(
+        [
+            top.cycles,
+            top.keys,
+            top.add,
+            top.bit,
+            top.lt,
+            top.shift,
+            top.mul,
+            top.poseidon
+        ],
+        [32_768, 16_384, 20_168, 7_192, 22_493, 7_367, 7_367, 948]
+    );
+    for (name, field) in FIELDS {
+        let (mut a, mut b) = (VAULT_BUDGET, top);
+        assert!(*field(&mut a) < *field(&mut b), "vault {name}");
+    }
+}
+
+#[test]
+fn allowed_budget_boundaries() {
+    let top = largest_allowed();
+    assert!(budget_is_provable(&top), "every field at its cap");
     assert!(budget_is_provable(&VAULT_BUDGET));
     assert!(budget_is_provable(&Budget {
         cycles: 0,
@@ -188,24 +222,34 @@ fn provable_budget_boundaries() {
     for (name, field) in FIELDS {
         let mut b = top;
         *field(&mut b) += 1;
-        assert!(!budget_is_provable(&b), "{name} one above its limit");
+        assert!(!budget_is_provable(&b), "{name} one above its cap");
         *field(&mut b) = usize::MAX;
         assert!(
             !budget_is_provable(&b),
-            "{name} at usize::MAX (no overflow)"
+            "{name} at usize::MAX (checked arithmetic)"
         );
+        *field(&mut b) = usize::MAX / MAX_FN + 1;
+        assert!(!budget_is_provable(&b), "{name}: MAX_FN·b.x overflows");
     }
+    // Poseidon: 151 + 2·948 = 2,047 ≤ 2^11; 151 + 2·949 = 2,049.
+    assert_eq!(kernel_budget(MAX_FN).poseidon, 151);
+    let with = |p| Budget {
+        poseidon: p,
+        ..VAULT_BUDGET
+    };
+    assert!(budget_is_provable(&with(948)));
+    assert!(!budget_is_provable(&with(949)));
 }
 
 #[test]
-fn a_deploy_at_the_limits_is_valid_and_one_above_is_rejected() {
+fn a_deploy_at_the_caps_is_valid_and_one_above_is_rejected() {
     let mut net = TestNet::new(34, 80);
     let d = deploy(&mut net, vec![vault()]);
-    let top = largest_provable();
+    let top = largest_allowed();
     assert_eq!(
         check_after(&net, &d, |x| x.programs[0].budget = top),
         Ok(()),
-        "every field at its limit"
+        "every field at its cap"
     );
     for (name, field) in FIELDS {
         let e = check_after(&net, &d, |x| {
@@ -222,10 +266,159 @@ fn a_deploy_at_the_limits_is_valid_and_one_above_is_rejected() {
         assert_eq!(
             e,
             Err(TxError::PxBudgetTooLarge { program: 1 }),
-            "{name} one above its limit"
+            "{name} one above its cap"
         );
     }
     assert!(TxError::PxBudgetTooLarge { program: 0 }.is_stateless());
+}
+
+/// A minimal RV32I executable: `n` instructions `addi x0, x0, 0` loaded at
+/// 0x10000, entry at the first. Different `n` give different program ids.
+fn nop_elf(n: usize) -> Vec<u8> {
+    let base: u32 = 0x1_0000;
+    let code = 4 * n as u32;
+    let mut e = vec![0u8; 84];
+    e[..4].copy_from_slice(b"\x7fELF");
+    e[4] = 1; // 32-bit
+    e[5] = 1; // little-endian
+    e[6] = 1; // version
+    e[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+    e[18..20].copy_from_slice(&243u16.to_le_bytes()); // EM_RISCV
+    e[20..24].copy_from_slice(&1u32.to_le_bytes());
+    e[24..28].copy_from_slice(&base.to_le_bytes()); // entry
+    e[28..32].copy_from_slice(&52u32.to_le_bytes()); // phoff
+    e[40..42].copy_from_slice(&52u16.to_le_bytes()); // ehsize
+    e[42..44].copy_from_slice(&32u16.to_le_bytes()); // phentsize
+    e[44..46].copy_from_slice(&1u16.to_le_bytes()); // phnum
+    let ph = 52;
+    e[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+    e[ph + 4..ph + 8].copy_from_slice(&84u32.to_le_bytes()); // offset
+    e[ph + 8..ph + 12].copy_from_slice(&base.to_le_bytes()); // vaddr
+    e[ph + 12..ph + 16].copy_from_slice(&base.to_le_bytes()); // paddr
+    e[ph + 16..ph + 20].copy_from_slice(&code.to_le_bytes()); // filesz
+    e[ph + 20..ph + 24].copy_from_slice(&code.to_le_bytes()); // memsz
+    e[ph + 24..ph + 28].copy_from_slice(&5u32.to_le_bytes()); // R | X
+    e[ph + 28..ph + 32].copy_from_slice(&4u32.to_le_bytes());
+    for _ in 0..n {
+        e.extend_from_slice(&0x0000_0013u32.to_le_bytes());
+    }
+    e
+}
+
+/// The program and image caps, with synthetic programs. The image holds
+/// every code word plus the 32 registers, so the image cap (2^14) binds
+/// before the program-table cap: 2^14 − 32 instructions are the most a
+/// program without data may have.
+#[test]
+fn program_and_image_caps() {
+    use blacksilk_zkvm::air::{program, trace, MIN_HEIGHT};
+    assert_eq!((PX_FN_LOG_PROGRAM, PX_FN_LOG_IMAGE), (14, 14));
+    let load = |n: usize| Program::from_elf(&nop_elf(n)).expect("the synthetic ELF loads");
+    let image = |p: &Program| trace::image(p).len();
+    let largest = load((1 << 14) - 32);
+    assert_eq!(image(&largest), 1 << 14);
+    assert_eq!(program::height(&largest, MIN_HEIGHT), 1 << 14);
+    assert!(program_is_provable(&largest));
+    let image_over = load((1 << 14) - 31);
+    assert_eq!(image(&image_over), (1 << 14) + 1);
+    assert_eq!(program::height(&image_over, MIN_HEIGHT), 1 << 14);
+    assert!(!program_is_provable(&image_over), "image 2^14 + 1");
+    let height_over = load((1 << 14) + 1);
+    assert_eq!(program::height(&height_over, MIN_HEIGHT), 1 << 15);
+    assert!(!program_is_provable(&height_over), "program height 2^15");
+    assert!(program_is_provable(&Program::from_elf(VAULT_ELF).unwrap()));
+    assert!(program_is_provable(
+        &Program::from_elf(&other_elf()).unwrap()
+    ));
+
+    // In a deploy: accepted at the cap, refused with its index above it.
+    let mut net = TestNet::new(39, 80);
+    let d = deploy(&mut net, vec![vault()]);
+    let reg = |n: usize| Registration {
+        elf: nop_elf(n),
+        budget: VAULT_BUDGET,
+        abi: blacksilk_tx::px::ABI_VERSION,
+        out_words: 1,
+    };
+    assert_eq!(
+        check_after(&net, &d, |x| x.programs.push(reg((1 << 14) - 32))),
+        Ok(())
+    );
+    for n in [(1 << 14) - 31, (1 << 14) + 1] {
+        assert_eq!(
+            check_after(&net, &d, |x| x.programs.push(reg(n))),
+            Err(TxError::PxProgramTooLarge { program: 1 }),
+            "{n} instructions"
+        );
+    }
+    assert!(TxError::PxProgramTooLarge { program: 0 }.is_stateless());
+}
+
+/// Any `MAX_FN` registered functions fit together with the kernel: for
+/// random allowed budgets (half the fields at their caps) and programs at
+/// the caps, every table of the statement (`Statement::shape`, the heights
+/// the verifier checks) is at most 2^16 rows, each function's own tables are
+/// within their caps, and the shared tables within theirs. No proving.
+#[test]
+fn any_pair_of_allowed_functions_has_every_table_within_its_cap() {
+    use blacksilk_zkvm::air::trace::{Part, Statement};
+    use rand_chacha::rand_core::{RngCore, SeedableRng};
+    use std::sync::Arc;
+    assert_eq!(MAX_FN, 2);
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0xB2);
+    let top = largest_allowed();
+    let kernel = blacksilk_px::prove::kernel_program();
+    let fns = [
+        Arc::new(Program::from_elf(&nop_elf((1 << 14) - 32)).unwrap()),
+        Arc::new(Program::from_elf(VAULT_ELF).unwrap()),
+    ];
+    let random = |rng: &mut rand_chacha::ChaCha20Rng| {
+        let mut b = top;
+        for (_, field) in FIELDS {
+            let max = *field(&mut b);
+            *field(&mut b) = if rng.next_u32().is_multiple_of(2) {
+                max
+            } else {
+                (rng.next_u64() % (max as u64 + 1)) as usize
+            };
+        }
+        assert!(budget_is_provable(&b));
+        b
+    };
+    for i in 0..2_000 {
+        let budgets = [random(&mut rng), random(&mut rng)];
+        let part = |k: usize| Part {
+            program: fns[(i + k) % 2].clone(),
+            exit_code: 0,
+            output: vec![0; blacksilk_tx::params::MAX_FN_OUTPUT_WORDS],
+            budget: Some(budgets[k]),
+        };
+        let st = Statement {
+            program: kernel.clone(),
+            exit_code: 0,
+            output: vec![0; 512],
+            binding: [0; 32],
+            others: vec![part(0), part(1)],
+            budget: Some(kernel_budget(MAX_FN)),
+        };
+        let shape = st.shape().expect("every execution has a budget");
+        assert!(
+            shape.iter().all(|&h| h <= 1 << 16),
+            "{budgets:?}: {shape:?}"
+        );
+        // Each function's own tables: program, image, keys, cycles, output.
+        for k in 0..2 {
+            let own = &shape[12 + 5 * k..12 + 5 * k + 5];
+            assert!(own[0] <= 1 << PX_FN_LOG_PROGRAM && own[1] <= 1 << PX_FN_LOG_IMAGE);
+            assert!(own[2] <= 1 << PX_FN_LOG_KEYS && own[3] <= 1 << PX_FN_LOG_CYCLES);
+        }
+        // The shared tables (add, bit, lt, shift, mul; Poseidon2).
+        let caps = [PX_LOG_ADD, PX_LOG_BIT, PX_LOG_LT, PX_LOG_SHIFT, PX_LOG_MUL];
+        for (j, log) in caps.into_iter().enumerate() {
+            assert!(shape[5 + j] <= 1 << log, "shared table {j}: {shape:?}");
+        }
+        assert!(shape[11] <= 1 << PX_LOG_POSEIDON, "poseidon: {shape:?}");
+    }
 }
 
 /// A second program that loads to another id than the vault: the kernel.

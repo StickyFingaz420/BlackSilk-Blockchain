@@ -53,6 +53,43 @@ const _: () = assert!(DEPLOY_FEE_PER_BYTE >= FEE_PER_WEIGHT);
 pub const MAX_DEPLOY_PROGRAMS: usize = 16;
 pub const MAX_PROGRAM_BYTES: usize = 256 * 1024;
 
+/// Deploy-time row caps (record `px-deploy-row-caps`, freeze gate B2), as
+/// log2 of a table height. A registered function's own tables: its CPU table
+/// (`Budget::cycles`), its memory-init table (`Budget::keys`), and its
+/// program and image tables (`program::height`, the padded image length).
+pub const PX_FN_LOG_CYCLES: u32 = 15;
+pub const PX_FN_LOG_KEYS: u32 = 14;
+pub const PX_FN_LOG_PROGRAM: u32 = 14;
+pub const PX_FN_LOG_IMAGE: u32 = 14;
+/// The tables shared with the kernel: `K.x + MAX_FN·b.x ≤ 2^cap` for the
+/// kernel budget `K = kernel_budget(MAX_FN)`, so any pair of registered
+/// functions fits together with the kernel.
+pub const PX_LOG_ADD: u32 = 16;
+pub const PX_LOG_BIT: u32 = 14;
+pub const PX_LOG_LT: u32 = 16;
+pub const PX_LOG_SHIFT: u32 = 14;
+pub const PX_LOG_MUL: u32 = 14;
+pub const PX_LOG_POSEIDON: u32 = 11;
+// Every capped table stays at or below the tallest PX table,
+// `blacksilk_px::prove::PX_MAX_LOG_HEIGHT` (2^16, the byte table), which the
+// PX5 shape check enforces.
+const PX_MAX_LOG: u32 = blacksilk_px::prove::PX_MAX_LOG_HEIGHT as u32;
+const _: () = assert!(
+    PX_FN_LOG_CYCLES <= PX_MAX_LOG
+        && PX_FN_LOG_KEYS <= PX_MAX_LOG
+        && PX_FN_LOG_PROGRAM <= PX_MAX_LOG
+        && PX_FN_LOG_IMAGE <= PX_MAX_LOG
+        && PX_LOG_ADD <= PX_MAX_LOG
+        && PX_LOG_BIT <= PX_MAX_LOG
+        && PX_LOG_LT <= PX_MAX_LOG
+        && PX_LOG_SHIFT <= PX_MAX_LOG
+        && PX_LOG_MUL <= PX_MAX_LOG
+        && PX_LOG_POSEIDON <= PX_MAX_LOG
+);
+// The prover's early stop for a function run (`blacksilk_px::prove::prove`)
+// uses the same cycle cap.
+const _: () = assert!(PX_FN_LOG_CYCLES == blacksilk_px::prove::FN_RUN_LOG_CYCLES);
+
 /// T1: maximum encoded transaction size in bytes.
 pub const MAX_TX_SIZE: usize = 100_000;
 /// T3: input and output count bounds of a transfer.

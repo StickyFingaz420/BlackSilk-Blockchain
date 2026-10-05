@@ -582,29 +582,38 @@ owner): a STARK on Plonky3 0.7.**
   bound is ≥ 150 bits both with BCHKS25 and with the peer-reviewed BCIKS20 bound alone,
   so the commitment term is the limiting one by a wide margin. Evidence class:
   computed and tested; not a proof, and not independent review.
-- **Headline (BS-ZK-3):** about **105 bits**, computed (not proven) under the
+- **Headline (BS-ZK-4):** about **109.6 bits**, computed (not proven) under the
   assumptions of this section (§9.3), in the unique-decoding regime
-  (**89.6 statistical + 16 grinding**: the 108 queries at rate 1/8 give the
-  statistical part, and the 16 bits of query grinding are computational, counted
+  (**89.6 statistical + 20 grinding**: the 108 queries at rate 1/8 give the
+  statistical part, and the 20 bits of query grinding are computational, counted
   against an adversary's Poseidon2 budget); the Johnson regime is **hash-bound at
   ≈ 122 bits** (`COLLISION_BITS`). The figures are pinned by
   `zk/tests/soundness_calc.rs::headline_figures_at_the_largest_shape`.
-  - **With the mixed-height union term: about 100.5 bits** in the unique-decoding
-    regime (105.58 − log2 33 = 100.54 at the worst point of the envelope, the smallest
-    height; 100.60 at the largest shape), just above the 100-bit floor
+  - **With the mixed-height union term: about 104.5 bits** in the unique-decoding
+    regime (109.58 − log2 33 = 104.54 at the worst point of the envelope, the smallest
+    height; 104.60 at the largest shape), about 4.5 bits above the 100-bit floor
     `MIN_PROVEN_BITS`, and ≥ 100 at every point of the envelope
     (`the_independent_calculator_agrees_with_p3_security`). This is the conservative
-    figure to quote. The term (RES-FREEZE,
+    figure to quote. Of it, only **84.5 bits are statistical** (89.58 − 5.04); the
+    other 20 are grinding, which is computational and worth less against an adversary
+    with cheap Poseidon2 hardware. BS-ZK-3 had 16 grinding bits (100.54 with the
+    term, a 0.5-bit margin); BS-ZK-4 raised grinding to the 20-bit cap of this section
+    (decisions "BS-ZK-4"), which is now used up for the chain's life. The term (RES-FREEZE,
     reviews/phase2-2026-09-27/research/res-freeze.md §5.4 (b) and §8.6 item 5 (b))
     treats each distinct input height of the batched FRI as its own FRI instance and
     takes a union bound over them, so the batching, every commit-phase round and the
     query phase each lose log2(H) bits. H is at most the table count (33 for the widest
     BVM-1 statement, `DecodeLimits::ENVELOPE`; 23 for PX, `PROOF_LIMITS`) and at most
     the 15 committed heights of the envelope; the calculator charges H = 33 (5.04 bits,
-    against 3.9 for H = 15). It is a heuristic stand-in for the missing theorem on
-    mixed-height roll-in, not a proof (§12.1). The Johnson figure stays hash-bound at
-    122 (its algebraic bound, ≥ 150, minus 5.04 bits is still above it). The margin
-    above the floor is about 0.5 bits; any change that costs more (fewer queries, a
+    against 3.9 for H = 15). It is a heuristic stand-in for a missing theorem, not a
+    proof (§12.1). A close peer-reviewed analogue is Zhang et al., USENIX Security
+    2024, Protocol 1 and Theorem 3.1 ("rolling batch FRI": arity 2, unique decoding),
+    whose query term has no factor in the number of rolled-in polynomials; it does
+    not cover Plonky3's exact construction (arity up to 16, skipped heights,
+    DEEP-batched and hiding inputs, ρ⁺, Fiat–Shamir), so the union term is kept as the
+    conservative figure. The Johnson figure stays hash-bound at 122 (its algebraic
+    bound, ≥ 150, minus 5.04 bits is still above it). The margin above the floor is
+    about 4.5 bits, all of it grinding; any change that costs more (fewer queries, a
     larger rate, more distinct heights counted) needs a parameter decision, which is
     consensus.
   - **The commitment term** `COLLISION_BITS` = 122 is our evaluation of ePrint
@@ -618,7 +627,7 @@ owner): a STARK on Plonky3 0.7.**
     paper shows does not apply to the node compression alone.
   - **Not modelled by `p3-security`:** LogUp, the multi-table DEEP union and
     mixed-height FRI inputs. The first two are bounded by the independent calculator;
-    mixed-height FRI has no published analysis. The calculator charges it the
+    mixed-height FRI has no published analysis of the exact construction (a close analogue: §9.3 above). The calculator charges it the
     conservative union-bound term above (5.04 bits); that the roll-in loses no more than a
     union over heights is an assumption, not a theorem (Plonky3 GHSA-f69f-5fx9-w9r9, an
     unsound roll-in fixed in 0.7.0, shows the construction is delicate;
@@ -629,8 +638,13 @@ owner): a STARK on Plonky3 0.7.**
   are opened at both ζ and g·ζ, so the true count can reach about twice the columns.
   The worst case, 2 × 15,709 = 31,418, is still below the 65,536 the test covers, so
   the figures below hold for it.
-- **Current set: BS-ZK-3** (testnet v3; the normative proof format and verifier
-  rules are in docs/proof-system.md). Minimum table height 2^8, so that the
+- **Current set: BS-ZK-4** (testnet v3; the normative proof format and verifier
+  rules are in docs/proof-system.md): BS-ZK-3 with 20 query grinding bits instead of
+  16 (decisions "BS-ZK-4"; docs/reviews/v3-consensus-changes.md, "bs-zk-4"). No change
+  to the proof format or its expected size (individual lengths vary with the query
+  positions, and every proof's bytes differ), no verifier code change and no other
+  constant change; eq. 16 and 17 below depend on
+  the query count only and are unaffected. Minimum table height 2^8, so that the
   witness-randomization bound of ePrint 2024/1037 §4.2, eq. 17, holds with **both**
   opening points counted, as Plonky3 0.8's hiding budget counts them:
   2·(n_D + e·n_F) = 2·(108 + 8·2) = 248 ≤ 256 (the query ceiling at this height is
@@ -649,7 +663,7 @@ owner): a STARK on Plonky3 0.7.**
   - The zero-knowledge claim is **statistical and conditional** under the open items
     of docs/reviews/zk-coverage.md, and computational in practice (§12.1); it is not
     perfect and not proven for the whole system.
-  - degree-8 extension, blow-up 8, 108 queries, 16 grinding bits;
+  - degree-8 extension, blow-up 8, 108 queries, 20 grinding bits (16 until BS-ZK-4);
   - over the whole shape envelope: the headline figures above (Johnson target 120,
     approved floor 100; unique-decoding floor 100).
   - The unique-decoding floor is extra conservatism beyond decision B. Dropping it would cut
@@ -684,7 +698,7 @@ owner): a STARK on Plonky3 0.7.**
   roughly quadratically in the number of oracle queries. **No BlackSilk parameter is
   sized by a quantum bound, and no quantum figure has been proven or computed from
   that theorem.** Heuristic estimates only, from generic quantum speed-ups: about
-  **53 bits** in the unique-decoding regime (a Grover-style halving of about 105) and
+  **55 bits** in the unique-decoding regime (a Grover-style halving of about 109.6; 53 at BS-ZK-3) and
   about **82 bits** against the Merkle commitments (a BHT-style collision search,
   |H|^(1/3) with |H| = p^8, ignoring its memory cost). These are labelled estimates
   (dossier 25 §3.6), not security claims. (Until v3 this item said the parameters
@@ -866,9 +880,14 @@ of scope until proof size is solved (aggregation-study.md).
 - **Prover rules that consensus does not enforce.** A proof should not reveal which
   prover made it:
   - Take the **smallest** valid proof-of-work nonce (F27-3). The verifier accepts any
-    valid nonce. A prover that takes another one is distinguishable at about 2^16
-    permutations. Requiring the smallest nonce in consensus would cost every verifier
-    about as much, so it is a prover rule (decisions, "PXDET-1").
+    valid nonce. A prover that takes another one is distinguishable at about 2^20
+    permutations (2^16 before BS-ZK-4). Requiring the smallest nonce in consensus would
+    cost every verifier about as much, so it is a prover rule (decisions, "PXDET-1").
+    The reference prover's search is sequential and returns the smallest nonce; at
+    20 bits it takes about 1.3 s per proof on average (median 0.95 s; the time is
+    geometric, so a few seconds happen: 5.2 s was the largest of 64 transcripts) on
+    the reference machine
+    (`zk/tests/grinding.rs::grinding_time_at_the_parameter_sets_bits`, release).
   - Draw the hiding randomness in table order. The reference prover's
     `p3-batch-stark` patch does, so its proofs depend only on the witness and the seed
     (PXDET-1; `zkvm/tests/reproducible.rs`). Proof length follows the public query
@@ -878,10 +897,10 @@ of scope until proof size is solved (aggregation-study.md).
 
 ## 12. Security analysis
 
-**Security headline (BS-ZK-3; figures and caveats in §9.3):** about **105 bits** of
+**Security headline (BS-ZK-4; figures and caveats in §9.3):** about **109.6 bits** of
 soundness, computed (not proven) under the assumptions of §9.3 (**89.6 statistical +
-16 grinding**, unique-decoding regime), and about **100.5 bits** once the conservative
-mixed-height union term (log2 33 = 5.04 bits) is charged, just above the 100-bit floor; the Johnson regime is **hash-bound at
+20 grinding**, unique-decoding regime), and about **104.5 bits** (84.5 of them statistical) once the conservative
+mixed-height union term (log2 33 = 5.04 bits) is charged, about 4.5 bits above the 100-bit floor; the Johnson regime is **hash-bound at
 ≈ 122 bits** (the Merkle commitments); zero knowledge is
 **statistical and conditional** (reviews/zk-coverage.md §3), and **computational in
 practice**, because the masks are PRG outputs. None of this is a claim that BlackSilk is
@@ -900,11 +919,11 @@ secure or perfectly zero-knowledge; it is internal engineering work, not an audi
      `zkvm/src/prove.rs`). The guarantee therefore holds against observers who cannot
      distinguish these PRG outputs from random (and under the conditions of
      zk-coverage.md §3).
-   - **Soundness** counts 16 bits of proof-of-work grinding, which are computational
+   - **Soundness** counts 20 bits of proof-of-work grinding (BS-ZK-4), which are computational
      (an adversary's Poseidon2 budget), on top of 89.6 statistical bits.
-   - **Mixed-height batching** (no published theorem): the batched FRI over tables of
+   - **Mixed-height batching** (no theorem for the exact construction; Zhang et al., USENIX Security 2024, Theorem 3.1 is a close arity-2 analogue): the batched FRI over tables of
      different heights is assumed to lose no more than a union bound over the input
-     heights, which the calculator charges as log2 33 = 5.04 bits (§9.3; about 100.5 bits with
+     heights, which the calculator charges as log2 33 = 5.04 bits (§9.3; about 104.5 bits with
      it). The batch-STARK composition (DEEP-ALI, LogUp, several tables, ZK masking)
      likewise has no end-to-end soundness proof as configured.
 2. **`Hk`** (the sponge): collision resistance, preimage resistance, and PRF security
@@ -953,7 +972,7 @@ reconsider.
 | Zero-knowledge bug | Private data leaks from proofs | Cannot be undone for published proofs. Hence the ZK-mode verification in PX-0 and the internal review of the hiding construction (reviews/zk-coverage.md, reviews/terminal-blinding.md). **No simulatability tests exist:** statistical tests on hiding randomness would test only the RNG (terminal-blinding.md §3). What exists: a test that two proofs of one statement differ, the fixed-shape tests, and the P-5 proof-length campaign. |
 | `Hk` weakness | Collisions: double spends or fake records | Containment; migration to a new tree with a new `Hk` (§9.6) |
 | KEM break | Contents readable | Hybrid: both ECDH and ML-KEM must fail |
-| Quantum adversary | v1 layer broken (transactions.md §11.6) | PX soundness and zero-knowledge are hash-based; their quantum security is not quantified by a proof (heuristic estimates in §9.3: about 53 bits unique decoding, about 82 bits for the commitments); record contents stay protected by ML-KEM; the bridge's v1 side is exposed like all of v1 |
+| Quantum adversary | v1 layer broken (transactions.md §11.6) | PX soundness and zero-knowledge are hash-based; their quantum security is not quantified by a proof (heuristic estimates in §9.3: about 55 bits unique decoding, about 82 bits for the commitments); record contents stay protected by ML-KEM; the bridge's v1 side is exposed like all of v1 |
 
 ---
 

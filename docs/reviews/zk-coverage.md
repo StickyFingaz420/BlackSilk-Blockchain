@@ -1,9 +1,10 @@
 # Zero knowledge of PX proofs: what is covered, and what remains assumed
 
 Status: **internal analysis, 2026-09-26, first written for the former parameter set BS-ZK-2;
-updated 2026-10-05 to the current set BS-ZK-3 (`zk/src/params.rs`). No external audit.**
-BS-ZK-4 (20 query grinding bits) is pending on branch `bszk4`; figures will be updated
-after it merges.
+updated 2026-10-05 to BS-ZK-3. No external audit.** The current set is BS-ZK-4
+(`zk/src/params.rs`): it changes only the query grinding (16 to 20 bits), a soundness
+parameter, so the hiding parameters and every zero-knowledge figure here are those of
+BS-ZK-3.
 
 - The target is zero knowledge that is **statistical and conditional (computational in
   practice)**, not perfect zero knowledge (§4).

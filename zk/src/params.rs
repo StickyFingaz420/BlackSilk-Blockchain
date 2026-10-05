@@ -1,5 +1,5 @@
-//! Parameter set **BS-ZK-3** (docs/zk.md §9.3, docs/proof-system.md) and its
-//! proven security.
+//! Parameter set **BS-ZK-4** (docs/zk.md §9.3, docs/proof-system.md) and its
+//! computed security.
 //!
 //! Every shape inside the envelope reaches
 //! - at least [`TARGET_JOHNSON_BITS`] in the Johnson-bound (list-decoding)
@@ -10,9 +10,11 @@
 //! So soundness does not depend on the 2020/2025 proximity-gap results; they
 //! only add margin. BS-ZK-1 (degree-5 extension, blow-up 32, 50 queries) had
 //! exactly 100 Johnson bits and 63 unique-decoding bits at the largest shape
-//! and was replaced (AUDIT.md R8, finding ZK-F4). BS-ZK-2 was BS-ZK-3 with 4
-//! random codewords per committed matrix; BS-ZK-3 uses 8, the extension
-//! degree (decision F24-1, testnet v3 reset; docs/reviews/v3-consensus-changes.md).
+//! and was replaced (AUDIT.md R8, finding ZK-F4). BS-ZK-2 had 4 random
+//! codewords per committed matrix; BS-ZK-3 used 8, the extension degree
+//! (decision F24-1, testnet v3 reset); BS-ZK-4 is BS-ZK-3 with 20 query
+//! grinding bits instead of 16 (decision "BS-ZK-4";
+//! docs/reviews/v3-consensus-changes.md).
 //!
 //! Changing any constant here changes the proof format, its soundness or its
 //! zero knowledge: it is a new parameter set (a new verifier-registry entry),
@@ -32,10 +34,15 @@ use p3_uni_stark::{ProvenSecurity, StarkSecurityParams};
 
 /// Identifier of this parameter set; absorbed into every transcript.
 ///
-/// BS-ZK-3 (testnet v3): BS-ZK-2 with [`NUM_RANDOM_CODEWORDS`] raised from 4
-/// to 8. (An earlier local 8-codeword build had also been called BS-ZK-3; it
-/// was reverted before any commit and never produced a published proof.)
-pub const PARAMS_ID: &[u8] = b"BlackSilk/zk/BS-ZK-3";
+/// BS-ZK-4 (testnet v3): BS-ZK-3 with [`QUERY_POW_BITS`] raised from 16 to 20
+/// (decision "BS-ZK-4", 2026-10-04): the unique-decoding margin over the
+/// 100-bit floor, with the mixed-height union term, goes from about 0.5 to
+/// about 4.5 bits at no proof-size cost.
+///
+/// BS-ZK-3: BS-ZK-2 with [`NUM_RANDOM_CODEWORDS`] raised from 4 to 8. (An
+/// earlier local 8-codeword build had also been called BS-ZK-3; it was
+/// reverted before any commit and never produced a published proof.)
+pub const PARAMS_ID: &[u8] = b"BlackSilk/zk/BS-ZK-4";
 
 /// log2 of the FRI blow-up factor (rate ρ = 2^-3).
 pub const LOG_BLOWUP: usize = 3;
@@ -45,8 +52,13 @@ pub const NUM_QUERIES: usize = 108;
 pub const MAX_LOG_ARITY: usize = 4;
 /// log2 of the final polynomial length at which FRI stops folding.
 pub const LOG_FINAL_POLY_LEN: usize = 6;
-/// Proof-of-work bits before query sampling (counted in the security computation).
-pub const QUERY_POW_BITS: usize = 16;
+/// Proof-of-work bits before query sampling (counted in the security
+/// computation). 20 since BS-ZK-4; docs/zk.md §9.3 caps grinding at 20 bits.
+pub const QUERY_POW_BITS: usize = 20;
+const _: () = assert!(
+    QUERY_POW_BITS <= 20,
+    "grinding is capped at 20 bits (docs/zk.md §9.3)"
+);
 /// Proof-of-work bits before each commit-phase challenge.
 pub const COMMIT_POW_BITS: usize = 0;
 
@@ -273,8 +285,8 @@ mod tests {
     /// heights 2^8..2^22, i.e. committed degree bits 9..=23.
     ///
     /// It also pins **which term binds**: in the unique-decoding regime the
-    /// low-degree test (its query phase: 108 queries at rate 1/8 plus 16
-    /// grinding bits, about 105.6), in the Johnson regime the commitment term
+    /// low-degree test (its query phase: 108 queries at rate 1/8 plus 20
+    /// grinding bits, about 109.6), in the Johnson regime the commitment term
     /// [`COLLISION_BITS`]; so the reported Johnson figure is exactly
     /// `COLLISION_BITS` everywhere. The independent recomputation is
     /// `zk/tests/soundness_calc.rs`.
@@ -327,7 +339,7 @@ mod tests {
             }
         }
         // Record the margin in the test output (cargo test -- --nocapture).
-        println!("BS-ZK-3 worst case over the envelope: {worst:?}");
+        println!("BS-ZK-4 worst case over the envelope: {worst:?}");
     }
 
     // Compile-time checks of the parameter relations.

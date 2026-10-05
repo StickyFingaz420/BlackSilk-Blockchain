@@ -38,6 +38,8 @@ they are never renamed. Index:
 - px-ciphertext-r (tx; PX-R)
 - rx-salt (randomx; RX-SALT)
 - output-root (consensus header, tx, px, chain, rpc, miner, node, wallet; OMR)
+- bs-zk-4 (zk parameter set: 20 query grinding bits; px fingerprint, golden PX fixture; BS-ZK-4)
+- px-deploy-row-caps (tx deploy rule, px shape check, node samples; B2-CAPS)
 
 New sections are appended at the end.
 
@@ -3880,3 +3882,340 @@ make the proof-of-work input a fixed 47-byte mining blob, in this one revision.
   intermediate `650e5fe` build (header-input PoW hashes under the new genesis ids) is
   never replayed (`damaged_torn_and_foreign_file_headers`); the PoW cache key tag is
   `"BlackSilk/pow-cache/v3"`.
+
+---
+
+<a id="bs-zk-4"></a>
+
+## bs-zk-4: twenty query grinding bits, parameter set BS-ZK-4
+
+Revision: ZK:BS-ZK-4-query-grinding-20
+
+Owner: BS-ZK-4 (zk, px, node). Decision: "BS-ZK-4" (Lead, 2026-10-04, approved by the
+owner), after "RES-FREEZE dossier, first pass" item 5, "Mixed-height soundness term" and
+"RT-FREEZE-V". Research: docs/evidence/fri-margin-2026-10-04/README.md (the option
+table, size estimates and the literature check; summarized in item 3). Internal
+engineering work, not an audit.
+
+1. **Problem.** With the mixed-height union term (Follow-up (mixed-height term) of
+   "Soundness figures"), BS-ZK-3's unique-decoding figure is ≥ 100.54 bits over the
+   envelope: about 0.5 bits above the 100-bit floor `MIN_PROVEN_BITS`. Any small error
+   in the calculator's model, or a later shape change, would put the frozen parameter
+   set below its own floor, and a change after the freeze is a reset.
+2. **Demonstrated failure.** None in a proof. The failure is a margin one, by
+   calculation: `soundness_calc.rs` gives 100.54 at the worst shape with H = 33. The
+   floor counts total bits (`MIN_PROVEN_BITS` is checked against p3-security's
+   unique-decoding bits, queries plus grinding), and docs/zk.md §9.3 allows grinding up
+   to 20 bits.
+3. **Prior art and options.** ethSTARK (ePrint 2021/582) counts grinding bits in the
+   same way; Plonky3's `p3-security` adds `query_pow_bits` to the query term. Options
+   measured by the study (total bits; with the H = 32 term of the time):
+   - 108 queries, 16 bits (BS-ZK-3): 105.58; 100.58 with the term.
+   - **108 queries, 20 bits (chosen): 109.58; 104.58 with the term.** No expected-size
+     cost (item 7).
+   - 112 queries, 16 bits: 108.90; 103.90. About +3.4 % proof bytes, and 112 is the
+     ceiling of eq. 17 at `MIN_LOG_HEIGHT` 8 (2·(q + 16) ≤ 256); the widest PX proof
+     (3.63 MB measured for W28-3, unmeasured for the widest shape, freeze gate B2) would
+     come within about 1.2 % of the 3.8 MB decision bound.
+   - 116 or 120 queries: need `MIN_LOG_HEIGHT` 9, a circuit-envelope change.
+   - Literature on the term itself: Zhang et al., "Fast RS-IOP Multivariate Polynomial
+     Commitments and Verifiable Secret Sharing", USENIX Security 2024, Protocol 1
+     ("rolling batch FRI") and Theorem 3.1: arity 2, unique decoding, a query term with
+     no factor in the number of rolled-in polynomials. It is a close peer-reviewed
+     analogue, not a theorem for Plonky3's construction (arity up to 16, skipped
+     heights, DEEP-batched and hiding inputs, a final polynomial of 64 coefficients,
+     ρ⁺, Fiat–Shamir), so the union term is kept as the conservative figure.
+4. **Alternatives.** Keep BS-ZK-3 and accept a 0.5-bit margin (rejected: the margin is
+   inside the uncertainty of the model); more queries (rejected above: proof bytes and
+   the eq. 17 ceiling); drop the union term on the strength of Zhang et al. (rejected:
+   not the same construction).
+5. **Affected components.** `zk/src/params.rs` (`PARAMS_ID` =
+   `BlackSilk/zk/BS-ZK-4`, `QUERY_POW_BITS` = 20, a `const` assertion of the 20-bit
+   cap); every proof's transcript (the parameter-set id is absorbed first) and its
+   query grinding witness; the PX consensus manifest (`zk.PARAMS_ID`,
+   `zk.QUERY_POW_BITS`, the transcript sample) and so `PX_SIDE_DIGEST`; the golden PX
+   fixture (`node/src/px_fixture.bin`), regenerated, and the node's PX samples; the
+   rules and consensus fingerprints of every network. No verifier code changes:
+   Plonky3's verifier reads the grinding bits from the configuration. `CIRCUIT_ID`
+   and `CIRCUIT_DIGEST` are unchanged (the statement digest does not hash the
+   parameter set).
+6. **Activation.** v3 genesis base rule (the reset); no BS-ZK-3 proof was ever
+   published on a network.
+7. **Compatibility.** BS-ZK-3 proofs do not verify under BS-ZK-4 (another `PARAMS_ID`
+   in the transcript, and a 16-bit witness fails the 20-bit check with probability
+   15/16) and vice versa. Records, nullifiers, the tree and the proof format are
+   unchanged, and so is the expected proof size. *Corrected (red team, 2026-10-05):*
+   this item first said "proof sizes are unchanged" (and item 3 "no proof-byte cost",
+   the commit message "no proof-byte change"), which is literally false: every
+   proof's bytes change (another transcript, another witness), and individual
+   lengths vary with the query positions (the regenerated golden fixture is 4,704
+   bytes shorter). The claim is no proof-format or expected-size change, and no
+   verifier code change.
+8. **Reorg, wallet, mining, P2P.** Wallets prove with the new set (same binary). The
+   prover's grinding grows from about 2^16 to about 2^20 Poseidon2 permutations per
+   proof: about 1.3 s mean, 0.95 s median, up to 5.2 s (item 11), small against proving times
+   of tens of seconds. The search stays sequential and returns the smallest nonce
+   (F27-3); a prover that deviates is distinguishable at about 2^20 permutations
+   (docs/zk.md §11.3). Verification cost is unchanged (one witness check). No mining,
+   reorg or P2P change.
+9. **Vectors.** `PARAMS_ID` = `BlackSilk/zk/BS-ZK-4`. The pinned `PX_SIDE_DIGEST`
+   (`px/tests/consensus_fingerprint.rs`), the golden PX fixture and the
+   `deploy_configs.rs` pins are re-pinned (item 11); values are referenced, not copied.
+10. **Tests.** `zk/tests/soundness_calc.rs` (p3-security 105 → 109; largest shape
+    109.5–109.8, with the term 104.5–104.8; the envelope minimum with the term
+    104.5–104.7); `params::tests::every_shape_within_limits_meets_both_security_targets`
+    (worst case 109 unique-decoding bits, 122 Johnson);
+    `zk/tests/grinding.rs::grinding_time_at_the_parameter_sets_bits` (new, ignored,
+    release: times the 20-bit search on 64 transcripts and checks four against brute
+    force); the zk proof suites, the PX-proving suites and `node/tests/px_fixture.rs` on
+    the regenerated fixture.
+11. **Suite results** (2026-10-04, release, `--locked`, 4-core i7-6700, 16 GB,
+    Windows 10; other builds were running on the machine):
+    - `cargo test --release -p blacksilk-zk -- --test-threads=2`: every binary passes
+      (lib 3; decode_bounds 10; field_mutations 2; grinding 4, 2 ignored; pins 1;
+      proofs 16; rt_pxdos_differential 4; soundness_calc 3; upstream_advisories 6).
+      The params test prints the worst case `{ johnson_bits: 122,
+      unique_decoding_bits: 109 }`; the independent calculator gives ≥ 109.58 bits over
+      1,440 shapes, ≥ 104.54 with the mixed-height term.
+    - Grinding at 20 bits (`grinding_time_at_the_parameter_sets_bits`, 64 transcripts):
+      min 25.3 ms, median 952 ms, mean 1,321 ms, max 5,211 ms; mean nonce 1,052,916
+      (2^20 = 1,048,576); four results equal the brute-force smallest nonce.
+    - PX manifest, entry-level diff against `5c283a4` (both rendered from release
+      builds in separate target directories): exactly `zk.PARAMS_ID`,
+      `zk.QUERY_POW_BITS` and `px.sample.zk.transcript([7; 32], [1, 2, 3])` change. The
+      PX-side digest becomes `c122c962…` (BS-ZK-4 alone). By decision it is re-pinned,
+      with `deploy_configs.rs`, once at the end of the branch together with
+      px-deploy-row-caps, which changes the PX manifest again; until then both pins
+      fail, known and expected (decision "Fingerprint pins during the pre-freeze v3
+      window").
+    - Golden PX fixture: regenerated twice from the same seeds, byte-identical
+      (SHA-256 `9ed13fe7…`; 2,404,291 bytes, was 2,408,995); `node --test px_fixture`
+      6 passed, 1 ignored (the generator), verification only.
+    - The PX-proving suites (tx `px_consensus`, `fuzz_decode`; px `proof`, `unified`;
+      chain `restart_rebuilds_the_px_state_exactly`; wallet e2e PX; p2p PX) are run one
+      at a time, `--test-threads=1`, at 9 GB free or more, on the branch tip before
+      merge. *Done (2026-10-05), with px-deploy-row-caps on the same tip:* all passed
+      (record `px-deploy-row-caps`, item 11, which also has the final re-pin).
+12. **Open review points.** (i) Grinding is computational: against an adversary with
+    cheap Poseidon2 hardware the 20 bits are worth less than statistical bits; only
+    84.5 bits (89.58 − 5.04) are statistical with the term. (ii) The 20-bit cap of
+    docs/zk.md §9.3 is now used up for the chain's life: any further margin must come
+    from queries or the rate. (iii) The smallest-nonce prover rule now costs about
+    2^20 permutations to check (docs/zk.md §11.3). (iv) The widest PX proof is still
+    unmeasured (gate B2); this change does not move it. (v) A red-team pass is owed
+    before the freeze.
+13. **Identity impact.** New `PARAMS_ID`; the PX-side digest and the rules and
+    consensus fingerprints of every network change; the identity fingerprints do not.
+    `rules.revision.len` 16 → 17.
+14. **Documentation.** docs/zk.md §9.3 (headline, current set, the Zhang et al.
+    analogue), §11.3 (grinding time, the 2^20 smallest-nonce cost), §12, §12.1;
+    docs/proof-system.md §2; docs/px.md §9.1; `zk/src/config.rs` (grinding doc);
+    decisions "BS-ZK-4"; res-freeze.md §8.5 annotated; STATUS.md.
+15. **Review status.** Implemented and tested by BS-ZK-4. Red team (internal, not an
+    audit, 2026-10-05): **MERGE WITH FIXES**, nothing blocking. Follow-up below.
+
+### Follow-up (red team on ee0e96f)
+
+Not a rule change: documentation, a test and an evidence summary; no pin moves.
+- **L1:** README.md (two lines), zk-security-review.md and assumptions.md Z7 named
+  BS-ZK-3 as the current set; now BS-ZK-4.
+- **L2:** "no proof-byte change" / "proof sizes are unchanged" were literally false;
+  corrected in item 7 (see there), docs/zk.md §9.3, decisions "BS-ZK-4" and STATUS:
+  no proof-format or expected-size change, no verifier code change; every proof's
+  bytes differ and individual lengths vary with the query positions.
+- **L3:** docs/proof-system.md §2 lists `QUERY_POW_BITS ≤ 20` as compile-time relation
+  R7 (R6 was taken).
+- **L4:** docs/zk.md §9.3: Zhang et al. is "a close peer-reviewed analogue", not "the
+  closest analysis".
+- **L6:** the research is summarized in the repository:
+  docs/evidence/fri-margin-2026-10-04/README.md, cited in the header above.
+- **Test gap:** `zk/tests/grinding.rs::a_witness_valid_at_16_bits_but_not_20_is_refused`:
+  over 36 transcript states, the smallest 16-bit witness that is not also a 20-bit one
+  is refused by `check_witness(QUERY_POW_BITS)`, the check the verifier runs (the
+  `FriParameters` of `zk::config` are built from `params::QUERY_POW_BITS` for prover
+  and verifier alike). A full-`verify` variant needs the challenger state at the
+  grinding step, which no API exposes without a new test hook; the existing
+  `upstream_advisories.rs` test that a changed `query_pow_witness` fails `verify`
+  covers the full path for one tampering.
+
+---
+
+<a id="px-deploy-row-caps"></a>
+
+## px-deploy-row-caps: deploy-time row caps on registered functions (freeze gate B2)
+
+Revision: B2:px-deploy-row-caps
+
+Owner: B2-CAPS (tx, px, node). Decision: "px-deploy-row-caps (V12)" (Lead, 2026-10-04),
+after freeze gate B2 failed. Evidence: commit `914b74f`
+(`docs/evidence/freeze-b2-b3-2026-10-04`, merged in rebuild/core) and the size and
+memory model summarized in docs/evidence/budget-cap-2026-10-04/README.md. Internal
+engineering work, not an audit.
+
+1. **Problem.** The R7-5 deploy rule (`budget_is_provable`) only required that each
+   function be provable alone with the kernel: cycles ≤ 2^21, keys ≤ 2^22, and each
+   shared table ≤ 2^22 with `kernel_budget(1)`. Under it:
+   - the widest registrable two-function PX proof is about **4.09 MB** (vault programs)
+     to **4.13 MB** (any programs) expected, 4.20–4.24 MB worst over the query
+     positions: above the 3.8 MB bound of decision "Agent 22" and close to
+     `MAX_PROOF_BYTES` (4 MiB);
+   - its prover would need about **1 TB** of memory (6.8 G weighted cells), and two
+     functions each provable alone could exceed a shared table together, so some
+     registered pairs could never be proven at all.
+2. **Demonstrated failure.** `914b74f` (B2): `px/examples/freeze_b2_b3.rs` models proof
+   size by surgery on real proofs (exact on all 34 two-function proofs) and searches
+   every reachable height set: widest 4,094,185 B (vault programs) and 4,125,167 B (any
+   programs) expected. The `dense18` measurement was stopped at 11.2 GB of prover
+   memory.
+3. **Prior art.** Fixed per-program resource budgets declared at registration, as in
+   this project's own R7-5 and in the gas or cycle limits of other systems; the change
+   only lowers the caps so that every combination is provable within a stated envelope.
+4. **Alternatives** (research notes §2–§4; sizes by the B2 model, memory by fits to
+   measured peaks):
+
+   | Scheme | Widest proof, expected / worst | Memory, widest pair | Headroom for contracts |
+   |---|---|---|---|
+   | today (R7-5) | 4.13 / 4.24 MB | about 1 TB | — |
+   | uniform 2^16 on every table | 3.70 / 3.78 MB | 24–36 GB | wide |
+   | **V12 (chosen)** | **3.70 / 3.78 MB** | **10.4 GB (13.1 GB pessimistic)** | the vault ×4.7 to ×35 per field |
+   | V10 | 3.70 / 3.78 MB | 8.2–9.3 GB | less |
+   | V8 (the vault-pair heights) | 3.67 / 3.74 MB | 6.45 GB (the measured point) | almost none: Poseidon2 ≤ 52, cycles ≤ 8,192, ≤ 4,096 instructions |
+
+   A uniform cap cannot meet 8–16 GB (the Poseidon2 table alone at 2^16 is about
+   5.6 GB), so the rule needs per-field caps. V8 would fit 8 GB provers but leaves
+   almost no room for any contract beyond the vault, so it is rejected. V12 targets a
+   16 GB proving class.
+5. **Change.** `tx::px::budget_is_provable` is replaced (stateless, deploy-time), with
+   `K = kernel_budget(MAX_FN)` and checked arithmetic:
+   - the function's own tables: `cycles ≤ 2^15`, `keys ≤ 2^14`;
+   - the shared tables: `K.x + MAX_FN·b.x ≤ 2^H[x]`, with `H` = add 16, lt 16, bit 14,
+     shift 14, mul 14, Poseidon2 11;
+   - new `tx::px::program_is_provable`, checked on every loaded program:
+     `program::height(p) ≤ 2^14` and the padded image length ≤ 2^14. The image holds
+     every code word plus 32 registers, so it binds first: at most 2^14 − 32
+     instructions for a program without data. Refusal: the new stateless error
+     `PxProgramTooLarge { program }`; budgets keep `PxBudgetTooLarge { program }`.
+   - Per-function maxima: add 20,168; lt 22,493; bit 7,192; shift 7,367; mul 7,367;
+     Poseidon2 948; keys 16,384; cycles 32,768.
+   - Defence in depth: `px::prove::check_shape_bits` refuses a statement with a table
+     above `PX_MAX_LOG_HEIGHT` = 16 (`VerifyError::Shape`). Given the caps it never
+     triggers for registered functions.
+
+   Constants: `tx/src/params.rs` (`PX_FN_LOG_*`, `PX_LOG_*`, with a `const` assertion
+   that each is at most 16) and `px/src/prove.rs` (`PX_MAX_LOG_HEIGHT`).
+6. **Activation.** v3 genesis base rule (the reset). No deploy exists yet on any v3
+   network.
+7. **Compatibility.** The vault, the only shipped contract, fits with room on every
+   field. A deploy valid under R7-5 but above a cap is now invalid; none exists. Proofs,
+   their encoding and the verifier's checks are unchanged except the new height check,
+   which no statement of registered functions reaches.
+8. **Reorg, wallet, mining, P2P.**
+   - Proving class: any pair of registered functions is provable in about 10.4 GB
+     (13.1 GB pessimistic) by the memory model, so a **16 GB** proving device. **8 GB
+     devices** can prove transfers, single calls and the vault pair (6.45 GB measured);
+     they are not promised every two-function call. This is a modelled bound, not a
+     measurement: the memory-widest V12 pair has not been proven (a CI measurement is
+     arranged separately).
+   - The widest PX proof becomes 3.70 MB expected and 3.78 MB worst over the query
+     positions: under 3.8 MB, and about 413 KB below `MAX_PROOF_BYTES`. The verifier's
+     largest LDE height stays 2^20.
+   - Wallets building deploys run the same structure check. No mining or P2P change;
+     relay refuses an over-cap deploy as stateless.
+9. **Vectors.** The per-function maxima above, pinned by
+   `tx/tests/deploy_rules.rs::the_largest_allowed_budget_is_the_v12_table`. The node
+   manifest lists the caps (`tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE`,
+   `tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON`) and a deploy verdict sample "bit budget
+   above its cap" (`PxBudgetTooLarge`); the PX manifest lists
+   `px.prove.PX_MAX_LOG_HEIGHT`.
+10. **Tests.**
+    - `tx/tests/deploy_rules.rs`: `largest_allowed()` computed from the caps and the
+      kernel budget; every field at its cap accepted; cap + 1, `usize::MAX` and an
+      overflowing `MAX_FN·x` refused; Poseidon2 948 accepted, 949 refused; the vault
+      accepted; synthetic RV32I programs of 2^14 − 32 instructions (accepted), 2^14 − 31
+      (image 2^14 + 1) and 2^14 + 1 (program table 2^15), both refused with
+      `PxProgramTooLarge`; a property test over 2,000 random pairs of allowed budgets
+      (half the fields at their caps) with programs at the caps: every table of
+      `Statement::shape` is at most 2^16 rows and within its cap. No proving.
+    - `tx/tests/validation_order.rs`: the new variant is stateless (40 variants).
+    - `px/tests/proof_limits.rs::the_shape_check_refuses_a_table_above_the_px_height`.
+    - `node/src/fingerprint.rs`: the new verdict sample's class.
+    - fuzz `px_admission`: `PxProgramTooLarge` is "deploy structure".
+11. **Suite results** (2026-10-05, release, `--locked`, 4-core i7-6700, 16 GB,
+    Windows 10; other agents' builds were running on the machine):
+    - `cargo test --release -p blacksilk-tx` (lib and every test file except the
+      PX-proving `px_consensus` and `fuzz_decode`): every binary passes; `deploy_rules`
+      13 passed, `validation_order` 11 passed.
+    - `px --test proof_limits` (shape checks) 2 passed; `px --lib` 36 passed;
+      `node --lib` 25 passed, 1 ignored.
+    - The fuzz target `px_admission` builds and passes clippy.
+    - PX-proving, one at a time, `--test-threads=1`, each started at 9 GB free or more
+      (BS-ZK-4 and this rule together): px `proof` 3, `unified` 13; tx `px_consensus`
+      4, `fuzz_decode` 1; chain `restart_rebuilds_the_px_state_exactly` 1; wallet e2e
+      `private_funds_move_over_rpc`, `px_records_follow_a_reorganization`,
+      `a_vault_is_deployed…`, `an_uncertain_vault_lock` 1 each; p2p
+      `px_transactions_travel_the_stem`, `invalid_px_transactions_get_the_relaying_peer_penalized`
+      1 each. All passed, 0 failed.
+    - Re-pin, once for bs-zk-4 and this change. Entry-level manifest diff of
+      `blacksilk-node --print-manifest` for every network against `5c283a4` (release
+      builds in separate target directories): `zk.PARAMS_ID`, `zk.QUERY_POW_BITS`, the
+      transcript sample, the golden PX transaction's id, signature message and encoded
+      length (the regenerated fixture), `tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE`,
+      `tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON`, `px.prove.PX_MAX_LOG_HEIGHT`, the new
+      deploy verdict sample, `rules.revision.len` 16 → 18 with the two new revisions,
+      (16 → 18 is the combined change from `5c283a4`: 17 for bs-zk-4, then 18 here)
+      and the digests that hash them. No stateless PX verdict and no identity entry
+      changed. Re-pinned: `px/tests/consensus_fingerprint.rs` (`9b67345e…`) and
+      `node/tests/deploy_configs.rs` `[consensus, rules]`: testnet `f6d04adf…`,
+      `68aff77a…`; regtest `a8669525…`, `a5fe7937…`; mainnet `282d81ec…`,
+      `bebfe3a7…`. Identity unchanged. Both pin tests pass.
+    - clippy `-D warnings` (tx, px, node, zk, all targets), `cargo fmt --check` and
+      doc-lint clean.
+12. **Open review points.** (i) The memory bound is modelled (10.4–13.1 GB), not
+    measured on the memory-widest V12 pair; until it is, "16 GB proves any pair" is a
+    model claim. (ii) 8 GB provers are not covered for every two-function call.
+    (iii) The size model is calibrated on measured proofs; 3.78 MB is the worst case
+    over the query positions in the model, not a proven bound. (iv) A red-team pass is
+    owed before the freeze.
+13. **Identity impact.** The rules and consensus fingerprints of every network change
+    (new constants, a new verdict sample, `rules.revision.len` 17 → 18 for this record
+    alone; 16 → 18 with bs-zk-4, item 11); the PX-side
+    digest changes (`px.prove.PX_MAX_LOG_HEIGHT`). Identity fingerprints are unchanged.
+14. **Documentation.** docs/px.md (deploy limits, proving class), docs/contracts.md
+    (author limits), decisions "px-deploy-row-caps (V12)", STATUS.md.
+15. **Review status.** Implemented and tested by B2-CAPS. Red team (internal, not an
+    audit, 2026-10-05): **MERGE WITH FIXES**, nothing blocking. Follow-up below.
+
+### Follow-up (red team on dcbcfe2)
+
+No verdict of any valid deploy or proof changes and no pin moves (checked by
+re-rendering every network's manifest against `dcbcfe2`: identical on all three
+networks except the build-commit header line).
+- **L1:** `px/tests/kernel_budget.rs::kernel_budgets_grow_with_the_function_count`
+  pins `K(0) ≤ K(1) ≤ K(2)` on every field, the premise of reserving
+  `kernel_budget(MAX_FN)` for calls with fewer functions.
+- **L2:** the `tx/src/params.rs` assertion compares every cap with
+  `blacksilk_px::prove::PX_MAX_LOG_HEIGHT` instead of a literal 16 (tx depends on px).
+- **L3:** `px::prove::verify` runs `check_shape_bits` first, so it applies the 2^16
+  height bound on its own; the consensus paths already ran it. It refuses nothing
+  `verify` accepted before except a statement with a table above 2^16 rows, which no
+  registered function can produce; the error kinds are the ones `verify` returned for
+  the same proofs (`Shape`, `Unregistered`, `Proof(Shape)`).
+- **L4:** docs/reviews/v3-upgrade-mechanism.md marks R7-5 as superseded by this record.
+- **L5:** `914b74f` is an ancestor of rebuild/core (its evidence is merged there); the
+  budget-cap model is summarized in docs/evidence/budget-cap-2026-10-04/README.md,
+  cited in the header above instead of local paths.
+- **I2:** `px::prove::prove` runs each function at most one cycle past
+  `max(budget.cycles, 2^FN_RUN_LOG_CYCLES)` (15, asserted equal to
+  `PX_FN_LOG_CYCLES` at compile time in tx), not to `MAX_CYCLES` (2^21). An execution
+  within its budget halts first and is unchanged; the prefix is still checked before
+  the budget for every run up to the cap (mutation run E's ordering); a run past the
+  cap stops early with `OverBudget { table: "cycles", used: limit }` (a lower bound).
+  Prover-side only. Checked: the golden PX fixture regenerates byte-identical
+  (same SHA-256 before and after, no git diff) and `kernel_budget.rs` (both
+  OverBudget tests) passes.
+- **I3:** `zkvm/src/program.rs` and `zkvm/src/exec.rs` (program id, loader, image
+  words) are consensus paths of `.github/scripts/consensus-gate.sh`. The selftest
+  passes, and the gate over the whole history after the cut-over (503 commits) passes
+  with the new list: no earlier commit touched them without a trailer.
+- **Nit:** the revision counts are clarified (item 11: 16 → 18 combined from
+  `5c283a4`; item 13: 17 → 18 for this record alone).

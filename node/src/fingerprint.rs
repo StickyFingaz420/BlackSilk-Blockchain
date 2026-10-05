@@ -170,6 +170,14 @@ pub const REVISIONS: &[Revision] = &[
         id: "OMR:header-output-mmr-px-root-and-mining-blob",
         record: "output-root",
     },
+    Revision {
+        id: "ZK:BS-ZK-4-query-grinding-20",
+        record: "bs-zk-4",
+    },
+    Revision {
+        id: "B2:px-deploy-row-caps",
+        record: "px-deploy-row-caps",
+    },
 ];
 
 /// The three digests of one network.
@@ -404,6 +412,30 @@ fn chain_entries(network: Network) -> Manifest {
         .size("tx.MAX_FN_OUTPUT_WORDS", tx::MAX_FN_OUTPUT_WORDS)
         .size("tx.MAX_DEPLOY_PROGRAMS", tx::MAX_DEPLOY_PROGRAMS)
         .size("tx.MAX_PROGRAM_BYTES", tx::MAX_PROGRAM_BYTES)
+        // px-deploy-row-caps: log2 caps of a registered function's own
+        // tables, and of the tables it shares with the kernel.
+        .list(
+            "tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE",
+            [
+                tx::PX_FN_LOG_CYCLES,
+                tx::PX_FN_LOG_KEYS,
+                tx::PX_FN_LOG_PROGRAM,
+                tx::PX_FN_LOG_IMAGE,
+            ]
+            .map(u64::from),
+        )
+        .list(
+            "tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON",
+            [
+                tx::PX_LOG_ADD,
+                tx::PX_LOG_BIT,
+                tx::PX_LOG_LT,
+                tx::PX_LOG_SHIFT,
+                tx::PX_LOG_MUL,
+                tx::PX_LOG_POSEIDON,
+            ]
+            .map(u64::from),
+        )
         .size("tx.SIG_DOMAIN_BYTES", tx::SIG_DOMAIN_BYTES)
         .list(
             "tx.SUPPORTED_VERIFIERS",
@@ -1211,7 +1243,7 @@ fn px_transaction_samples(m: &mut Manifest) {
         change(&mut v);
         format!("{:?}", validate_deploy(&v, &chain, f.height, &rules))
     };
-    let deploy_cases: [(&str, String); 4] = [
+    let deploy_cases: [(&str, String); 5] = [
         ("valid", deploy_verdict(&|_| {})),
         ("fee + 1", deploy_verdict(&|v| v.fee += 1)),
         (
@@ -1219,6 +1251,12 @@ fn px_transaction_samples(m: &mut Manifest) {
             deploy_verdict(&|v| v.programs[0].abi += 1),
         ),
         ("other salt", deploy_verdict(&|v| v.salt[0] ^= 1)),
+        // px-deploy-row-caps: one row above the shared bit-table cap
+        // (2,000 + 2·7,193 > 2^14); the same varint length, so the fee holds.
+        (
+            "bit budget above its cap",
+            deploy_verdict(&|v| v.programs[0].budget.bit = 7_193),
+        ),
     ];
     for (name, v) in deploy_cases {
         m.text(&format!("rules.sample.deploy.verdict ({name})"), &v);
@@ -1663,6 +1701,7 @@ mod tests {
             ("fee + 1", "DeployFeeNotExact"),
             ("unsupported ABI", "PxUnsupportedAbi"),
             ("other salt", "InvalidSignature"),
+            ("bit budget above its cap", "PxBudgetTooLarge"),
         ] {
             assert!(
                 deploy(case).starts_with(&format!("Err({class}")),

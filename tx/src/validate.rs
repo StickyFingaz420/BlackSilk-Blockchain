@@ -249,10 +249,15 @@ pub enum TxError {
     PxDuplicateProgram {
         program: usize,
     },
-    /// A deploy registers a budget no proof can have: above `MAX_CYCLES`, or
-    /// a table above its height limit with the kernel's share (R7-5;
-    /// `px::budget_is_provable`).
+    /// A deploy registers a budget above the deploy-time row caps (record
+    /// `px-deploy-row-caps`; `px::budget_is_provable`).
     PxBudgetTooLarge {
+        program: usize,
+    },
+    /// A deploy registers a program whose program or image table is above
+    /// its deploy-time cap (record `px-deploy-row-caps`;
+    /// `px::program_is_provable`).
+    PxProgramTooLarge {
         program: usize,
     },
     /// A deploy's fee differs from `px::deploy_fee` for its shape and
@@ -289,7 +294,7 @@ impl TxError {
     /// | `UnknownRingMember`, `RingMemberTooYoung` | C1 | contextual | the output may exist, or be old enough, on another branch or later |
     /// | `KeyImageSpent` | C2 | contextual | spent on this branch (or earlier in this block), possibly not on another |
     /// | `InvalidSignature` | C3 | contextual | see below |
-    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge`, `DeployFeeNotExact`, `PxUnsupportedAbi`, `PxWindowInverted` | PX structure | stateless | the transaction alone |
+    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge`, `PxProgramTooLarge`, `DeployFeeNotExact`, `PxUnsupportedAbi`, `PxWindowInverted` | PX structure | stateless | the transaction alone |
     /// | `PxDuplicateOutputKey`, `PxNullifierRepeated`, `PxDuplicateProgram` | PX structure | stateless | a repeat within the transaction (a one-time key shared by a hidden output and a payout) |
     /// | `PxCiphertextRNonCanonical`, `PxCiphertextRIdentity` | PX structure (ciphertext `R`) | stateless | the ciphertext bytes alone |
     /// | `PxUnknownAnchor` | PX1 | contextual | the root window moves; the anchor may be recent on another branch |
@@ -344,6 +349,7 @@ impl TxError {
             | TxError::PxCiphertextRIdentity { .. }
             | TxError::PxDuplicateProgram { .. }
             | TxError::PxBudgetTooLarge { .. }
+            | TxError::PxProgramTooLarge { .. }
             | TxError::DeployFeeNotExact { .. }
             | TxError::PxUnsupportedAbi { .. }
             | TxError::PxWindowInverted

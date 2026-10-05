@@ -50,9 +50,9 @@ outside scrutiny from what rests on internal work only.
 - **Files:** `zk/src/*`, `zk/tests/*`, `third_party/` (four patched files); docs/zk.md
   §9, docs/reviews/zk-security-review.md, docs/reviews/query-policy.md.
 - **Claims to verify:**
-  1. knowledge soundness at BS-ZK-3 (updated 2026-10-04; formerly BS-ZK-2, ≥ 123 /
+  1. knowledge soundness at BS-ZK-4 (updated 2026-10-04; formerly BS-ZK-2, ≥ 123 /
      ≥ 105): the Johnson regime hash-bound at 122 (`COLLISION_BITS`), unique decoding
-     ≥ 105.58 bits, and about 100.5 with the mixed-height union term (a heuristic;
+     ≥ 109.58 bits, and about 104.5 with the mixed-height union term (a heuristic;
      docs/zk.md §9.3), over the shape envelope, as computed by our calculator;
   2. **zero knowledge of the hiding mode** (`HidingFriPcs`, `MerkleTreeHidingMmcs`),
      including the open items of docs/reviews/zk-coverage.md §3 (statistical, not

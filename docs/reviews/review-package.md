@@ -8,11 +8,11 @@ package serves two purposes:
 
 It is **not** a testnet gate: the owner decided on self-reliant review on 2026-09-25.
 
-**Figures updated 2026-10-04.** The parameter set is now `BlackSilk/zk/BS-ZK-3` (8
-random codewords). The soundness figures are: Johnson hash-bound at 122
-(`COLLISION_BITS`), unique decoding ≥ 105.58 bits computed, about 100.5 with the
-mixed-height union term (a heuristic; docs/zk.md §9.3). BS-ZK-4 is pending. The
-figures "≥ 123 / ≥ 105" below were those of the former set BS-ZK-2 (2026-09-27).
+**Figures updated 2026-10-05.** The parameter set is now `BlackSilk/zk/BS-ZK-4` (8
+random codewords, 20 query grinding bits). The soundness figures are: Johnson
+hash-bound at 122 (`COLLISION_BITS`), unique decoding ≥ 109.58 bits computed, about
+104.5 with the mixed-height union term (a heuristic; docs/zk.md §9.3). Mentions below
+of BS-ZK-2, of 4 random codewords and of "≥ 123 / ≥ 105" are as of 2026-09-27.
 
 ## 1. What to review
 
@@ -72,7 +72,7 @@ outputs, P2P), which AUDIT.md R1–R6 cover, and the frozen Wasm contract engine
     `third_party/README.md`);
   - `ml-kem =0.3.2`.
 - **Consensus identity:** the kernel program id `px/kernel.id`; the vault program id
-  `px/vault.id`; the parameter set `BlackSilk/zk/BS-ZK-3` (BS-ZK-4 pending).
+  `px/vault.id`; the parameter set `BlackSilk/zk/BS-ZK-4`.
 
 ## 3. Reproducing the evidence
 
@@ -186,9 +186,10 @@ review is asked to confirm or refute. The unresolved ones:
 
 - Proof size is about 2.2 MB (transfer) and 2.7 MB (vault call), so 3 PX
   transactions fit per block (aggregation-study.md). Freeze gate B2 measured and
-  modelled the widest shape (kernel plus two functions): the widest proof the current
-  deploy rules accept is about 4.09–4.13 MB, above the 3.8 MB budget, so **B2 fails**;
-  the fix (a deploy-time proof-size bound, V12) is in progress. The vault pair is
+  modelled the widest shape (kernel plus two functions): under the former deploy rule the
+  widest proof was about 4.09–4.13 MB, above the 3.8 MB budget, so **B2 failed**; the
+  deploy-time row caps (V12) bring it to about 3.70 MB by model (3.78 MB worst), with
+  prover memory modelled, not measured. The vault pair is
   3.63 MB (docs/evidence/freeze-b2-b3-2026-10-04/).
 - The reference vault is a demonstration contract: no timeout, no refund, not
   trustless (docs/px.md §13.4).

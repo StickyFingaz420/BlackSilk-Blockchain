@@ -72,8 +72,8 @@ Code: `zkvm/src/air/util.rs` (`blind_consume`, `blind_provide`), `zkvm/src/air/m
     data.
 - **C2:** the hiding PCS keeps the committed columns (the blinding columns included)
   hidden, **statistically** (and conditionally; computational in practice, see
-  zk-coverage.md §4). For BS-ZK-3, the current set (BS-ZK-2 was the set when this was
-  written; BS-ZK-4 is pending), each table meets the per-table conditions of
+  zk-coverage.md §4). For BS-ZK-4, the current set (BS-ZK-2 was the set when this was
+  written; BS-ZK-4 keeps the hiding parameters of BS-ZK-3), each table meets the per-table conditions of
   the published construction (docs/reviews/zk-coverage.md); the construction as a
   whole does not directly cover our system:
   - witness randomization, ePrint 2024/1037 §4.2 eq. (17): `2·(e·n_F + n_D) ≤ h ≤ |H|`,
