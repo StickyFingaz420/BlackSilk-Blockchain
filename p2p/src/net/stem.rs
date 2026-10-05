@@ -5,11 +5,17 @@
 //! **Logging (privacy).** Lines about a *local* transaction (one this node
 //! originates) never carry its id, at any level: a shared or leaked debug
 //! log would otherwise name this node as the origin of that transaction,
-//! which Dandelion++ exists to hide. Relayed transactions keep their short
-//! id at debug.
+//! which Dandelion++ exists to hide. Every transaction id that reaches a log
+//! line in this crate goes through `Inner::tx_log_id`, which names a
+//! transaction of the originated set "a local tx" (stem, embargo fluff,
+//! admission of a copy a peer sends back); the origination lines here name
+//! none. Relayed transactions keep their short id at debug. Limit: an entry
+//! leaves the originated set when its window ends (by then the transaction
+//! is mined or expired network-wide) or, past `ORIGINATED_CAP` entries,
+//! oldest first (warned).
 
 use super::lock_or_exit;
-use super::state::{short, Inner, State, StemEntry};
+use super::state::{Inner, State, StemEntry};
 use crate::dandelion::{PeerId, Route, Source};
 use crate::message::Message;
 use crate::originated::{write_atomic, Verdict};
@@ -89,7 +95,7 @@ pub(super) async fn stem_or_fluff(
             if source == Source::Local {
                 log::debug!("local tx -> stem peer {p}");
             } else {
-                log::debug!("stem tx {} -> peer {p}", short(&id));
+                log::debug!("stem tx {} -> peer {p}", inner.tx_log_id(&id));
             }
             inner.send_now(p, Message::StemTx(tx.encode()));
         }
@@ -153,12 +159,12 @@ pub(super) async fn fluff_entry(
         .await;
     match result {
         Ok(_) | Err(MempoolError::AlreadyKnown) => {
-            log::debug!("fluff tx {}", short(&id));
+            log::debug!("fluff tx {}", inner.tx_log_id(&id));
             // Pooled: nothing more to ask anyone (`tx_requests`).
             Inner::forget_tx(&mut inner.state(), &id, None);
             inner.announce_tx(id, except);
         }
-        Err(e) => log::debug!("fluffing {} failed: {e:?}", short(&id)),
+        Err(e) => log::debug!("fluffing {} failed: {e:?}", inner.tx_log_id(&id)),
     }
 }
 

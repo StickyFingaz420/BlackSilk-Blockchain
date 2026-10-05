@@ -18,7 +18,7 @@ use super::headers::{add_grace, HEADERS_TIMEOUT};
 use super::peers::maintain_outbound;
 use super::relay::reannounce_pool;
 use super::serve_tx::SLOW_RATE;
-use super::state::{short, unix_now, Inner, State, StemEntry};
+use super::state::{unix_now, Inner, State, StemEntry};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
 use super::tx_requests::Actions;
 use crate::connman::ConnKind;
@@ -315,7 +315,7 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
                 .collect()
         };
         for (id, entry) in expired {
-            log::debug!("embargo expired for {}", short(&id));
+            log::debug!("embargo expired for {}", inner.tx_log_id(&id));
             let inner = inner.clone();
             tokio::spawn(async move { fluff_entry(&inner, id, entry, None).await });
         }
