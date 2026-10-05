@@ -3328,8 +3328,9 @@ Revision: RX-SALT:blacksilk-randomx-argon2-salt
 Owner: Lead (RX-SALT). Decision: owner approval of 2026-10-04: keep RandomX v1 and
 change **only** the Argon2 salt, so that existing Monero/RandomX hash power and rental
 markets cannot be pointed at BlackSilk without modification. The research is the
-SKC-1 cross-check (`C:/bszkeval/skc1-combined/skc1-combined-summary.md` §2 F3, F5,
-F16, F17 and §4(a), outside the repository) and the I4 review
+SKC-1 cross-check (docs/pow/skc1-research.md §2 F3, F5, F16, F17 and §4(a); first
+written at a local path outside the repository, then committed there in `770a473`) and
+the I4 review
 (`full-review-2026-09-27/I4-sustainability-scaling-pq.md` §2, §7.2: "change only the
 salt, never sizes or frequencies"). Internal engineering work, not an audit.
 
@@ -3565,6 +3566,9 @@ salt, never sizes or frequencies"). Internal engineering work, not an audit.
       `randomx_calculate_hash(vm, "This is a test", 14, out)` must give bs-1a.
       Equivalently, use xmrig's `RandomX_ConfigurationBase` with that `ArgonSalt`.
       Running it is an open point.
+      *Run on 2026-10-04 (freeze gate B4, `a427adb`):* the reference implementation
+      (tevador/RandomX v1.2.3 with this salt) reproduced bs-1a..1f and the mining-blob
+      known answer, light mode only; docs/evidence/randomx-reference-2026-10-04/.
     - **Regression tests (`randomx`):**
       - `cache_initialization`, `hash_1a` to `hash_1f` and `dataset_items`: the
         official vectors, unchanged, now built with `Variant::MoneroRx0`;

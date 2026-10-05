@@ -54,7 +54,8 @@ the two would need a digest ending in `[domain, len, 0, 0, 0, 0, 0]`, a 2^−186
 NULLIFIER_CONTRACT` = `0x505800 + 1..10`. Applications (such as the example vault's lock
 hash) use their own constants outside this range.
 
-**Security:** the sponge `Hk`: 124-bit collision and preimage resistance, if the
+**Security:** the sponge `Hk`: about 123.6-bit (nominally 248/2 = 124; 8·log2(p)/2 for
+BabyBear) collision and preimage resistance, if the
 permutation behaves ideally. The node compression is **not** collision resistant on its
 own (an invertible public permutation with no feed-forward, R2-C6): the commitment
 tree's extractability rests on zk.md §9.3's ePrint 2026/089 argument and its adaptation
@@ -527,18 +528,24 @@ private. Tests (`px/tests/unified.rs`):
 - unregistered programs, wrong shapes and altered outputs are refused;
 - kernel heights are identical for contract and user inputs.
 
-## 8. Performance (measured on this machine under the earlier BS-ZK-2 set; re-measured for BS-ZK-3 in Wave 4)
+## 8. Performance (measured under BS-ZK-3 on the frozen kernel, freeze gate B3; expected sizes unchanged under BS-ZK-4)
 
 | Item | Value |
 |---|---|
-| Kernel execution (v2) | 25.0–25.2k cycles; 29.3–29.4k with one function (opt-level "z" gave 141k for v1) |
-| Transfer proof | **2.04 MB** (6 proofs: 2,029,768–2,046,856 bytes), proving ~42 s, **verifying 188 ms** |
-| Kernel + one function (vault CLAIM) | **~2.5 MB**, proving ~51 s (a 40-proof stress run gave 48.4–51.4 s each; before BS-ZK-3 and the v3 vault) |
-| Kernel + two functions (CLAIM + LOCK) | Measured by `px/tests/unified.rs::a_two_function_transaction_proves_and_verifies` (W28-3); the figures are recorded in reviews/v3-consensus-changes.md, section `guest-rebuild` |
-| PX transaction (encoded) | ~2.05 MB (bridge-in with one v1 input) |
+| Kernel execution (v2) | 25.0–25.2k cycles; 29.3–29.4k with one function (opt-level "z" gave 141k for v1). Measured on an earlier kernel build (before PX-F5 and the neutral build); not re-measured on the frozen kernel (historical) |
+| Transfer proof | **about 2.40 MB** (60 proofs: 2,393,010–2,413,554 bytes), proving 49.6–60.0 s, **verifying 0.20–0.33 s**, peak prover memory 3,622 MB |
+| Kernel + one function (vault LOCK or CLAIM) | **about 3.00 MB** (30 proofs: 2,995,472–3,008,208 bytes), proving 60.3–67.1 s, verifying 0.26–0.36 s, 4,339 MB |
+| Kernel + two functions (the vault pair) | **about 3.63 MB** (30 proofs: 3,619,591–3,637,159 bytes), proving 94.9–115.3 s, verifying 0.31–0.39 s, 6,446 MB |
+| Widest PX proof (V12 deploy caps) | **3.70 MB expected, 3.78 MB worst over the query positions, by model** (not measured; the model is exact on all 34 measured two-function proofs). Under the earlier R7-5 rule it was 4.09–4.13 MB by model, above the 3.8 MB bound: freeze gate B2 failed, and V12 is the fix |
+| PX transaction (encoded) | ~2.05 MB (bridge-in with one v1 input; BS-ZK-2, historical: proof 2.04 MB) |
 | Record ciphertext | 1,241 bytes per output |
 
-Measured on this machine, idle, one proof at a time.
+Source: docs/evidence/freeze-b2-b3-2026-10-04/ (`p5.csv`, README; release, one proof at a
+time, one development machine, BS-ZK-3, PXDET-1). BS-ZK-4 changes only the query
+grinding, so the proof format and the expected sizes are unchanged; individual lengths
+vary with the query positions, and the proofs were not re-measured under BS-ZK-4. The
+earlier set BS-ZK-2 gave a 2.04 MB transfer proof (6 proofs: 2,029,768–2,046,856 bytes,
+proving ~42 s, verifying 188 ms) and about 2.5 MB with one function (historical).
 
 **Proving class (testnet v3, px-deploy-row-caps).** The deploy caps (§11.3, "Deploy")
 bound every statement: the widest PX proof is about 3.70 MB (3.78 MB worst over the
@@ -551,7 +558,8 @@ peaks, not a measurement of the memory-widest pair (reviews/v3-consensus-changes
 
 **Verification cost** was 1.3–1.5 s, 76% of it spent recommitting the public tables
 on every verification. They are now periodic columns the verifier evaluates itself
-(zkvm.md §6.1): 188 ms.
+(zkvm.md §6.1): 188 ms then (BS-ZK-2, historical); 0.20–0.33 s per transfer proof
+measured under B3 (§8).
 
 **Proof size is the main open problem.** A single transfer proof is far too large for
 high-throughput per-transaction use on a chain.
@@ -565,7 +573,9 @@ high-throughput per-transaction use on a chain.
 
   The owner has kept the conservative parameters (AUDIT.md R8).
 - **Consensus consequence:** blocks carry a separate 8 MiB PX budget (§11.5), room
-  for three PX transactions per 2-minute block (4 × 2.18 MB exceeds 8 MiB).
+  per 2-minute block for three transfers (4 × 2,393,010 B, the smallest measured,
+  exceeds 8 MiB = 8,388,608 B) or two calls with one or two functions (3 × 2,995,472 B
+  exceeds it); zk.md §11 has the arithmetic.
 - **Architectural fix:** aggregation (recursion). A design study is in
   `docs/reviews/aggregation-study.md`; it is not implemented.
 
@@ -834,8 +844,8 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | Deploy | ≤ 1 MiB |
 | Deploy fee | Exactly the standard v1 fee of its transfer shape plus `DEPLOY_FEE_PER_BYTE` = 50 per payload byte (the vault: ~0.007 BLK; 1 MiB: ~0.52 BLK). A function of public data, so no wallet fingerprint |
 | Block deploy budget | `MAX_DEPLOY_BLOCK_BYTES` = 1 MiB of deploys per block, inside the 8 MiB PX budget. A block rule (`BlockError::DeployBytesExceeded`, testnet v3 rule set); templates respect it (reviews/v3-upgrade-mechanism.md §7.2, §8) |
-| Block PX budget | 8 MiB (3 PX transactions at measured proof sizes); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
-| PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
+| Block PX budget | 8 MiB (at the measured proof sizes, §8: 3 transfers, or 2 calls with one or two functions); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
+| PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~3.0–3.6 MB) below plain transfers (~2.4 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass). Across a scheduled activation the binding changes, so near an activation an honest peer can relay a proof for the previous epoch; see reviews/v3-upgrade-mechanism.md §2.4. A malformed proof (failing decoding or shape) is caught by relay admission's cheap checks, before the node-wide PX token and any ring or CLSAG (p2p.md §10); a well-formed proof that does not verify costs every check up to the verification |
 | Block weight | A PX or deploy transaction with v1 inputs also takes `max_weight(n, k)` of the 600 000 block weight (R12-2): its CLSAGs are metered like a transfer's. The fixed PX fee covers it (`FEE_PER_WEIGHT × max_weight(64, 16)` = 1,148,780 ≤ `PX_STANDARD_FEE`), so the PX fee stays uniform; a deploy's fee already pays exactly that weight at the v1 rate |

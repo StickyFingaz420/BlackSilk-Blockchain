@@ -17,9 +17,16 @@ as statistical and conditional (reviews/zk-coverage.md §3), and computational i
 (the masks are PRG outputs; zk.md §12.1).
 
 Rule ids (R, D, C, V) are local to this document; in a cross-document rule index they
-read P-R1, P-D1, P-C1, P-V1 and so on. Not yet part of this specification: golden proofs
-(a stored proof that must keep verifying, 22 W6) and a byte-level grammar of the postcard
-encoding beyond "postcard of Plonky3 0.7.0's `BatchProof`".
+read P-R1, P-D1, P-C1, P-V1 and so on.
+
+**Golden proof** (22 W6): the pinned PX fixture, a PX transaction with its proof
+(`node/src/px_fixture.bin`) and a vault deploy (`node/src/px_fixture.txt`), must keep
+verifying. `node/tests/px_fixture.rs` checks it without proving
+(`the_golden_px_transaction_is_valid_in_full`, byte-for-byte round trips, the ciphertext
+`R` variants), and the rules fingerprint lists its ids, signature messages and verdicts.
+It was regenerated for BS-ZK-4 (`ee0e96f`; reviews/v3-consensus-changes.md,
+`px-deploy-row-caps`, item 11). Not yet part of this specification: a byte-level
+grammar of the postcard encoding beyond "postcard of Plonky3 0.7.0's `BatchProof`".
 
 ---
 
@@ -31,7 +38,7 @@ encoding beyond "postcard of Plonky3 0.7.0's `BatchProof`".
 | Plonky3 configuration (field, hash, Merkle tree, PCS, challenger) | `zk/src/config.rs` |
 | Proving, verification, encoding, canonical form, FRI schedule | `zk/src/lib.rs` |
 | Circuit tag and statement digest | `zkvm/src/prove.rs` (`CIRCUIT_ID`, `statement_digest`) |
-| Plonky3 | exact pins `=0.7.0` in `zk/Cargo.toml`, `zkvm/Cargo.toml`; three prover-side patched crates in `third_party/` (verifier code byte-identical to upstream, third_party/README.md; their files are pinned by `zk/tests/upstream_advisories.rs::third_party_patched_crates_are_pinned`) |
+| Plonky3 | exact pins `=0.7.0` in `zk/Cargo.toml`, `zkvm/Cargo.toml`; four prover-side patched crates in `third_party/` (verifier code byte-identical to upstream, third_party/README.md; their files are pinned by `zk/tests/upstream_advisories.rs::third_party_patched_crates_are_pinned`) |
 | Consensus fingerprint entries for all of the above | `px/src/fingerprint.rs` (`px_entries`) |
 
 ---

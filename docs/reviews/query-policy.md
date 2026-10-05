@@ -21,10 +21,10 @@ figures below, including the "Current" row of §3, are those of 2026-09-25.
 | Field | BabyBear (p = 2^31 − 2^27 + 1), challenges in its degree-8 extension (247 bits) |
 | FRI blow-up | 8 (rate 2^-3) |
 | Queries | **108** |
-| Query proof-of-work | 16 bits |
+| Query proof-of-work | 16 bits (20 since BS-ZK-4) |
 | Folding arity | up to 16; final polynomial of length 2^6 |
 | Envelope | tables up to 2^22 rows, up to 4,000 committed columns |
-| Digest collision resistance | 123 bits (8-element Poseidon2 digests) |
+| Digest collision resistance | 123 bits (8-element Poseidon2 digests; the commitment term is now 122, `COLLISION_BITS`, see the note above) |
 
 ## 2. Security rationale
 
@@ -43,10 +43,13 @@ in two regimes:
 - Requiring ≥ 100 bits in the unique-decoding regime means soundness does **not**
   depend on the list-decoding results; they only add margin.
 
-**Why 108 and not the minimum.** The parameter study (`zk/examples/param_study.rs`,
-blow-up 8, 16 grinding bits) finds that:
-- **102 queries** are the minimum reaching both targets (Johnson 123, unique decoding
-  exactly 100);
+**Why 108 and not the minimum.** The parameter study of 2026-09-25
+(`zk/examples/param_study.rs`, blow-up 8, 16 grinding bits, the set then current)
+finds that (re-run on 2026-10-05 with the hash-bound Johnson figure, without the
+mixed-height term: at 16 bits still 102 queries, Johnson 122, unique decoding 100; at
+BS-ZK-4's 20 bits the minimum is 97, and 103 with the term charged):
+- **102 queries** are the minimum reaching both targets without the mixed-height term
+  (Johnson 123, unique decoding exactly 100);
 - **108** keeps about 5 bits of margin in the unique-decoding regime against small
   errors in the calculator's model and future shape growth.
 
@@ -57,7 +60,7 @@ blow-up 8, 16 grinding bits) finds that:
 | **Proof size** | About 92% of a 2.04 MB transfer proof scales linearly with the queries (aggregation-study.md §1): opened rows 60.4%, authentication 18.5%, FRI folding 13.7%. Each query costs about 17 KB |
 | **Verification** | Linear in the queries for the FRI part; 183–188 ms per transfer proof today |
 | **Proving** | Barely affected: proving time is dominated by commitments and DFTs, not by opening queries |
-| **Chain capacity** | 3 PX transactions per block (corrected 2026-09-27: 4 × 2.18 MB exceeds 8 MiB) under the 8 MiB PX budget |
+| **Chain capacity** | 3 PX transfers per block (corrected 2026-09-27: 4 × 2.18 MB exceeds 8 MiB) under the 8 MiB PX budget; at the B3 sizes (2026-10-04) still 3 transfers, but 2 calls with one or two functions (zk.md §11) |
 
 **Alternatives measured** (same blow-up; sizes *estimated* from the 92% linear part):
 
