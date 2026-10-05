@@ -558,7 +558,8 @@ peaks, not a measurement of the memory-widest pair (reviews/v3-consensus-changes
 
 **Verification cost** was 1.3–1.5 s, 76% of it spent recommitting the public tables
 on every verification. They are now periodic columns the verifier evaluates itself
-(zkvm.md §6.1): 188 ms.
+(zkvm.md §6.1): 188 ms then (BS-ZK-2, historical); 0.20–0.33 s per transfer proof
+measured under B3 (§8).
 
 **Proof size is the main open problem.** A single transfer proof is far too large for
 high-throughput per-transaction use on a chain.

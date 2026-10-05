@@ -623,9 +623,9 @@ owner): a STARK on Plonky3 0.7.**
     q ≈ 2^122.6. The 122.6 is our evaluation, not the paper's figure. The adaptation
     to BlackSilk's tree (salted leaves; fixed topology and matrix dimensions from the
     proof shape) is argued, not proven, and the property claimed is extractability,
-    not binding. It replaces the generic 8-element birthday figure (8·log2(p)/2 ≈ 123.6, floored
-    to 123; nominally 248/2 = 124), which the
-    paper shows does not apply to the node compression alone.
+    not binding. It replaces the generic 8-element birthday figure
+    (8·log2(p)/2 ≈ 123.6, floored to 123; nominally 248/2 = 124), which the paper
+    shows does not apply to the node compression alone.
   - **Not modelled by `p3-security`:** LogUp, the multi-table DEEP union and
     mixed-height FRI inputs. The first two are bounded by the independent calculator;
     mixed-height FRI has no published analysis of the exact construction (a close analogue: §9.3 above). The calculator charges it the
@@ -856,8 +856,9 @@ block holds **3 transfers** (4 × 2,393,010 B, the smallest, exceeds the budget;
 with one function** (3 × 2,995,472 B exceeds it) or **2 with two functions**
 (3 × 3,619,591 B exceeds it; 2 × 3,637,159 B leaves about 1.1 MB). At the modelled
 widest size, 2 (2 × 3.78 MB ≈ 7.56 MB, by model); at the 4 MiB `MAX_PROOF_BYTES` cap, 1
-(2 × 4 MiB alone fill the budget), a size V12 keeps out of reach by model. Testnet status: [`STATUS.md`](STATUS.md). A production network is out
-of scope until proof size is solved (aggregation-study.md).
+(2 × 4 MiB alone fill the budget), a size V12 keeps out of reach by model. Testnet
+status: [`STATUS.md`](STATUS.md). A production network is out of scope until proof
+size is solved (aggregation-study.md).
 
 | Item | Target | Why |
 |---|---|---|
