@@ -523,8 +523,15 @@ pub(super) fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-pub(super) fn short(h: &Hash) -> String {
+/// The first 6 bytes of a hash, in hex.
+fn short_hex(h: &Hash) -> String {
     hex::encode(&h[..6])
+}
+
+/// How a log line names a **block** id. Transaction ids go through
+/// [`tx_log_id`] instead (privacy, net/stem.rs module doc).
+pub(super) fn short_block_id(id: &Hash) -> String {
+    short_hex(id)
 }
 
 /// How a log line names transaction `id`: its short id, or `"a local tx"`
@@ -535,7 +542,7 @@ pub(super) fn tx_log_id(originated: &Originated, id: &Hash) -> String {
     if originated.relayed(id).is_some() {
         "a local tx".into()
     } else {
-        short(id)
+        short_hex(id)
     }
 }
 
@@ -651,10 +658,10 @@ mod tests {
         let (local, relayed) = ([1u8; 32], [2u8; 32]);
         o.record(local, 10);
         assert_eq!(tx_log_id(&o, &local), "a local tx");
-        assert!(!tx_log_id(&o, &local).contains(&short(&local)));
-        assert_eq!(tx_log_id(&o, &relayed), short(&relayed));
+        assert!(!tx_log_id(&o, &local).contains(&short_hex(&local)));
+        assert_eq!(tx_log_id(&o, &relayed), short_hex(&relayed));
         o.forget(&local);
-        assert_eq!(tx_log_id(&o, &local), short(&local));
+        assert_eq!(tx_log_id(&o, &local), short_hex(&local));
     }
 
     /// RT-1 and RTW1-1: one reporter never triggers the operator warning,

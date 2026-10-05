@@ -12,7 +12,10 @@
 //! none. Relayed transactions keep their short id at debug. Limit: an entry
 //! leaves the originated set when its window ends (by then the transaction
 //! is mined or expired network-wide) or, past `ORIGINATED_CAP` entries,
-//! oldest first (warned).
+//! oldest first (warned). The placeholder itself still shows that this node
+//! originated a transaction, and when; and the `{e:?}` payload of an error
+//! about a copy a peer sends back (e.g. `UnknownRingMember { index }`) is
+//! specific to that transaction, at debug level only.
 
 use super::lock_or_exit;
 use super::state::{Inner, State, StemEntry};

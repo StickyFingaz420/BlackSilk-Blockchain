@@ -99,7 +99,7 @@ pub(super) fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     let id = block.id(inner.cfg.network_id);
     log::debug!(
         "peer {peer}: block {} at height {} received",
-        super::state::short(&id),
+        super::state::short_block_id(&id),
         block.header.height
     );
     let job = {
