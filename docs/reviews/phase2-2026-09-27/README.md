@@ -12,8 +12,10 @@ Internal engineering work, not an audit.
 | `decisions.md` | the coordinator's binding decisions, taken on each dossier |
 | `impl-brief.md` | the implementation rules |
 | `waves.md` | the implementation plan |
+| `status.md` | the coordinator's log of that phase |
 
 **Status:**
 - These files record the reasoning behind the changes that follow.
 - They describe the tree at commit `9e422d8`.
-- Later commits implement, revise or reject individual items; see `docs/STATUS.md` once it exists.
+- Later commits implement, revise or reject individual items; the current status is in
+  [docs/STATUS.md](../../STATUS.md).

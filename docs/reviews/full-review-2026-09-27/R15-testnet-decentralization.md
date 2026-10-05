@@ -1,5 +1,7 @@
 # R15: Testnet readiness, decentralization and operational risk
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5); RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 **Reviewer:** R15 (senior review agent). **Date:** 2026-09-27. **This is internal review, not an audit.**
 **Tree read:** `rebuild/core` at `9578517`, which is 8 commits ahead of `origin/rebuild/core` (`87278ac`). It includes `f677e55`, `4b277cd` (the canonical proof rule), `f36b909` (ZK-F3) and `16659ee` (mempool F1). The brief's HEAD was `f677e55`; the extra commits are on the same branch.
 **Method:** I read the code and docs with Read, Grep and git, and ran no builds. I also did web research and cite it in §10.
@@ -126,7 +128,7 @@ These are not in the brief's "already known" list, or they deepen an item on it.
 ### R15-6: A "platform-neutral kernel" needs more than a neutral `--remap-path-prefix`
 - **Classification:** Not implemented (planned in v3 (c)). **Severity:** Medium. **Confidence:** medium-high.
 - **Evidence:**
-  - The only path string in `px/kernel.elf` is `C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\px-core\src\hash.rs` [S: `grep -a` on the ELF]. It comes from the `assert!`s in `px-core/src/hash.rs:81,82,102`, whose `Location` data survives even though the guest `#[panic_handler]` ignores it (`zkvm/sdk/src/lib.rs:79-82`).
+  - The only path string in `px/kernel.elf` is `<repo>\px-core\src\hash.rs` (an absolute local Windows path; prefix redacted 2026-10-04) [S: `grep -a` on the ELF]. It comes from the `assert!`s in `px-core/src/hash.rs:81,82,102`, whose `Location` data survives even though the guest `#[panic_handler]` ignores it (`zkvm/sdk/src/lib.rs:79-82`).
   - Remapping the prefix to a neutral string still leaves the *relative* part with OS-native separators (`px-core\src\hash.rs` against `px-core/src/hash.rs`), as the README already notes. So a neutral prefix alone gives *two* ids, one per OS [A: rustc's file-name formatting; the README observed it].
 - **Recommendation:**
   - Remove every `Location`-carrying panic from the code reachable by the kernel. For example, route px-core's invariant failures through a guest-supplied abort hook, or make them return errors that the guest turns into `halt(1)`.

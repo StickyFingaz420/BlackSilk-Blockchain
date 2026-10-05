@@ -8,3 +8,8 @@ fuzz/corpus/
 fuzz/artifacts/
 fuzz/coverage/
 fuzz/logs/
+# Not needed to build the node or miner: run evidence, the post-quantum
+# research track (outside the workspace) and the logo images.
+docs/evidence/
+research/
+blacksilklogos/

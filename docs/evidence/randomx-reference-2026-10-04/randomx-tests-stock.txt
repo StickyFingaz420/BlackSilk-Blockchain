@@ -1,4 +1,4 @@
-﻿[ 1] Cache initialization                         ... PASSED
+[ 1] Cache initialization                         ... PASSED
 [ 2] SuperscalarHash generator                    ... PASSED
 [ 3] randomx_reciprocal                           ... PASSED
 [ 4] randomx_reciprocal_fast                      ... PASSED

@@ -1,5 +1,7 @@
 # Independent review: reviewer shortlist (future reference only)
 
+> Historical record (2026-09-25 snapshot). Not acted on: the owner decided on 2026-09-25 that no external auditors are engaged (self-reliant policy); nothing here is planned.
+
 Status: **2026-09-25. Kept for future reference: the owner decided on self-reliant
 review for now (docs/reviews/review-status.md).** Do not contact firms or make
 commitments.

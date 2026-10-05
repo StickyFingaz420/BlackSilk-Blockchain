@@ -1,5 +1,7 @@
 # R4: ZK architecture and zkVM soundness review (internal, 2026-09-27)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 Reviewer: R4 (internal review agent). **This is an internal review, not an audit.** It is read-only: no builds were run and no repository file was changed. HEAD is `f677e55`.
 
 **Scope:**

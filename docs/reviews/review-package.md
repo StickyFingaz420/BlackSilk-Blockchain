@@ -11,8 +11,8 @@ It is **not** a testnet gate: the owner decided on self-reliant review on 2026-0
 **Figures updated 2026-10-04.** The parameter set is now `BlackSilk/zk/BS-ZK-3` (8
 random codewords). The soundness figures are: Johnson hash-bound at 122
 (`COLLISION_BITS`), unique decoding ≥ 105.58 bits computed, about 100.5 with the
-mixed-height union term (a heuristic; docs/zk.md §9.3). Mentions below of BS-ZK-2, of 4
-random codewords and of "≥ 123 / ≥ 105" are as of 2026-09-27.
+mixed-height union term (a heuristic; docs/zk.md §9.3). BS-ZK-4 is pending. The
+figures "≥ 123 / ≥ 105" below were those of the former set BS-ZK-2 (2026-09-27).
 
 ## 1. What to review
 
@@ -22,7 +22,7 @@ The scope, priorities and the claims to confirm or refute are in
 | # | Area | Priority |
 |---|---|---|
 | 1 | Poseidon2 and the `Hk` constructions | Critical |
-| 2 | Plonky3 as configured (soundness, hiding/ZK, transcript) and the three local patches | Critical |
+| 2 | Plonky3 as configured (soundness, hiding/ZK, transcript) and the four local patches | Critical |
 | 3 | BVM-1 zkVM circuits | Critical |
 | 4 | PX kernel and the function binding | Critical |
 | 5 | PX consensus rules | Critical |
@@ -36,7 +36,7 @@ The scope, priorities and the claims to confirm or refute are in
 | # | Area | Main question | Expertise | Code |
 |---|---|---|---|---|
 | 1 | Poseidon2 and `Hk` | Are the parameters (BabyBear, width 16, standard rounds) and our domain-separated uses sound for collision and preimage resistance at ~124 bits? | Symmetric cryptanalysis (arithmetization-oriented hashes) | `px-core/src/hash.rs`, `px-core/src/record.rs`, `zkvm/src/air/poseidon.rs` |
-| 2 | Plonky3 as configured, and the three patches | Is BS-ZK-2 sound at the claimed bits across the envelope, and statistically zero-knowledge as configured (a separate FRI mask per table, 4 random codewords, 4 salt elements, terminal blinding; docs/reviews/zk-coverage.md)? Do the patches only change lock scope? | STARK/FRI proof systems; Rust concurrency for the patches | `zk/src/config.rs`, `zk/src/params.rs`, `third_party/` |
+| 2 | Plonky3 as configured, and the four patches | Is BS-ZK-3 sound at the claimed bits across the envelope, and zero-knowledge as configured (statistical and conditional, computational in practice) (a separate FRI mask per table, 8 random codewords, 4 salt elements, terminal blinding; docs/reviews/zk-coverage.md)? Do three patches only change lock scope, and does the `p3-batch-stark` patch (PXDET-1) only change the order of the quotient randomness draws? | STARK/FRI proof systems; Rust concurrency for the patches | `zk/src/config.rs`, `zk/src/params.rs`, `third_party/` |
 | 3 | BVM-1 zkVM circuits | Do the 13 table kinds (12 plus the `BLIND` table; 13 to 23 tables per proof) and their buses, including the terminal-blinding bus `bvm/blind`, constrain exactly the interpreter's semantics, with no under-constrained column? | Arithmetization and circuit auditing (AIR, LogUp) | `zkvm/src/air/`, docs/zkvm.md |
 | 4 | PX kernel and function binding | Does the kernel conserve value, and can a function approve or specify anything outside its own contract (`io_hash`)? | Protocol design, ZK application auditing | `px-core/src/{kernel,call}.rs`, `px/src/prove.rs`, docs/px.md |
 | 5 | PX consensus rules | Do the node rules (nullifiers, anchors, the fee rule, the deploy registry, reorg undo) match the kernel's statement, with no double-spend or inflation path? | Blockchain consensus and state management | `tx/src/px.rs`, `tx/src/validate.rs`, `tx/src/state.rs`, `chain/` |
@@ -53,25 +53,26 @@ A qualified review therefore needs at least:
 One firm may cover several of these.
 
 **Out of scope unless agreed:** the v1 layer (RandomX, CLSAG, Bulletproofs+, stealth
-outputs, P2P), which AUDIT.md R1–R6 cover, and the transparent contract engine
-(docs/contracts.md).
+outputs, P2P), which AUDIT.md R1–R6 cover, and the frozen Wasm contract engine
+(`contracts/`, docs/research/wasm-contracts.md; not integrated). PX contracts
+(docs/contracts.md) are in scope under areas 4, 5 and 8.
 
 ## 2. The version under review
 
 - **Repository:** `https://github.com/StickyFingaz420/BlackSilk-Blockchain`, branch
   `rebuild/core`.
-- **Commit:** the owner fixes the exact commit when a review starts. The newest
-  internally reviewed code is `5e667bd` (internal review rounds 1–4 and the gap
-  analysis of completion-readiness-2026-09-26.md; `87278ac` added only that report);
-  the hardening round from `7826289` onward is under internal review (AUDIT.md R14).
+- **Commit:** the owner fixes the exact commit when a review starts. Which commits
+  the internal passes have covered is recorded in docs/reviews/internal-review-log.md;
+  the current state is in docs/STATUS.md.
 - **Toolchain:** Rust stable 1.98.1 (MSVC on Windows; any tier-1 host). The fuzz crate
   uses nightly.
 - **Pinned dependencies:**
-  - Plonky3 `=0.7.0`, with three patched files in `third_party/` (documented in
+  - Plonky3 `=0.7.0`, with four patched crates in `third_party/` (three lock-scope
+    fixes and the `p3-batch-stark` determinism fix PXDET-1; documented in
     `third_party/README.md`);
   - `ml-kem =0.3.2`.
 - **Consensus identity:** the kernel program id `px/kernel.id`; the vault program id
-  `px/vault.id`; the parameter set `BlackSilk/zk/BS-ZK-2`.
+  `px/vault.id`; the parameter set `BlackSilk/zk/BS-ZK-3` (BS-ZK-4 pending).
 
 ## 3. Reproducing the evidence
 
@@ -107,11 +108,11 @@ then).
 | Evidence | Command | Duration | Result | Limitations |
 |---|---|---|---|---|
 | Full test suite | `cargo test --release --workspace --no-fail-fast` | 30–40 min | 2026-09-26 (AUDIT.md R13): 423 passed, 0 failed, 2 ignored (opt-in). The hardening round adds tests (about 450 in total at `7826289`) | One platform. Tests encode our own understanding of the specs |
-| RandomX full mode | `cargo test --release -p blacksilk-randomx -- --ignored --nocapture` | 2026-09-27: dataset build about 179 s per key with 8 threads, under load | 2026-09-25 and 2026-09-27: all 5 official vectors in full mode, and full/light agreement on 1,024 random inputs; full mode about 100 ms per hash per thread, light about 750 ms (under load: the full suite ran at the same time; idle figures to be re-measured) | One machine. The CI job `randomx-full` has not yet run on GitHub |
+| RandomX full mode | `cargo test --release -p blacksilk-randomx -- --ignored --nocapture` | 2026-09-27: dataset build about 179 s per key with 8 threads, under load | 2026-09-25 and 2026-09-27: the 5 official vectors then pinned (1a–1e) in full mode, and full/light agreement on 1,024 random inputs; full mode about 100 ms per hash per thread, light about 750 ms (under load: the full suite ran at the same time; idle figures to be re-measured). Since then the pinned set is 1a–1f plus BlackSilk's bs-1a–bs-1f (randomx/src/self_test.rs), and the reference implementation reproduced bs-1a–bs-1f and the mining-blob known answer in light mode (B4, docs/evidence/randomx-reference-2026-10-04/) | The CI job `randomx-full` passed in GitHub Actions runs 78, 79 and 83 (2026-09-27), before 1f was added (docs/consensus.md). Full mode was not run against the reference |
 | Concurrency stress | `BLACKSILK_STRESS_ROUNDS=10 … --test stress -- --ignored` | 909 s | 80 concurrent proofs, no hang | No hang observed is not proof that none can occur (ZK-F21 was not reproducible on demand) |
 | Upstream Plonky3 suites with the patches | `cargo test` in the patched crates (third_party/README.md) | not recorded | 208 of 208 pass | Upstream tests were not written for concurrency hangs |
-| Security parameters | `cargo run --release -p blacksilk-zk --example param_study` | < 1 min | ≥ 123 bits (Johnson), ≥ 105 (unique decoding) | Our calculator: review area 2 |
-| Proof sizes and timings | `cargo run --release -p blacksilk-px --example proof_bench` | 2 × 5 proofs of each kind, idle | 2026-09-26 (AUDIT.md R13): transfer 2,178,213–2,180,408 B, 44.6–45.2 s to prove, 0.207–0.212 s to verify; vault 2,687,952–2,688,822 B, 52.7–53.0 s, 0.254–0.265 s; peak memory 3,771 MB | One machine. The widest shape (kernel plus two functions) is not measured |
+| Security parameters | `cargo run --release -p blacksilk-zk --example param_study` | < 1 min | Johnson 122 (hash-bound), unique decoding ≥ 105.58 (about 100.5 with the mixed-height term); BS-ZK-2 printed ≥ 123 / ≥ 105 | Our calculator: review area 2 |
+| Proof sizes and timings | `cargo run --release -p blacksilk-px --example proof_bench` | 2 × 5 proofs of each kind, idle | 2026-09-26 (AUDIT.md R13): transfer 2,178,213–2,180,408 B, 44.6–45.2 s to prove, 0.207–0.212 s to verify; vault 2,687,952–2,688,822 B, 52.7–53.0 s, 0.254–0.265 s; peak memory 3,771 MB | One machine. The widest shape: see §6 (B2) |
 | P-5 campaign | `… --example proof_length_campaign -- 50 30 out.csv` | 13,493 s (2026-09-26, docs/evidence/p5-2026-09-26b/) | 260 proofs. Non-authentication parts byte-identical per shape (1,811,565 B transfer, 2,359,622 B vault); 14 pairwise tests, p from 0.107 to 0.965, none significant | 260 proofs detect only large effects; privacy-review §3a.5 |
 | Coverage-guided fuzzing, first campaign | `fuzz/run_campaign.sh 900` | 15 min per target | 144,432,805 executions, 0 crashes | Short for the slow targets |
 | Coverage-guided fuzzing, long campaign | per target, AUDIT.md ZK-8 | 10.5 h total | 386,839,603 executions, 0 crashes | Slow targets reached < 0.5 M executions |
@@ -130,7 +131,7 @@ then).
 | Every assumption, with its status | docs/reviews/assumptions.md |
 | K4 policy and its analysis | docs/reviews/k4-reorg-policy.md |
 | Wallet error handling; P-9 (re-spending with a new ring) | docs/reviews/wallet-review.md; privacy-review.md §3c |
-| Reviewer candidates and selection criteria | docs/reviews/reviewer-candidates.md |
+| Reviewer candidates and selection criteria (historical, not acted on) | docs/reviews/reviewer-candidates.md |
 | Dependencies, patches, supply chain | docs/reviews/dependency-review.md, third_party/README.md |
 | Query policy and the security calculator | docs/reviews/query-policy.md; `zk/src/params.rs` |
 | Proof size and aggregation | docs/reviews/aggregation-study.md |
@@ -168,7 +169,9 @@ were engaged (none is; meanwhile they are the priorities of the internal passes)
    keys.
 7. **P-5:** the argument that proof-length variation carries no witness information
    (privacy review §3a).
-8. **The three Plonky3 patches:** that they change nothing but lock scope.
+8. **The four Plonky3 patches:** that three change nothing but lock scope, and that
+   the `p3-batch-stark` patch (PXDET-1) changes only the order of the quotient
+   randomness draws.
 
 Every assumption the project relies on, with its status, is listed in
 `docs/reviews/assumptions.md`. The items marked **External** there are the ones this
@@ -182,14 +185,15 @@ review is asked to confirm or refute. The unresolved ones:
 ## 6. Known limitations (not findings)
 
 - Proof size is about 2.2 MB (transfer) and 2.7 MB (vault call), so 3 PX
-  transactions fit per block (aggregation-study.md). The widest shape (kernel plus two
-  functions) has not been measured against `MAX_PROOF_BYTES` (4 MiB); an unmeasured
-  estimate is about 3.0–3.3 MB.
+  transactions fit per block (aggregation-study.md). Freeze gate B2 measured and
+  modelled the widest shape (kernel plus two functions): the widest proof the current
+  deploy rules accept is about 4.09–4.13 MB, above the 3.8 MB budget, so **B2 fails**;
+  the fix (a deploy-time proof-size bound, V12) is in progress. The vault pair is
+  3.63 MB (docs/evidence/freeze-b2-b3-2026-10-04/).
 - The reference vault is a demonstration contract: no timeout, no refund, not
   trustless (docs/px.md §13.4).
-- CI passes on GitHub (first run 2026-09-25, commit `d6534c3`; later commits through
-  `87278ac`, runs #69–#74). `7826289` is unpushed, and its new jobs `guests` and
-  `randomx-full` have never run on GitHub. CI is not a substitute for review.
+- CI runs on GitHub (first run 2026-09-25, commit `d6534c3`); current results are
+  tracked in docs/STATUS.md. CI is not a substitute for review.
 - There is no reorg-depth limit or checkpoint, by policy (docs/consensus.md §8; assumptions.md K4).
 - The P-6 and P-8 residual risks are analysed in privacy-review.md §3b and not
   mitigated further.

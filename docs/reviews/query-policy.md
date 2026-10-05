@@ -1,7 +1,7 @@
 # FRI query-count policy: rationale, costs and when to revisit
 
-Status: **decision record (2026-09-25).** The owner keeps the current policy: BS-ZK-2
-with **108 queries**. This file records why, what it costs, and what would justify a
+Status: **decision record (2026-09-25).** The owner kept the policy of the time: BS-ZK-2
+(the set then current; now BS-ZK-3, BS-ZK-4 pending) with **108 queries**. This file records why, what it costs, and what would justify a
 change. Nothing here changes a parameter.
 
 **Figures updated 2026-10-04 (freeze-commit reconciliation).** The current set is

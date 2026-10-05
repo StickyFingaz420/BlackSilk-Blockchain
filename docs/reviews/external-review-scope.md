@@ -20,7 +20,7 @@ outside scrutiny from what rests on internal work only.
 | # | Area | Status | Priority |
 |---|---|---|---|
 | 1 | Poseidon2 and the `Hk` constructions | Poseidon2 itself: public scrutiny. Our instance and constructions: **internal only** | Critical |
-| 2 | Plonky3 as configured (STARK, hiding mode, lookups, transcript) and the three local patches | Plonky3: public code, **no audit verified**. Our configuration and patches: **internal only** | Critical |
+| 2 | Plonky3 as configured (STARK, hiding mode, lookups, transcript) and the four local patches | Plonky3: public code, **no audit verified**. Our configuration and patches: **internal only** | Critical |
 | 3 | BVM-1 zkVM circuits (AIR tables, buses, fixed shapes) | **Internal only** | Critical |
 | 4 | PX kernel statement (`px-core/src/kernel.rs`) and the function binding | **Internal only** | Critical |
 | 5 | PX consensus rules (PX1–PX5, fee, registry, pool, block budget, mempool cache) | **Internal only** | Critical |
@@ -47,7 +47,7 @@ outside scrutiny from what rests on internal work only.
   algebraic attacks on 31-bit fields?
 
 ### 2.2 Plonky3 and the proof system (critical)
-- **Files:** `zk/src/*`, `zk/tests/*`, `third_party/` (three patched files); docs/zk.md
+- **Files:** `zk/src/*`, `zk/tests/*`, `third_party/` (four patched files); docs/zk.md
   §9, docs/reviews/zk-security-review.md, docs/reviews/query-policy.md.
 - **Claims to verify:**
   1. knowledge soundness at BS-ZK-3 (updated 2026-10-04; formerly BS-ZK-2, ≥ 123 /
@@ -60,13 +60,17 @@ outside scrutiny from what rests on internal work only.
   3. the Fiat–Shamir transcript: domain separation (`PARAMS_ID`), and the statement
      digest absorbed before any commitment (ZK-F13);
   4. the LogUp bound (63% of p);
-  5. the three lock-scope patches change nothing but lock scope.
+  5. the three lock-scope patches change nothing but lock scope, and the
+     `p3-batch-stark` patch (PXDET-1) changes only the order in which the quotient
+     randomness is drawn (third_party/README.md).
 - **Internal evidence:**
   - mutation tests (231,120 ALU; 37,616 CPU and memory; 2,500 Poseidon2; 180
     public-copy);
   - 402 proof-byte mutations;
-  - upstream's own suites pass with the patches (208 tests: 44 `p3-dft`, 99
-    `p3-merkle-tree`, 65 `p3-fri`; third_party/README.md).
+  - upstream's own suites pass with the lock-scope patches (208 tests: 44 `p3-dft`, 99
+    `p3-merkle-tree`, 65 `p3-fri`; third_party/README.md);
+  - PXDET-1: `zkvm/tests/reproducible.rs` and the cross-thread-count digest check
+    (third_party/README.md).
 - **Not verified:** any audit of Plonky3 itself.
 
 ### 2.3 BVM-1 circuits (critical)
@@ -131,7 +135,10 @@ outside scrutiny from what rests on internal work only.
 - **Claims to verify:**
   - fixed shapes and a uniform fee;
   - canonical anchors;
-  - wallet scanning reveals nothing to the node;
+  - wallet scanning is a bounded leak, not a silent one: the node does not learn
+    ring members, but learns the wallet's IP, its scan start (birthday), when it
+    sends and which transaction came from it (TM2-PRIV C-3; testnet.md §11; the
+    spend-time `/distribution` request is gone since the local output index);
   - Dandelion++ for PX;
   - **P-5: proof-length variation carries no witness information** (supported by
     measurement and reasoning; the key item for outside confirmation).
@@ -177,8 +184,9 @@ outside scrutiny from what rests on internal work only.
 
 ## 5. Proceeding without it
 
-The owner may decide to run the controlled seven-machine testnet before the external
-review. If so, that decision and its consequences must be recorded:
+An external review is optional, future and not planned (self-reliant policy,
+owner decision 2026-09-25; review-status.md). The controlled testnet runs without
+one, and that has consequences that must stay recorded:
 - the testnet shows operation, not security;
 - no production use and no real value;
 - every "internal only" claim above stays unconfirmed.

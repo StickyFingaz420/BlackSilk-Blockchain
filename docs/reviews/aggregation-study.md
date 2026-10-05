@@ -1,5 +1,7 @@
 # Proof size, aggregation and verification cost: design study
 
+> Historical record (2026-09-24). Superseded where it conflicts with the code: the ZK parameter set is BS-ZK-3 (73372e9; BS-ZK-4 pending); PX proof sizes were re-measured in [docs/evidence/freeze-b2-b3-2026-10-04](../evidence/freeze-b2-b3-2026-10-04/README.md). Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 Status: **study (2026-09-24; measured decomposition 2026-09-25). Nothing in §3 is
 implemented.** It records what was measured, what was estimated (marked *estimate*),
 and what the options cost, so that the owner can decide with evidence. Security

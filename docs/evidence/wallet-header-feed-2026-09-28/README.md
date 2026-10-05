@@ -1,5 +1,7 @@
 # Wallet header feed: cost of a restore check from the genesis (W3-39b)
 
+> Historical record (2026-09-28). Superseded where it conflicts with the code: the header is 172 bytes (f5daa0e), so the download grows by 172 bytes per header; parallel header hashing was done afterwards, see [wallet-parallel-pow-2026-09-29](../wallet-parallel-pow-2026-09-29/README.md). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 Internal engineering measurement, one run per configuration on one machine; not a
 benchmark suite.
 

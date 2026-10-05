@@ -15,14 +15,14 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 
 | Area | Design | Spec |
 |---|---|---|
-| Proof of work | RandomX v1 with BlackSilk's own Argon2 salt, `"BlackSilk/RandomX/v1"`; every other parameter is Monero's `rx/0` (pure-Rust implementation; the reference test vectors it still pins, with Monero's salt, and BlackSilk's own vectors are listed in [randomx/README.md](randomx/README.md)), Monero key schedule | [consensus.md](docs/consensus.md) |
+| Proof of work | RandomX v1 with BlackSilk's own Argon2 salt, `"BlackSilk/RandomX/v1"`; every other parameter is Monero's `rx/0` (pure-Rust implementation; the reference test vectors it still pins, with Monero's salt, and BlackSilk's own vectors are listed in [randomx/README.md](randomx/README.md)), Monero key schedule. The PoW input is a 47-byte mining blob (`BSilk/1`, the header's mining hash, an 8-byte nonce at byte 39), not the 172-byte header. Solo mining only: `blacksilk-miner` mines through the node's `/template`; the project has no pool or stratum server | [consensus.md §3](docs/consensus.md) |
 | Difficulty | LWMA-1 with a 75-block window and a counted clock, 2-minute blocks | [consensus.md §4](docs/consensus.md) |
 | Sender privacy | CLSAG ring signatures, ring size 16, key images | [transactions.md](docs/transactions.md) |
 | Receiver privacy | one-time stealth outputs, view tags, subaddresses, **Janus anchor** | [transactions.md §3, §12](docs/transactions.md) |
 | Amount privacy | Pedersen commitments, aggregated Bulletproofs+ | [transactions.md §6–7](docs/transactions.md) |
 | Group | Ristretto255 (prime order) | [transactions.md §1](docs/transactions.md) |
 | Emission | smooth curve to ~21 M BLK, then 0.6 BLK/block tail forever; no premine | [blocks.md §2](docs/blocks.md) |
-| Private execution (PX) | private records and nullifiers, a fixed transfer kernel and private contract functions proven in the BVM-1 zkVM (Plonky3 STARK, parameter set BS-ZK-3). Transaction kinds 2 and 3 are **consensus rules from genesis**; no network running them has launched. Zero knowledge is claimed only as **statistical and conditional**, computational in practice ([zk-coverage.md](docs/reviews/zk-coverage.md)); proofs are about 2.2 MB (transfer) | [px.md](docs/px.md), [zk.md](docs/zk.md), [zkvm.md](docs/zkvm.md) |
+| Private execution (PX) | private records and nullifiers, a fixed transfer kernel and private contract functions proven in the BVM-1 zkVM (Plonky3 STARK, parameter set BS-ZK-3). Transaction kinds 2 and 3 are **consensus rules from genesis**; no network running them has launched. Zero knowledge is claimed only as **statistical and conditional**, computational in practice ([zk-coverage.md](docs/reviews/zk-coverage.md)); proofs are about 2.4 MB (transfer) ([STATUS.md](docs/STATUS.md) §5, §6) | [px.md](docs/px.md), [zk.md](docs/zk.md), [zkvm.md](docs/zkvm.md) |
 | Network | encrypted (unauthenticated) transport, header-first sync, Dandelion++, bucketed address manager with eclipse mitigations (not tested against a real Sybil attack), peer scoring and bans, outbound SOCKS5/Tor | [p2p.md](docs/p2p.md) |
 
 **What it is not (yet):**
@@ -39,8 +39,9 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
   **demonstration** contract (the vault: not trustless, not an HTLC). The earlier Wasm
   confidential-contract design is **frozen research**, outside the build and not
   consensus on any network ([research/wasm-contracts.md](docs/research/wasm-contracts.md),
-  [contracts/README.md](contracts/README.md)). The old marketplace stays parked in
-  `legacy/`.
+  [contracts/README.md](contracts/README.md)). The old marketplace and the rest of the
+  pre-rebuild code (`legacy/`) were removed from the tree in `cd7b728` (owner
+  decision 2026-10-04); they remain in the git history before that commit.
 - **Not a strong PoW network yet.** The testnet's PoW is RandomX with BlackSilk's own
   salt. Stock `rx/0` hash power cannot be pointed at it unmodified, but anyone who
   adds the salt to a JIT miner (minutes of work) or rents generic CPUs can out-mine it
@@ -71,15 +72,16 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | `tools/daa-sim/` | difficulty-rule simulation harness (evidence, not consensus) |
 | `fuzz/` | coverage-guided fuzz targets (separate workspace, nightly toolchain) |
 | `research/` | the post-quantum research track (outside the workspace) |
-| `legacy/` | pre-rebuild code kept for reference; does not build |
-| `third_party/` | three Plonky3 0.7.0 crates with a local lock-scope patch ([third_party/README.md](third_party/README.md)) |
+| `third_party/` | four Plonky3 0.7.0 crates with local patches: lock scope (`p3-dft`, `p3-fri`, `p3-merkle-tree`) and prover determinism, PXDET-1 (`p3-batch-stark`), checked by the third-party gate `tools/tpgate` ([third_party/README.md](third_party/README.md)) |
 | `deploy/` | node configuration templates, systemd units, Docker image, install scripts |
 
 **Pure Rust, and `unsafe`:**
-- Every workspace crate declares `#![forbid(unsafe_code)]`. The exception is the zkVM
-  guest SDK (`zkvm/sdk`, built separately for the guest target), whose one `unsafe`
-  block is the `ecall` instruction that runs inside the virtual machine; the guest
-  programs themselves contain no `unsafe`.
+- Every crate root of the root workspace (its library and binary targets) declares
+  `#![forbid(unsafe_code)]`. The zkVM guest SDK (`zkvm/sdk`) and the guest programs
+  (`zkvm/guests/`) are built separately for the guest target and are outside it: the
+  SDK's one `unsafe` block is the `ecall` instruction that runs inside the virtual
+  machine; the guest programs contain no `unsafe` but do not declare
+  `#![forbid(unsafe_code)]`.
 - The patched crates in `third_party/` keep upstream Plonky3's own `unsafe` code
   unchanged, and dependencies contain `unsafe` internally
   ([dependency-review.md](docs/reviews/dependency-review.md)).
@@ -172,7 +174,7 @@ blacksilk-node --network testnet --proxy 127.0.0.1:9050 --proxy-only --peer <oni
   ([blocks.md §9](docs/blocks.md)).
 - An observer of your node's own link (your ISP, or your Tor guard) can tell from
   message sizes and timing when your node originates a transaction, **v1 or PX**:
-  frames are not padded. A PX transaction (about 2.2 MB) is unmistakable even over
+  frames are not padded. A PX transaction (about 2.4 MB or more) is unmistakable even over
   Tor; a v1 transaction (a few kB) is a weaker signal over Tor but not hidden
   ([docs/testnet.md §12.7](docs/testnet.md)).
 - `originated.json` in the node's data directory lists every transaction the node

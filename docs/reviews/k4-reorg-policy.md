@@ -11,7 +11,8 @@ Status: **provisionally accepted by the owner for the experimental testnet
 | Checkpoints | None |
 | Monitoring | Reorganizations of `DEEP_REORG_WARN_DEPTH` = 10 blocks or more are logged at WARN; `ChainManager::deepest_reorg` records the deepest seen since start |
 | Chain selection | Unchanged by this policy |
-| Code | `chain/src/manager.rs` (`sync_state`); documented in docs/consensus.md §8 |
+| Operator override | `--invalidate-block` / `--reconsider-block` (`node/src/config.rs`; docs/testnet.md §9): a manual, local verdict stored in blocks.dat. It is not a checkpoint and not consensus: it forks only that node. While a heavier chain is refused only because of such a verdict, the node serves no block templates unless `--mine-despite-operator-fork` is given |
+| Code | `chain/src/manager/fork_choice.rs` (`sync_state`, `invalidate_block`); `DEEP_REORG_WARN_DEPTH` in `chain/src/manager.rs`; documented in docs/consensus.md §8 |
 
 ## 2. Security implications
 
@@ -82,7 +83,9 @@ To be decided with testnet data and the internal review's findings:
   accepted for an experiment with valueless coins; it is not acceptable for mainnet
   as is.
 - **Monitoring only.** The warning and the counter detect deep reorganizations; they
-  prevent nothing. The response is manual (docs/testnet-incident-response.md).
+  prevent nothing. The response is manual (docs/testnet-incident-response.md); the only
+  node-side tool is the local `--invalidate-block` override, which forks only the node
+  that uses it.
 - **The counter resets on restart.** `deepest_reorg` covers the time since the node
   started; logs are the durable record.
 - **Deep reorganizations are tested only on one machine** (labnet, up to 17 blocks;

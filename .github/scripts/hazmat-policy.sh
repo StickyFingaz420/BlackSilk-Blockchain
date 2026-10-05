@@ -22,9 +22,9 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 
-# Kept code and the post-quantum research track are not built (see the root
-# Cargo.toml `exclude`); third_party/ is upstream Plonky3.
-SKIP='^(legacy|research|third_party)/'
+# The post-quantum research track is not built (see the root Cargo.toml
+# `exclude`); third_party/ is upstream Plonky3.
+SKIP='^(research|third_party)/'
 
 bad=0
 fail() { # title, message
@@ -94,7 +94,7 @@ for rule in "${source_rules[@]}"; do
     else
       fail "hazmat API outside its reviewed crate" "$hit calls $what ($pat); only $allowed may (decisions Agent 44; .github/scripts/hazmat-policy.sh)"
     fi
-  done < <(git grep -n -I -F "$pat" -- '*.rs' ':!legacy' ':!research' ':!third_party' | cut -d: -f1,2)
+  done < <(git grep -n -I -F "$pat" -- '*.rs' ':!research' ':!third_party' | cut -d: -f1,2)
 done
 
 if [ "$bad" = 0 ]; then

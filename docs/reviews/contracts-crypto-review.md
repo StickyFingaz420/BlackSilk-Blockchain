@@ -1,5 +1,7 @@
 # Security review: contract cryptography (balance kernel, scoped membership, claims)
 
+> Historical record (2026-09-23). Superseded where it conflicts with the code: the Wasm-era contracts.md sections cited here (§6–§8, §16.4 and others) now live in [docs/research/wasm-contracts.md](../research/wasm-contracts.md); [docs/contracts.md](../contracts.md) is the PX contract design; no external review is engaged or planned (owner decision 2026-09-25). Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 Status: **internal review, M1 (2026-09-23).** Written by the implementer, so it is
 not independent. It prepares the external review ([contracts.md](../contracts.md)
 §16.4) by stating each construction, what it must guarantee, the argument, the tests

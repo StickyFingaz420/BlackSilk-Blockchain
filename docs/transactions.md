@@ -97,7 +97,9 @@ Tag names used in this document (each is prefixed with `BlackSilk/v1/`):
 | `clsag/agg-P`, `clsag/agg-C`, `clsag/round` | CLSAG |
 | `bp+/init`, `bp+/y`, `bp+/z`, `bp+/round`, `bp+/final` | Bulletproofs+ transcript |
 | `tx/prefix`, `tx/base`, `tx/prunable`, `tx/bp`, `tx/hash`, `tx/sig-message` | tx hashing |
-| `nonce` | hedged signing nonces (wallet side) |
+| `nonce`, `nonce/stream` | hedged signing nonces (wallet side) |
+| `wallet/spend-key`, `wallet/view-key` | wallet keys from the master secret (§2.1) |
+| `wallet/hedge-key/v1`, `px/wallet/hedge-key/v1`, `px/wallet/vault-rcm/v1` | wallet hedge keys and vault `rcm` (§10) |
 
 ### 1.3 Generators
 
@@ -137,7 +139,8 @@ entropy with the seed version and the network):
 k_s = Hs("wallet/spend-key", master)      k_v = Hs("wallet/view-key", master)
 ```
 
-There is no default or fixed seed (fixes audit finding K1). The seed format (27 words,
+There is no default or fixed seed (fixes AUDIT.md finding K1, a hard-coded shared
+seed; not the assumption K1 of reviews/assumptions.md). The seed format (27 words,
 version, network, birthday, check words) is specified in blocks.md §10.
 
 The wallet's hedge key (§10) is derived from the spend key, never from view material:
@@ -276,8 +279,8 @@ output has exactly one key image, and a second spend of the same output produces
   and `unlock_time` are the largest sources of wallet fingerprinting and can carry
   arbitrary data. **Not everything is fixed, though:** the encrypted per-output fields
   (`view_tag`, `enc_amount`, `enc_anchor`, about 25 bytes per output) and the PX record
-  ciphertexts (1,241 bytes each, whose leading `R` is not checked to be a valid point)
-  are checked for length only. Consensus cannot check that they look random, so a
+  ciphertexts (1,241 bytes each; their leading `R` must be a canonical, non-identity
+  point, T2) are otherwise checked for length only. Consensus cannot check that they look random, so a
   non-reference wallet could fill them with structure that fingerprints it, or use
   them as a covert channel. The conformance rule for any wallet: these fields must be
   the outputs of the specified encryption with fresh randomness (§3, px.md §6).
@@ -366,7 +369,7 @@ domain        = LE32(network_id) ‖ LE32(branch_id) ‖ genesis_id           (4
 - Every CLSAG signs `sig_message`, which covers **everything except the CLSAGs
   themselves**: version, inputs (key images and ring references), outputs, fee,
   pseudo-outputs and the range proof. Changing any bit of any of these invalidates every
-  signature (fixes audit finding S3).
+  signature (fixes AUDIT.md finding S3).
 - `network_id` in the message makes a signature valid on one network only, so no
   cross-network replay is possible.
 - `branch_id` is the branch id of the epoch at the height of the block that includes
@@ -453,7 +456,8 @@ real.
   are below `2^71 ≪ ℓ`, so it cannot hold modulo `ℓ` in a way it doesn't hold over the
   integers.
 
-This is what makes inflation impossible (fixes audit finding S4).
+This is what makes inflation infeasible under the assumptions of §9 (fixes AUDIT.md
+finding S4).
 
 ### 6.1 CLSAG
 
@@ -623,7 +627,7 @@ invalid block reports and how much work precedes it, never the verdict):
 |---|---|---|
 | 1 | B1, B2, B7 (coinbase) | trivial |
 | 2 | Per-transaction structure: T1, T3–T8, T10 shape, T11 (including `D ≠ identity`), PX and deploy structure | cheap |
-| 3 | B5, B-OMR, B6, B8, B-PXR, B3 | hashing (one hash per output, up to 33 Poseidon2 permutations per PX commitment), sums |
+| 3 | B5, B-OMR, B6, B8, B-PXR, B3 | hashing (one hash per output; up to 32 Poseidon2 permutations per PX commitment appended, plus 32 for the block's PX root), sums |
 | 4 | T9 balances (every kind) | one multi-scalar sum per transaction |
 | 5 | PX proofs decoded strictly (PX5, first step), unless already verified by this node | a few ms per proof |
 | 6 | C2, PX1–PX4, PX6 (the validity window, for every PX transaction, whether or not its proof was verified before), contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |
@@ -711,7 +715,9 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
   returns is readmitted without that check.
 - On reorg, disconnected transactions return to the mempool if still valid.
 - A pooled transaction expires 2 160 blocks after the height it was admitted for, and
-  the node then refuses it again for 30 blocks (`Expired`); blocks.md §7.
+  the node then refuses to originate it again for 30 blocks (`Expired`; local
+  submissions through `/tx` only, peers' relayed and stem copies are admitted as
+  usual); blocks.md §7.
 
 ---
 
@@ -786,8 +792,9 @@ Security relies on the following. Nothing else is assumed.
     per process from the OS RNG, the same source as the stream's fresh bytes. If the OS
     RNG fails, both fail, and coinbase outputs become linkable to a known payout address.
   - *Membership nonce (R2-C5).* The context lacks the ring and the tag; with a constant RNG
-    two signatures over different rings leak `x`. Unreachable today (contracts are not
-    integrated); must be fixed before any integration.
+    two signatures over different rings leak `x`. Unreachable today: `crypto::membership`
+    has no caller in the workspace (PX contracts do not use it); must be fixed before
+    anything calls it.
   - *Contract-output `rcm` and function blinds of other callers.* `build_px` keeps the
     `rcm` of a contract output (the caller keeps that record's opening) and the function
     `blind` (it is also in the function's private input), so the caller derives them.
@@ -968,8 +975,9 @@ newest-member fraction to be at most 0.05 above it. **Limits:**
   blocks deep, 2,000 rings per depth, about ±0.1 members): the intersection keeps
   about 15.9 of 16 members after a 10-block reorganization, 14.9 after 30, 13.2 after
   100 and 9.0 after 720; a ring drawn afresh would share only the real input (about
-  1.0). Accepted, to be quantified in the privacy regression suite (tm2-crosscheck
-  X7, docs/reviews/phase2-2026-09-27/research/tm2-crosscheck.md).
+  1.0). Accepted. The test above (`tx/tests/decoy_statistics.rs`) is the
+  quantification tm2-crosscheck X7 asked for
+  (docs/reviews/phase2-2026-09-27/research/tm2-crosscheck.md).
 - The parameters are Monero's, not fitted to BlackSilk spend data (§15).
 
 **Ring members are resolved locally (review I3 §3.9).** The wallet indexes every
@@ -1104,10 +1112,10 @@ could then:
 What survives: Pedersen commitments are perfectly hiding, so **amounts of outputs to
 unknown addresses stay hidden** even then.
 
-The earlier "post-quantum ring signature" code does not provide these properties and is
-being removed (audit finding S5). Post-quantum privacy is a separate research track: a
-lattice-based linkable ring signature or membership proof that survives external review
-before anything ships.
+The earlier "post-quantum ring signature" code did not provide these properties and
+was removed (AUDIT.md finding S5). Post-quantum privacy is a separate research track: a
+lattice-based linkable ring signature or membership proof. Nothing ships before it is
+reviewed; the review standard is decided then.
 
 ### 11.7 Long-term direction
 
@@ -1329,7 +1337,8 @@ A wallet must also:
   asking the victim.
 - The construction and the analysis above are BlackSilk's own. They follow the idea of
   the Jamtis "Janus anchor" proposed for Monero, but have **not been peer-reviewed**.
-  They would be a first item if an external reviewer were engaged (§15).
+  They would be a first item of any later external review (optional, future, not
+  planned; §15).
 
 ---
 
@@ -1341,7 +1350,7 @@ A wallet must also:
 | **No double spend** | CLSAG linkability: two valid signatures by the same key yield the same `I`. `I` is unique per output, since the group has prime order and there are no torsion variants. Consensus rejects repeated `I` (C2). |
 | **Unforgeability** | Spending requires `p` for some ring member (CLSAG unforgeability under DL in the ROM). |
 | **Non-frameability** | No one can produce a key image that blocks someone else's output (CLSAG non-frameability). |
-| **Non-malleability of content** | `sig_message` covers every non-signature byte, and `network_id`. Signature bytes are covered by `tx_hash`, and the block commits to `tx_hash`. Re-randomizing a signature cannot change what the transaction does. |
+| **Non-malleability of content** | `sig_message` covers every non-signature byte, and the domain (`network_id`, `branch_id`, `genesis_id`). Signature bytes are covered by `tx_hash`, and the block commits to `tx_hash`. Re-randomizing a signature cannot change what the transaction does. |
 | **Signer anonymity** | CLSAG anonymity under DDH: among 16 members. See §11.3 for statistical limits. |
 | **Recipient privacy** | Outputs and subaddresses are unlinkable without `k_v` (DDH). |
 | **Encoding safety** | Canonical points and scalars only, minimal varints, a single valid encoding. |
@@ -1357,7 +1366,7 @@ A wallet must also:
 | Referencing unconfirmed or very recent outputs | Spendable age of 10, coinbase maturity 60 (§5.3). |
 | Weak Fiat–Shamir in range proofs | The transcript absorbs the statement and all prover messages (§7). |
 | Cross-network and cross-chain replay | `network_id`, `branch_id` and `genesis_id` in `sig_message` and in the PX binding `h_tx` (§4.4). |
-| Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying **stateless-invalid** transactions (§8.1) are penalized (p2p.md §10). Signature checks are contextual (they need the ring members from the chain), so relays of transactions with invalid signatures are **not** penalized: an open defect (N-11, docs/reviews/completion-readiness-2026-09-26.md). |
+| Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying **stateless-invalid** transactions (§8.1) are penalized (p2p.md §10). Signature checks are contextual (they need the ring members from the chain). A relay of a transaction with an invalid signature is penalized only when every ring member is at least 60 blocks below the tip (`SIGNATURE_BURIAL`, p2p.md §10); over younger rings it is not penalized and pays only the per-peer relay budgets (formerly open as N-11, docs/reviews/completion-readiness-2026-09-26.md). |
 | Arithmetic overflow in fees, indices, amounts | Checked arithmetic in decoding and summation (T5, T8, B3). |
 | Tx-hash collision between coinbases | `height` is in the coinbase prefix. |
 
@@ -1401,7 +1410,8 @@ Each part in bytes:
   The test plan (§16) compensates with adversarial and property testing, which is not
   a substitute for a cryptographic review. By the owner's decision of 2026-09-25, no
   external review is engaged or currently required (reviews/review-status.md); this
-  layer would be an item if a reviewer were engaged.
+  layer would be an item of any later external review (optional, future, not
+  planned).
 - **The Janus anchor (Δ4)** is our construction. Its analysis (§12.4) has been
   reviewed only internally.
 - **Decoy selection** (wallet policy, `tx/src/decoy.rs`) uses Monero's gamma parameters,
@@ -1444,8 +1454,8 @@ Each part in bytes:
    - Batch verification detects one bad proof among many.
 5. **Transactions**
    - Build → serialize → deserialize → validate.
-   - One negative test per rule T1–T11, C1–C3 and B1–B7. Each constructs a violating
-     transaction and asserts the specific error.
+   - One negative test per rule T1–T11, C1–C3, B1–B8, B-OMR and B-PXR. Each constructs
+     a violating transaction or block and asserts the specific error.
    - Inflation attempt: outputs exceeding inputs with a forged range proof, rejected.
    - Double spend within a transaction, a block and the chain, all rejected.
    - Signature-coverage test: flipping any single prefix, base or BP+ byte invalidates

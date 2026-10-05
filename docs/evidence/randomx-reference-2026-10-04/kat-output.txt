@@ -1,4 +1,4 @@
-﻿== stock interp
+== stock interp
 # mode=interp flags=0x0
 1a key=74657374206b657920303030 input_len=14 hash=639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f
 1b key=74657374206b657920303030 input_len=26 hash=300a0adb47603dedb42228ccb2b211104f4da45af709cd7547cd049e9489c969

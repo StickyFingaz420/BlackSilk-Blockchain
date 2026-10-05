@@ -1,0 +1,23 @@
+[1790331273] 5 nodes up
+[1790331273] miners started on nodes 0 and n/2 (one per partition group)
+[1790331635] tx from miner-a via node2 failed: decoy selection: NotEnoughOutputs
+[1790331655] tx from miner-a via node0 failed: decoy selection: NotEnoughOutputs
+[1790331735] tx from miner-a via node1 failed: decoy selection: NotEnoughOutputs
+[1790332473] partition #1 started (groups split at node 2)
+[1790332654] partition healed
+[1790332770] px deposit by miner-a via node2
+[1790333492] px deposit by user-3 via node0
+[1790333854] partition #2 started (groups split at node 2)
+[1790333970] px deposit by miner-b via node0
+[1790334034] partition healed
+[1790334455] px send by miner-b via node3
+[1790334692] px send by miner-b via node0
+[1790334874] traffic phase over; final checks
+[1790334898] converged=true drained=true height=391
+[1790334994] late joiner synced=true peers=3
+[1790334994] miner-a: balance 4577.36584434 (fresh restore: 4577.36584434), private 1.00000000 (fresh restore: 1.00000000) OK
+[1790334995] miner-b: balance 3240.86298583 (fresh restore: 3240.86298583), private 0.42174208 (fresh restore: 0.42174208) OK
+[1790334995] user-1: balance 1.98859125 (fresh restore: 1.98859125), private 0.20000000 (fresh restore: 0.20000000) OK
+[1790334996] user-2: balance 2.22049376 (fresh restore: 2.22049376), private 0.20000000 (fresh restore: 0.20000000) OK
+[1790334996] user-3: balance 3.90409995 (fresh restore: 3.90409995), private 1.00000000 (fresh restore: 1.00000000) OK
+[1790334996] supply: generated 7829.16375721 vs wallets 7829.16375721

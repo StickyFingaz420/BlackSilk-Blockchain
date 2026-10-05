@@ -1,5 +1,7 @@
 # 07 randomx-cache-seed: research dossier (phase 2, phase 1: research and briefing)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Agent 07. This is internal engineering research, not an audit. The repository was read only, and nothing was built or run.
 
 ---

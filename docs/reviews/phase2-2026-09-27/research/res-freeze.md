@@ -1,5 +1,7 @@
 # RES-FREEZE: research dossier on the open pre-freeze questions
 
+> Historical record (2026-10-03). Superseded where it conflicts with the code: the wallet derives the decoy distribution from its own output index and makes no spend-time `/distribution` request (1902761). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Agent RES-FREEZE, phase 2, 2026-10-03/04. Read-only on the repository (`rebuild/core` at
 8682274). Internal engineering research, not an audit. It claims nothing about BlackSilk
 being secure, production-ready or proven.

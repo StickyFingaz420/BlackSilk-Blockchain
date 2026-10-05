@@ -2405,7 +2405,7 @@ mod tests {
     /// resolve to the same outputs, so its CLSAG verdict is the one of its
     /// admission. The transfer is synthetic and its signature does not
     /// verify: full validation (the path before W2-12, which failed this
-    /// test on the base, C:/bszkeval/w2-pool-scratch/base-demo.log) drops it.
+    /// test when it was run against the pre-W2-12 base) drops it.
     #[test]
     fn a_reorganization_above_the_rings_keeps_the_entry_without_verifying_it() {
         use blacksilk_tx::state::MemoryChain;

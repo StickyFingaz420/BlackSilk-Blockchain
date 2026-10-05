@@ -246,8 +246,10 @@ into `b2sum -l 256`, then the first 8 bytes little-endian.
 - Known-answer vector: Bitcoin block 0 (`000000000019d668…8ce26f`), `H = 0`, the
   test-vector id; the nonce is pinned.
 - The reversed byte order gives a different nonce.
-- Every genesis field asserted (version 1, height 0, zero parent and root, the
-  given timestamp and difficulty, the derived nonce).
+- Every genesis field asserted (version 1, height 0, zero parent and root,
+  `output_count` 0, a zero `output_root`, `px_root` = `EMPTY_PX_ROOT`, the given
+  timestamp and difficulty, the derived nonce), and the same layout as the
+  built-in testnet genesis (`all_genesis_fields_are_fixed`).
 - Registry: the testnet v3 id is not a used id; every used id is refused by
   `generate` with any flag (`used_network_ids_are_refused`).
 - Reserved ids: `--final` only for `0x0001D673`, `--rehearsal` only for the

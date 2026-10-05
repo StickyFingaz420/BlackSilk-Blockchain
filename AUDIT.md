@@ -1,3 +1,5 @@
+**Internal engineering review log; not an audit. No external audit has been performed.**
+
 # BlackSilk internal findings log (historical)
 
 > **Historical record; not maintained, and not an audit.** This file was titled
@@ -340,6 +342,7 @@ new crates.
 **Decisions (user, 2026-09-23):**
 - Rebuild the node core rather than patch it.
 - Park contracts, escrow and the marketplace apps in `legacy/`; redesign them later.
+  (`legacy/` was removed from the tree on 2026-10-04; see git history up to 57dd81a.)
 - Remove all non-Rust or unverified post-quantum code.
 - Smooth emission with a tail; 8 decimals.
 
@@ -352,7 +355,7 @@ new crates.
 | Deleted | the root `build.rs` that cloned and ran remote code |
 | Deleted | the old miner with its three private RandomX copies |
 | Deleted | stray files |
-| Parked in `legacy/` (outside the workspace; see `legacy/README.md`) | the old node, wallet, `primitives`, smart contracts, marketplace, GUI and web wallets, faucet, explorer, deploy files, and the old README and testnet docs, which advertised unverified features |
+| Parked in `legacy/` (outside the workspace; removed from the tree on 2026-10-04, see git history up to 57dd81a) | the old node, wallet, `primitives`, smart contracts, marketplace, GUI and web wallets, faucet, explorer, deploy files, and the old README and testnet docs, which advertised unverified features |
 | Moved to `research/` | `pqsignatures` (pure Rust) |
 | Workspace | now only the pure-Rust rebuilt crates; the moving `iced` git pins are gone |
 | Toolchain | switched to `stable-x86_64-pc-windows-msvc` |
@@ -576,7 +579,8 @@ Clippy with `-D warnings` and `fmt --check` are clean.
 - **Documentation:** `docs/testnet.md` covers parameters, running a node, Tor, Docker,
   mining, seed operation, the **multi-machine test procedure (§7)**, the lab tool,
   troubleshooting and operator security. The consensus and P2P specs are updated. The
-  old deployment files stay in `legacy/`.
+  old deployment files were parked in `legacy/` (removed from the tree on 2026-10-04;
+  see git history up to 57dd81a).
 
 **Lab network tool** (`tools/labnet`, pure Rust):
 - It starts real node and miner processes, and routes every node-to-node link through
@@ -1564,7 +1568,7 @@ costs.
 
 | Findings | Status | Evidence |
 |---|---|---|
-| E1, E2 | **Closed** (crates removed from the workspace) | `legacy/README.md` |
+| E1, E2 | **Closed** (crates removed from the workspace) | `legacy/README.md` (removed from the tree on 2026-10-04; see git history up to 57dd81a) |
 | Phase 1 toolchain | **Resolved:** MSVC toolchain; the whole workspace builds and tests | R4 |
 | P1–P4 (fake or duplicated RandomX) | **Closed:** one spec-exact implementation; the copies are deleted | R1 vectors, R4 miner test |
 | P5–P10 (miner/node PoW mismatch, timing checks, inverted targets, difficulty, key schedule) | **Closed:** the miner and node share `consensus` | R2 tests, R4 miner/e2e tests, smoke test |

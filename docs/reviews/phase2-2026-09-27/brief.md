@@ -7,7 +7,7 @@ integrates it. Read this whole brief before doing anything.
 ## 1. The project
 
 - **What it is:** BlackSilk, a pure-Rust proof-of-work privacy blockchain.
-- **Repository:** `C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain`.
+- **Repository:** `<repo>` (the local checkout; path redacted 2026-10-04).
 - **Branch:** `rebuild/core`, the ONLY development branch. `v3/candidate` has been merged
   into it and deleted.
 - **Two transaction layers:**

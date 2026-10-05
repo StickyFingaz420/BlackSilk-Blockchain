@@ -1,5 +1,7 @@
 # TM2-CONS: second threat-model round, consensus, cryptography and economics lens
 
+> Historical record (2026-10-02). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Agent TM2-CONS, phase 2, 2026-10-02. Internal engineering review, not an audit. Nothing
 here claims that BlackSilk is secure, production-ready, audited or mathematically
 proven. Zero knowledge is "statistical and conditional (computational in practice)".

@@ -1,7 +1,8 @@
-   Compiling blacksilk-supply-audit v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\tools\supply-audit)
-   Compiling blacksilk-wallet v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\wallet)
-   Compiling blacksilk-node v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\node)
-   Compiling blacksilk-rpc v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\rpc)
+[path redacted 2026-10-04: the local worktree prefix in the four Compiling lines is replaced by <repo>; the test output is unchanged]
+   Compiling blacksilk-supply-audit v0.1.0 (<repo>\tools\supply-audit)
+   Compiling blacksilk-wallet v0.1.0 (<repo>\wallet)
+   Compiling blacksilk-node v0.1.0 (<repo>\node)
+   Compiling blacksilk-rpc v0.1.0 (<repo>\rpc)
     Finished `release` profile [optimized] target(s) in 9m 23s
      Running unittests src\lib.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_node-4f99a150f5b72195.exe)
 

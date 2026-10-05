@@ -40,8 +40,12 @@ What a contract can do today, and what it cannot:
 - **Time.** A transaction may carry a validity window (§4.3), which every called
   function reads. Timeouts, refunds and deadlines are expressible; there is no other
   clock.
-- **Throughput.** A PX transaction is about 2 MB with its proof, so a block holds a
-  few (px.md §8, §11.5). Aggregation is research (§9).
+- **Throughput.** A PX transaction is about 2.40 MB with its proof (a transfer), about
+  3.0 MB with one function and 3.63 MB with two (measured on the frozen kernel,
+  docs/evidence/freeze-b2-b3-2026-10-04/), so a block holds 2 or 3 (px.md §8, §11.5).
+  Proving a two-function call needs about 6.4 GB of memory. The widest budgets a
+  deploy can register today give proofs of about 4.09–4.13 MB (freeze gate B2 fails;
+  a deploy-time proof-size bound, V12, is in progress). Aggregation is research (§9).
 - **Always public** for a call (privacy review P-8): the contract id and the program id
   of every called function, the functions' public output words (a fixed number per
   program, §5), the transaction's validity window, and the bridge amounts. Private:

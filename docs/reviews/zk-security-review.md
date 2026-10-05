@@ -6,9 +6,9 @@ Scope: `zk/`, `zkvm/`, `px-core/`, `px/`, specifications `docs/zk.md`, `docs/zkv
 reviews: `privacy-review.md`, `dependency-review.md`, `aggregation-study.md`.
 
 > **This is an internal review by the implementer. It is not an independent review.**
-> It records the arguments, tests and open risks so that independent reviewers can
-> check them. Nothing in the ZK layer may be used in production before the independent
-> reviews in §9 are complete.
+> It records the arguments, tests and open risks so that they can be re-checked by
+> later internal review passes or, optionally, by an outside reviewer. The ZK layer is
+> not claimed to be ready for production; §9 lists what remains open.
 
 ---
 
@@ -23,7 +23,7 @@ reviews: `privacy-review.md`, `dependency-review.md`, `aggregation-study.md`.
    31-bit field (§3.5).
 4. **Enumerate protocol attacks** against the kernel, contract functions, state and
    delivery (§4), and privacy leaks (§5).
-5. **Audit Pure Rust and determinism** (§6).
+5. **Review Pure Rust and determinism** (§6).
 6. **Record evidence and the findings of this review** (§7, §8).
 
 ## 2. Assumptions (complete list)
@@ -44,7 +44,16 @@ Merkle tree nodes: `node(l, r) = P(l ‖ r)[0..8]` alone has trivial collisions 
 invertible public permutation, R2-C6). The PX commitment tree relies instead on the
 extractability argument of ePrint 2026/089 Theorem 3 (about 122.6 bits by our
 evaluation; the adaptation to BlackSilk's tree is argued, not proven), with leaves that
-are always sponge outputs at fixed depth (zk.md §4.5, §12.1).
+are always sponge outputs at fixed depth (zk.md §4.5, §12.1). A6's "4 random codewords
+per matrix" was BS-ZK-2; BS-ZK-3 uses 8, the extension degree (`NUM_RANDOM_CODEWORDS`,
+`zk/src/params.rs`; decision F24-1), and the verifier pins that count. A6's zero
+knowledge is statistical and conditional (computational in practice; zk-coverage.md
+§4). BS-ZK-4 (20 query grinding bits) is pending on branch `bszk4`.
+
+**Correction (2026-10-05): external review.** "External review" in the rows above and
+in §8 marks work that an independent reviewer could check. It is optional and future,
+and none is planned: the project's review standard is internal multi-pass review
+(review-status.md §1).
 
 ## 3. Coordinated (multi-cell) forgery analysis
 
@@ -219,7 +228,7 @@ outputs.
 | Record delivery | Hybrid encryption; per-address keys; uniform ciphertext length |
 | Prover timing | Local only (the prover's machine) |
 
-## 6. Pure Rust and determinism audit
+## 6. Pure Rust and determinism review
 
 - **No C/C++ in the build:** no crate in the workspace's normal or build dependency graph
   depends on `cc`, `cmake`, `bindgen` or `pkg-config` (`cargo tree -i`).
@@ -273,11 +282,12 @@ outputs.
 | R-10 | Proof bytes were not reproducible from a seed: several tables took the shared prover RNG in a scheduling-dependent order. | **Fixed (PXDET-1, 2026-10-04; merged into rebuild/core with `pxdet`):** `p3-batch-stark` patch (third_party/README.md); `zkvm/tests/reproducible.rs`. The bytes now depend only on the witness and the seed. Before the fix the variation was harmless for security: the randomness stayed fresh, and the length variation followed the public query positions (P-5). |
 | R-8 | Plonky3 0.7 is a pre-1.0 library; its audit status has not been verified by us. An earlier comment called `Poseidon2Air` "audited"; the claim was unverified and has been removed. | External implementation review required |
 
-## 9. Required independent reviews (before any production use)
+## 9. Areas that remain open (for internal re-review; an outside review is optional and not planned)
 
 1. **Cryptographic design:** `Hk` and the node compression, nullifiers, records, the
-   kernel and function statements, the hybrid delivery combiner, and the BS-ZK-2
-   parameters (including the zero-knowledge parameters, A6).
+   kernel and function statements, the hybrid delivery combiner, and the
+   parameters (written for BS-ZK-2; the current set is BS-ZK-3, BS-ZK-4 pending),
+   including the zero-knowledge parameters (A6).
 2. **Implementation:**
    - the BVM-1 constraint tables against the interpreter (A4);
    - the kernel and SDK;
@@ -286,5 +296,6 @@ outputs.
 3. **Poseidon2 cryptanalysis** for this instance (A2, R-7).
 4. **Public testnet period and bug bounty** (zk.md §13).
 
-Until these are done, the ZK layer is **incomplete for production**. Every document and
-status line says so.
+Until these are re-checked, the ZK layer is **incomplete for production**. Every document
+and status line says so. Who checks them, and to what standard, is decided then
+(review-status.md §1).

@@ -26,7 +26,7 @@
 //!
 //! **Anchored at the genesis.** Every check starts at the genesis
 //! ([`HeaderCheck::from_genesis`]): the wallet reads the headers below the
-//! blocks it scans from the node's header feed (`/headers`, 100 bytes each),
+//! blocks it scans from the node's header feed (`/headers`, 172 bytes each),
 //! so the difficulty of every header, at any restore height, follows from
 //! the genesis by the LWMA rule, and the sampled work is drawn from the whole
 //! chain. A later check continues from the wallet's own last headers when
