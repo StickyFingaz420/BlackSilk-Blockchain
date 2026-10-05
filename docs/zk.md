@@ -61,7 +61,7 @@ and learns only what the function deliberately makes public.
 
 | # | Requirement |
 |---|---|
-| R1 | **Privacy:** proofs are zero-knowledge. Nothing about private inputs, records or amounts leaks beyond the declared public outputs. (As implemented: statistical zero knowledge, conditional on the open items of reviews/zk-coverage.md §3.) |
+| R1 | **Privacy:** proofs are zero-knowledge. Nothing about private inputs, records or amounts leaks beyond the declared public outputs. (As implemented: statistical zero knowledge, conditional on the open items of reviews/zk-coverage.md §3, and computational in practice, because the masks are PRG outputs, §12.1.) |
 | R2 | **Soundness:** no one can create value, spend a record twice, spend without authorization, or claim a false function result, except with negligible probability under stated assumptions. |
 | R3 | **Transparent setup:** no trusted setup ceremony and no toxic waste. |
 | R4 | **Long-term security:** privacy should survive a future quantum adversary wherever technically possible. Soundness should not rest on DL alone. |
@@ -623,7 +623,8 @@ owner): a STARK on Plonky3 0.7.**
     q ≈ 2^122.6. The 122.6 is our evaluation, not the paper's figure. The adaptation
     to BlackSilk's tree (salted leaves; fixed topology and matrix dimensions from the
     proof shape) is argued, not proven, and the property claimed is extractability,
-    not binding. It replaces the generic 8-element birthday figure (123), which the
+    not binding. It replaces the generic 8-element birthday figure (8·log2(p)/2 ≈ 123.6, floored
+    to 123; nominally 248/2 = 124), which the
     paper shows does not apply to the node compression alone.
   - **Not modelled by `p3-security`:** LogUp, the multi-table DEEP union and
     mixed-height FRI inputs. The first two are bounded by the independent calculator;
@@ -812,23 +813,35 @@ and R5 (pure Rust) together (§15).
 The targets below were set before PX-0. The PX-0 measurements are in
 `docs/evidence/px0-2026-09-23/RESULTS.md`.
 
-**Measured on the complete system (the earlier set BS-ZK-2 with terminal blinding and minimum height
-2^8; `px/examples/proof_bench.rs`, 2 × 5 proofs of each kind, idle, one development
-machine; AUDIT.md R13): the targets are missed by a wide margin.** BS-ZK-3 (8 random
-codewords) has not been re-measured on PX proofs yet; on the small toy proofs of
-`zk/tests/toy_measure.rs` it added about 8–13 % bytes (record in
-docs/reviews/v3-consensus-changes.md, "BS-ZK-3").
+**Measured on the complete system (BS-ZK-3 with the frozen kernel and PXDET-1; freeze
+gate B3, 2026-10-04; `px/examples/freeze_b2_b3.rs`, release, one proof at a time, one
+development machine; docs/evidence/freeze-b2-b3-2026-10-04/, `p5.csv`): the targets are
+missed by a wide margin.** Ranges over 60 transfer proofs and 30 proofs with one and
+with two functions; verification ran three times per proof. BS-ZK-4 changes only the
+query grinding, so the proof format and the expected sizes are unchanged (individual
+lengths vary with the query positions); the proofs were not re-measured under BS-ZK-4.
 
-| Item | Target | Measured: transfer | Measured: vault call (one function) |
-|---|---|---|---|
-| Proving | ≤ 15 s | 44.6–45.2 s | 52.7–53.0 s |
-| Proof size | ≤ 150 KB | 2,178,213–2,180,408 B | 2,687,952–2,688,822 B (about 2.69 MB) |
-| Verification | ≤ 30 ms | 0.207–0.212 s | 0.254–0.265 s |
+| Item | Target | Measured: transfer | Measured: one function (vault LOCK or CLAIM) | Measured: two functions (vault pair) |
+|---|---|---|---|---|
+| Proving | ≤ 15 s | 49.6–60.0 s | 60.3–67.1 s | 94.9–115.3 s |
+| Proof size | ≤ 150 KB | 2,393,010–2,413,554 B (about 2.40 MB) | 2,995,472–3,008,208 B (about 3.00 MB) | 3,619,591–3,637,159 B (about 3.63 MB) |
+| Verification | ≤ 30 ms | 0.20–0.33 s | 0.26–0.36 s | 0.31–0.39 s |
 
-Peak prover memory: 3,771 MB. (Verification was 1.3–1.5 s before ZK-F13.)
+Peak prover working set: 3,622 MB (transfer), 4,339 MB (one function), 6,446 MB (two
+functions). The earlier set BS-ZK-2 (4 random codewords; `px/examples/proof_bench.rs`,
+AUDIT.md R13), historical: transfer 2,178,213–2,180,408 B, 44.6–45.2 s, 0.207–0.212 s;
+one function 2,687,952–2,688,822 B, 52.7–53.0 s, 0.254–0.265 s; 3,771 MB. (Verification
+was 1.3–1.5 s before ZK-F13.)
 
-**The widest shape** (the kernel plus two functions) has **not been measured** against
-`MAX_PROOF_BYTES` (4 MiB). An unmeasured estimate puts it at about 3.0–3.3 MB.
+**The widest shape** (the kernel plus two functions). Under the earlier deploy rule
+(R7-5), freeze gate B2 modelled the widest registrable proof at about 4.09–4.13 MB
+expected (4.20–4.24 MB worst over the query positions), above the 3.8 MB bound of
+decision "Agent 22": **verdict B2: FAIL** (evidence README, "Verdict B2"). The fix is the
+deploy-time row caps (V12; px.md §11.3, "Deploy"; reviews/v3-consensus-changes.md,
+`px-deploy-row-caps`). With them the widest PX proof is about **3.70 MB expected and
+3.78 MB worst over the query positions, by model**, not measured; the model is exact
+(0 bytes off) on all 34 measured two-function proofs. Any pair of registered functions
+is modelled at 10.4–13.1 GB of prover memory (modelled, not measured).
 
 Per-transaction proofs of this size are not viable for a production chain. The paths
 are:
@@ -836,10 +849,14 @@ are:
 - per-block aggregation (PX-4).
 
 Verification caching is done (periodic columns, the block-level cache). The chain
-carries PX under a separate 8 MiB block budget (px.md §11.5): at the measured sizes
-3 transfers or vault calls per block, fewer for wider shapes (an estimated 2 with two
-functions, and 1 at the 4 MiB `MAX_PROOF_BYTES` cap; the widest shape is not yet
-measured). Testnet status: [`STATUS.md`](STATUS.md). A production network is out
+carries PX under a separate 8 MiB block budget (px.md §11.5; `MAX_PX_BLOCK_BYTES` =
+8,388,608 B, counted on each PX transaction's full encoding). At the measured B3 sizes a
+block holds **3 transfers** (4 × 2,393,010 B, the smallest, exceeds the budget;
+3 × 2,413,554 B, the largest, leaves about 1.1 MB for the non-proof bytes), **2 calls
+with one function** (3 × 2,995,472 B exceeds it) or **2 with two functions**
+(3 × 3,619,591 B exceeds it; 2 × 3,637,159 B leaves about 1.1 MB). At the modelled
+widest size, 2 (2 × 3.78 MB ≈ 7.56 MB, by model); at the 4 MiB `MAX_PROOF_BYTES` cap, 1
+(2 × 4 MiB alone fill the budget), a size V12 keeps out of reach by model. Testnet status: [`STATUS.md`](STATUS.md). A production network is out
 of scope until proof size is solved (aggregation-study.md).
 
 | Item | Target | Why |
