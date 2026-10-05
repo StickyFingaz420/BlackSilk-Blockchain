@@ -70,20 +70,25 @@ pub const PX_LOG_LT: u32 = 16;
 pub const PX_LOG_SHIFT: u32 = 14;
 pub const PX_LOG_MUL: u32 = 14;
 pub const PX_LOG_POSEIDON: u32 = 11;
-// Every capped table stays at or below 2^16 rows, the height of the byte
-// table and of every PX table (`blacksilk_px::prove::PX_MAX_LOG_HEIGHT`).
+// Every capped table stays at or below the tallest PX table,
+// `blacksilk_px::prove::PX_MAX_LOG_HEIGHT` (2^16, the byte table), which the
+// PX5 shape check enforces.
+const PX_MAX_LOG: u32 = blacksilk_px::prove::PX_MAX_LOG_HEIGHT as u32;
 const _: () = assert!(
-    PX_FN_LOG_CYCLES <= 16
-        && PX_FN_LOG_KEYS <= 16
-        && PX_FN_LOG_PROGRAM <= 16
-        && PX_FN_LOG_IMAGE <= 16
-        && PX_LOG_ADD <= 16
-        && PX_LOG_BIT <= 16
-        && PX_LOG_LT <= 16
-        && PX_LOG_SHIFT <= 16
-        && PX_LOG_MUL <= 16
-        && PX_LOG_POSEIDON <= 16
+    PX_FN_LOG_CYCLES <= PX_MAX_LOG
+        && PX_FN_LOG_KEYS <= PX_MAX_LOG
+        && PX_FN_LOG_PROGRAM <= PX_MAX_LOG
+        && PX_FN_LOG_IMAGE <= PX_MAX_LOG
+        && PX_LOG_ADD <= PX_MAX_LOG
+        && PX_LOG_BIT <= PX_MAX_LOG
+        && PX_LOG_LT <= PX_MAX_LOG
+        && PX_LOG_SHIFT <= PX_MAX_LOG
+        && PX_LOG_MUL <= PX_MAX_LOG
+        && PX_LOG_POSEIDON <= PX_MAX_LOG
 );
+// The prover's early stop for a function run (`blacksilk_px::prove::prove`)
+// uses the same cycle cap.
+const _: () = assert!(PX_FN_LOG_CYCLES == blacksilk_px::prove::FN_RUN_LOG_CYCLES);
 
 /// T1: maximum encoded transaction size in bytes.
 pub const MAX_TX_SIZE: usize = 100_000;

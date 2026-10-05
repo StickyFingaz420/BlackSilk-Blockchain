@@ -352,3 +352,29 @@ fn a_functions_prefix_is_checked_before_its_budget() {
     let used = trace::usage(&kernel_program(), &exec);
     assert_eq!(prove::over_budget(&used, &used), None);
 }
+
+/// The deploy caps (record `px-deploy-row-caps`) reserve the kernel's share of
+/// the shared tables with `kernel_budget(MAX_FN)`. That covers every call with
+/// fewer functions only if the kernel's budget does not shrink as functions are
+/// added: `K(0) ≤ K(1) ≤ … ≤ K(MAX_FN)` on every field (red team L1).
+#[test]
+fn kernel_budgets_grow_with_the_function_count() {
+    let fields = |b: Budget| {
+        [
+            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+        ]
+    };
+    for n in 1..=MAX_FN {
+        let (lo, hi) = (
+            fields(prove::kernel_budget(n - 1)),
+            fields(prove::kernel_budget(n)),
+        );
+        for (i, (a, b)) in lo.iter().zip(&hi).enumerate() {
+            assert!(
+                a <= b,
+                "field {i}: kernel_budget({}) > kernel_budget({n})",
+                n - 1
+            );
+        }
+    }
+}

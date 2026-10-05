@@ -85,6 +85,12 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
 /// `check_shape_bits` refuses a statement with a taller table.
 pub const PX_MAX_LOG_HEIGHT: usize = 16;
 
+/// log2 of the deploy cap on a registered function's cycles (record
+/// `px-deploy-row-caps`; `blacksilk-tx` params `PX_FN_LOG_CYCLES`, which a tx
+/// test requires to be equal): [`prove`] runs a function at most one cycle past
+/// `max(budget.cycles, 2^FN_RUN_LOG_CYCLES)`. Prover-side only.
+pub const FN_RUN_LOG_CYCLES: u32 = 15;
+
 /// The proof decoder's limits for PX statements (RT-FUZZ-1,
 /// `blacksilk_zk::bounds`): the envelope's, with the table count of the
 /// widest PX statement, the kernel and `MAX_FN` functions
@@ -128,7 +134,9 @@ pub enum TransferError {
     /// `used` rows of `table`, more than its budget `budget`. Checked for each
     /// execution before proving: the shared tables are padded to a power of
     /// two of the budgets' sum, so an over-budget execution could otherwise
-    /// be proven or not depending on the other executions' budgets.
+    /// be proven or not depending on the other executions' budgets. For a
+    /// function's `cycles`, the run stops one cycle past the budget, so `used`
+    /// is then `budget + 1`, a lower bound.
     OverBudget {
         execution: usize,
         table: &'static str,
@@ -274,8 +282,32 @@ pub fn prove<R: RngCore + CryptoRng>(
     )?;
     drop(kernel_exec);
     for (k, (program, input, budget)) in functions.iter().enumerate() {
-        let exec = blacksilk_zkvm::run(program, input, blacksilk_zkvm::MAX_CYCLES)
-            .map_err(|t| TransferError::Execution(format!("function {k}: {t:?}")))?;
+        // Run at most one cycle past the larger of the function's budget and
+        // the deploy cap on a registered function's cycles (red team I2 on
+        // px-deploy-row-caps), not to `MAX_CYCLES`. An execution within its
+        // budget halts first and is unchanged, and the prefix is still checked
+        // before the budget for every run up to the cap (mutation run E); a
+        // run past the cap stops early and is refused as over budget.
+        let limit = budget
+            .cycles
+            .max(1 << FN_RUN_LOG_CYCLES)
+            .saturating_add(1)
+            .min(blacksilk_zkvm::MAX_CYCLES as usize) as u32;
+        let exec = match blacksilk_zkvm::run(program, input, limit) {
+            Ok(exec) => exec,
+            Err(t)
+                if t.kind == blacksilk_zkvm::TrapKind::CycleLimit
+                    && budget.cycles < limit as usize =>
+            {
+                return Err(TransferError::OverBudget {
+                    execution: k + 1,
+                    table: "cycles",
+                    used: limit as usize,
+                    budget: budget.cycles,
+                })
+            }
+            Err(t) => return Err(TransferError::Execution(format!("function {k}: {t:?}"))),
+        };
         if exec.exit_code != 0 {
             return Err(TransferError::Execution(format!(
                 "function {k} halted with {}",
@@ -338,9 +370,12 @@ pub fn verify(
     proof: &Proof,
     registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
 ) -> Result<(), VerifyError> {
-    if public.n_fn > MAX_FN || calls.len() != public.n_fn {
-        return Err(VerifyError::Shape);
-    }
+    // The cheap shape check first (red team L3 on px-deploy-row-caps), so that
+    // `verify` alone also applies the PX table-height bound; the consensus
+    // paths already run it before `verify`. Every proof it refuses, `verify`
+    // refused before, except a statement with a table above 2^16 rows, which
+    // no registered function can produce.
+    check_shape_bits(public, calls, window, h_tx, &proof.degree_bits, &registered)?;
     let mut budgets = Vec::with_capacity(calls.len());
     for (k, call) in calls.iter().enumerate() {
         match registered(&public.functions[k].0, &call.program.id()) {

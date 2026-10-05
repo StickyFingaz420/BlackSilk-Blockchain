@@ -4047,10 +4047,10 @@ Not a rule change: documentation, a test and an evidence summary; no pin moves.
 Revision: B2:px-deploy-row-caps
 
 Owner: B2-CAPS (tx, px, node). Decision: "px-deploy-row-caps (V12)" (Lead, 2026-10-04),
-after freeze gate B2 failed. Evidence: commit `914b74f` (branch b23,
-`docs/evidence/freeze-b2-b3-2026-10-04`, not yet merged here) and the local research
-notes `C:/bszkeval/budget-cap/{notes.md,schemes.txt,model.py}` (summarized below; not in
-the repository). Internal engineering work, not an audit.
+after freeze gate B2 failed. Evidence: commit `914b74f`
+(`docs/evidence/freeze-b2-b3-2026-10-04`, merged in rebuild/core) and the size and
+memory model summarized in docs/evidence/budget-cap-2026-10-04/README.md. Internal
+engineering work, not an audit.
 
 1. **Problem.** The R7-5 deploy rule (`budget_is_provable`) only required that each
    function be provable alone with the kernel: cycles ≤ 2^21, keys ≤ 2^22, and each
@@ -4162,6 +4162,7 @@ the repository). Internal engineering work, not an audit.
       length (the regenerated fixture), `tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE`,
       `tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON`, `px.prove.PX_MAX_LOG_HEIGHT`, the new
       deploy verdict sample, `rules.revision.len` 16 → 18 with the two new revisions,
+      (16 → 18 is the combined change from `5c283a4`: 17 for bs-zk-4, then 18 here)
       and the digests that hash them. No stateless PX verdict and no identity entry
       changed. Re-pinned: `px/tests/consensus_fingerprint.rs` (`9b67345e…`) and
       `node/tests/deploy_configs.rs` `[consensus, rules]`: testnet `f6d04adf…`,
@@ -4176,8 +4177,45 @@ the repository). Internal engineering work, not an audit.
     over the query positions in the model, not a proven bound. (iv) A red-team pass is
     owed before the freeze.
 13. **Identity impact.** The rules and consensus fingerprints of every network change
-    (new constants, a new verdict sample, `rules.revision.len` 17 → 18); the PX-side
+    (new constants, a new verdict sample, `rules.revision.len` 17 → 18 for this record
+    alone; 16 → 18 with bs-zk-4, item 11); the PX-side
     digest changes (`px.prove.PX_MAX_LOG_HEIGHT`). Identity fingerprints are unchanged.
 14. **Documentation.** docs/px.md (deploy limits, proving class), docs/contracts.md
     (author limits), decisions "px-deploy-row-caps (V12)", STATUS.md.
-15. **Review status.** Implemented and tested by B2-CAPS; red-team review pending.
+15. **Review status.** Implemented and tested by B2-CAPS. Red team (internal, not an
+    audit, 2026-10-05): **MERGE WITH FIXES**, nothing blocking. Follow-up below.
+
+### Follow-up (red team on dcbcfe2)
+
+No verdict of any valid deploy or proof changes and no pin moves (checked by
+re-rendering every network's manifest against `dcbcfe2`: identical on all three
+networks except the build-commit header line).
+- **L1:** `px/tests/kernel_budget.rs::kernel_budgets_grow_with_the_function_count`
+  pins `K(0) ≤ K(1) ≤ K(2)` on every field, the premise of reserving
+  `kernel_budget(MAX_FN)` for calls with fewer functions.
+- **L2:** the `tx/src/params.rs` assertion compares every cap with
+  `blacksilk_px::prove::PX_MAX_LOG_HEIGHT` instead of a literal 16 (tx depends on px).
+- **L3:** `px::prove::verify` runs `check_shape_bits` first, so it applies the 2^16
+  height bound on its own; the consensus paths already ran it. It refuses nothing
+  `verify` accepted before except a statement with a table above 2^16 rows, which no
+  registered function can produce; the error kinds are the ones `verify` returned for
+  the same proofs (`Shape`, `Unregistered`, `Proof(Shape)`).
+- **L4:** docs/reviews/v3-upgrade-mechanism.md marks R7-5 as superseded by this record.
+- **L5:** `914b74f` is an ancestor of rebuild/core (its evidence is merged there); the
+  budget-cap model is summarized in docs/evidence/budget-cap-2026-10-04/README.md,
+  cited in the header above instead of local paths.
+- **I2:** `px::prove::prove` runs each function at most one cycle past
+  `max(budget.cycles, 2^FN_RUN_LOG_CYCLES)` (15, asserted equal to
+  `PX_FN_LOG_CYCLES` at compile time in tx), not to `MAX_CYCLES` (2^21). An execution
+  within its budget halts first and is unchanged; the prefix is still checked before
+  the budget for every run up to the cap (mutation run E's ordering); a run past the
+  cap stops early with `OverBudget { table: "cycles", used: limit }` (a lower bound).
+  Prover-side only. Checked: the golden PX fixture regenerates byte-identical
+  (same SHA-256 before and after, no git diff) and `kernel_budget.rs` (both
+  OverBudget tests) passes.
+- **I3:** `zkvm/src/program.rs` and `zkvm/src/exec.rs` (program id, loader, image
+  words) are consensus paths of `.github/scripts/consensus-gate.sh`. The selftest
+  passes, and the gate over the whole history after the cut-over (503 commits) passes
+  with the new list: no earlier commit touched them without a trailer.
+- **Nit:** the revision counts are clarified (item 11: 16 → 18 combined from
+  `5c283a4`; item 13: 17 → 18 for this record alone).

@@ -1795,3 +1795,15 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   (2^16 gives 24–36 GB) cannot meet 8–16 GB.
 - **Re-pins:** `PX_SIDE_DIGEST` and `deploy_configs.rs` once, at the end of the branch,
   for BS-ZK-4 and this change together. A red-team pass is owed before the freeze.
+
+## Red team on bszk4: BS-ZK-4 and px-deploy-row-caps (2026-10-05)
+
+- **Verdicts:** `ee0e96f` (BS-ZK-4) and `dcbcfe2` (px-deploy-row-caps) MERGE WITH FIXES;
+  nothing blocking. Internal review, not an audit.
+- **Applied as follow-up commits** (no amend, no rule or pin change): the BS-ZK-4
+  labels and size wording, relation R7, the FRI-margin evidence summary and a 16-bit
+  witness test (record "bs-zk-4", Follow-up); kernel-budget monotonicity, the cap
+  assertion tied to `PX_MAX_LOG_HEIGHT`, `verify` running the shape check, R7-5 marked
+  superseded, the budget-cap evidence summary, the prover's early stop at the cycle
+  cap, and `zkvm/src/program.rs` and `exec.rs` as consensus-gate paths (record
+  "px-deploy-row-caps", Follow-up).
