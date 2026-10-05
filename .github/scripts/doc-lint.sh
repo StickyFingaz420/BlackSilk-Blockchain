@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Documentation lint (dossier 47 W47-8, decisions "Agent 47"; CI job `doc-lint`).
 #
-# Checks every tracked Markdown file except third_party/, research/
-# (upstream code and the post-quantum track, not documentation of this tree) and the
-# issue templates:
+# Checks every tracked Markdown file except third_party/ (upstream code, not
+# documentation of this tree) and the issue templates:
 #
 #   claims  forbidden claims: "production-ready", "audited", "perfectly
 #           zero-knowledge", "mathematically proven", and "secure" as a blanket
@@ -74,7 +73,7 @@ unfenced() {
 list_files() { git ls-files --cached --others --exclude-standard "$@"; }
 
 # Issue templates hold placeholders such as [Link](url), not documentation.
-mapfile -t FILES < <(list_files '*.md' | grep -Ev '^(third_party|research|\.github/ISSUE_TEMPLATE)/' | sort -u)
+mapfile -t FILES < <(list_files '*.md' | grep -Ev '^(third_party|\.github/ISSUE_TEMPLATE)/' | sort -u)
 
 # Tracked files and their directories, for the link check.
 declare -A TRACKED=()

@@ -10,8 +10,7 @@
 #   U+2060..U+2069  word joiner, invisible operators, bidi isolates
 #   U+FEFF          zero-width no-break space / byte order mark
 #
-# Scope: every file `git ls-files` lists, except the research/
-# tree (not built, not reviewed as code). Files with a NUL byte in their
+# Scope: every file `git ls-files` lists. Files with a NUL byte in their
 # first 8000 bytes are binary (git's own heuristic) and are skipped.
 #
 # Usage: unicode-scan.sh [<path>...]   (default: the whole tracked tree)
@@ -37,7 +36,6 @@ BAD = {0x00AD, 0xFEFF}
 BAD.update(range(0x200B, 0x2010))
 BAD.update(range(0x202A, 0x202F))
 BAD.update(range(0x2060, 0x206A))
-EXCLUDED = ("research/",)
 
 found = 0
 scanned = 0
@@ -45,8 +43,6 @@ for path in sys.stdin.buffer.read().split(b"\0"):
     if not path:
         continue
     name = path.decode("utf-8", "surrogateescape")
-    if name.startswith(EXCLUDED):
-        continue
     try:
         with open(path, "rb") as f:
             data = f.read()
