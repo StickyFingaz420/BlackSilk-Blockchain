@@ -38,15 +38,16 @@ ignore = [
 # Exactly the inbound licences of today's graph (cargo deny list, 2026-09-28):
 # an allowed licence that no crate uses is a warning, so under -D warnings the
 # list cannot drift from the graph, and a crate with any other licence fails.
-# Add a licence only in the commit that brings the crate needing it (for
-# example "Apache-2.0 WITH LLVM-exception" with the approved rustc_apfloat dev
-# dependency). BlackSilk itself has no outbound licence yet (an owner
-# decision). Its crates are skipped as unpublished, which requires
-# `publish = false` in every workspace member's [package]; without it, the
-# licence check reports them as unlicensed and the wildcard check refuses
-# their path dependencies.
+# Add a licence only in the commit that brings the crate needing it
+# ("Apache-2.0 WITH LLVM-exception" came with the approved rustc_apfloat dev
+# dependency of blacksilk-randomx, decisions "Agent 44"). BlackSilk itself
+# has no outbound licence yet (an owner decision). Its crates are skipped as
+# unpublished, which requires `publish = false` in every workspace member's
+# [package]; without it, the licence check reports them as unlicensed and the
+# wildcard check refuses their path dependencies.
 allow = [
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception", # rustc_apfloat (dev-only, randomx tests)
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
@@ -58,6 +59,10 @@ allow = [
 ]
 confidence-threshold = 0.93
 unused-allowed-license = "warn"
+# Dev-only crates' licences are checked too (cargo-deny skips them by
+# default): they are built on every developer and CI machine, and without
+# this the rustc_apfloat licence above would be reported as unused.
+include-dev = true
 
 [licenses.private]
 ignore = true
@@ -160,8 +165,9 @@ skip = [
 # build-script crate, or a new version of one, fails until its build.rs is
 # read and listed here). Each was read on the date given in
 # docs/reviews/dependency-review.md section 1: none compiles native code. They
-# probe the compiler version, emit cfgs, or (the windows_* crates) add the
-# directory of a pre-built import library to the link search path.
+# probe the compiler version, emit cfgs, run a version self-check
+# (rustc_apfloat), or (the windows_* crates) add the directory of a pre-built
+# import library to the link search path.
 [bans.build]
 allow-build-scripts = [
     "crossbeam-deque@0.8.8",       # rustc version probe, cfgs
@@ -179,6 +185,7 @@ allow-build-scripts = [
     "paste@1.0.15",                # rustc version probe (proc macro, Plonky3)
     "proc-macro2@1.0.95",          # rustc version probe, cfgs
     "rayon-core@1.13.0",           # empty (the `links` marker)
+    "rustc_apfloat@0.2.3+llvm-462a31f5a5ab", # checks its version metadata against the LLVM hash in src/lib.rs (dev-only, randomx tests)
     "rustix@1.0.7",                # rustc probes, cfgs (dev-only, tempfile)
     "rustversion@1.0.23",          # rustc version probe
     "semver@1.0.26",               # rustc version probe

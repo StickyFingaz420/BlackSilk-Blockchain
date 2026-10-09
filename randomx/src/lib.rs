@@ -35,6 +35,8 @@ mod argon2d;
 mod config;
 mod dataset;
 mod fpu;
+#[cfg(test)]
+mod fpu_oracle;
 mod hash;
 pub mod self_test;
 mod superscalar;
