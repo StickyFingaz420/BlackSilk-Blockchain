@@ -1014,7 +1014,7 @@ fn reject(
     );
 }
 
-/// Replies, logs the record and counts the outcome.
+/// Logs the record, counts the outcome, then replies.
 #[allow(clippy::too_many_arguments)]
 fn finish(
     shared: &Shared,
@@ -1032,8 +1032,6 @@ fn finish(
         Ok(status) => stratum::result_line(req_id, json!({"status": status})),
         Err(m) => stratum::error_line(req_id, m),
     };
-    send(shared, &session.writer, &session.id, &line);
-    count(shared, outcome.label());
     let gate_mismatch = is_xmrig(&session.agent)
         && matches!(
             outcome,
@@ -1074,9 +1072,13 @@ fn finish(
         gate_mismatch,
         block_id,
     };
+    // Recorded and counted before the reply: whoever sees the reply also
+    // sees its record.
     if let Some(l) = &shared.submit_log {
         l.line(&serde_json::to_string(&record).expect("a record encodes"));
     }
+    count(shared, outcome.label());
+    send(shared, &session.writer, &session.id, &line);
 }
 
 fn submit(shared: &Shared, session: &Arc<Session>, req: &Request) -> Next {
