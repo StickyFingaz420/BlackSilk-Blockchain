@@ -148,13 +148,14 @@ pub enum Line {
     Eof,
 }
 
-/// Reads one line of at most [`MAX_LINE`] bytes. Never buffers more than
-/// that: an over-long line is reported as soon as the cap is passed.
+/// Reads one line of at most [`MAX_LINE`] bytes before its end of line
+/// (`\n` or `\r\n`). Never buffers more than that plus the end of line: an
+/// over-long line is reported as soon as the cap is passed.
 pub fn read_line<R: BufRead>(r: &mut R) -> std::io::Result<Line> {
     let mut buf = Vec::new();
     let n = r
         .by_ref()
-        .take(MAX_LINE as u64 + 1)
+        .take(MAX_LINE as u64 + 2)
         .read_until(b'\n', &mut buf)?;
     if n == 0 {
         return Ok(Line::Eof);
@@ -164,8 +165,6 @@ pub fn read_line<R: BufRead>(r: &mut R) -> std::io::Result<Line> {
         if buf.last() == Some(&b'\r') {
             buf.pop();
         }
-    } else if buf.len() > MAX_LINE {
-        return Ok(Line::TooLong);
     }
     if buf.len() > MAX_LINE {
         return Ok(Line::TooLong);
@@ -187,10 +186,18 @@ mod tests {
         let mut r = BufReader::new(data.as_bytes());
         assert_eq!(read_line(&mut r).unwrap(), Line::Text("{\"a\":1}".into()));
         assert_eq!(read_line(&mut r).unwrap(), Line::TooLong);
-        let exact = format!("{}\n", "y".repeat(MAX_LINE));
-        let mut r = BufReader::new(exact.as_bytes());
-        assert_eq!(read_line(&mut r).unwrap(), Line::Text("y".repeat(MAX_LINE)));
-        assert_eq!(read_line(&mut r).unwrap(), Line::Eof);
+        for end in ["\n", "\r\n"] {
+            let exact = format!("{}{end}", "y".repeat(MAX_LINE));
+            let mut r = BufReader::new(exact.as_bytes());
+            assert_eq!(read_line(&mut r).unwrap(), Line::Text("y".repeat(MAX_LINE)));
+            assert_eq!(read_line(&mut r).unwrap(), Line::Eof);
+            let over = format!("{}{end}", "y".repeat(MAX_LINE + 1));
+            let mut r = BufReader::new(over.as_bytes());
+            assert_eq!(read_line(&mut r).unwrap(), Line::TooLong);
+        }
+        let unterminated = "z".repeat(MAX_LINE + 2);
+        let mut r = BufReader::new(unterminated.as_bytes());
+        assert_eq!(read_line(&mut r).unwrap(), Line::TooLong);
     }
 
     #[test]
