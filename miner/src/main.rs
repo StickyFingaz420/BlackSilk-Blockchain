@@ -405,9 +405,98 @@ struct Miner<N: Node, B: ContextBuilder<Ctx = PowContext>> {
     rng: ChaCha20Rng,
     threads: usize,
     refresh: Duration,
-    /// Hashes and time since the last hash-rate line.
+    /// Hashes and search time since the last hash-rate line.
+    rate: HashRate,
+}
+
+/// Hash-rate accounting for the periodic info line (display only: nothing
+/// here affects which hashes are computed).
+///
+/// The window opens when the first search starts, so the first line does not
+/// count the RandomX build before it. Two rates are reported:
+/// - **search**: hashes over the time spent inside [`search`];
+/// - **effective**: hashes over the window's wall time minus the time spent
+///   waiting for a RandomX context (a build at a key switch, which the planner
+///   logs on its own), so it includes template fetches, block building and
+///   submission.
+#[derive(Debug, Default)]
+struct HashRate {
+    /// When the current window opened (`None`: no search yet).
+    opened: Option<Instant>,
     hashes: u64,
-    since: Instant,
+    searching: Duration,
+    preparing: Duration,
+}
+
+/// One hash-rate line's figures.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Rates {
+    /// H/s while searching.
+    search: f64,
+    /// H/s over the window, RandomX preparation excluded.
+    effective: f64,
+    /// RandomX preparation excluded from the effective rate.
+    preparing: Duration,
+}
+
+impl HashRate {
+    /// Time spent obtaining the RandomX context for a round. Before the
+    /// first search it belongs to no window.
+    fn prepared(&mut self, took: Duration) {
+        if self.opened.is_some() {
+            self.preparing += took;
+        }
+    }
+
+    /// A search that started at `started`, ran for `took` and computed
+    /// `hashes` hashes. The first one opens the window.
+    fn searched(&mut self, started: Instant, took: Duration, hashes: u64) {
+        self.opened.get_or_insert(started);
+        self.hashes += hashes;
+        self.searching += took;
+    }
+
+    /// The window's rates once it spans `every` at `now`; a new window then
+    /// opens at `now`.
+    fn due(&mut self, now: Instant, every: Duration) -> Option<Rates> {
+        let wall = now.saturating_duration_since(self.opened?);
+        if wall < every {
+            return None;
+        }
+        let rates = Rates {
+            search: per_second(self.hashes, self.searching),
+            effective: per_second(self.hashes, wall.saturating_sub(self.preparing)),
+            preparing: self.preparing,
+        };
+        *self = HashRate {
+            opened: Some(now),
+            ..HashRate::default()
+        };
+        Some(rates)
+    }
+}
+
+/// `hashes` per second of `time` (a zero time counts as 1 ms).
+fn per_second(hashes: u64, time: Duration) -> f64 {
+    hashes as f64 / time.as_secs_f64().max(1e-3)
+}
+
+impl std::fmt::Display for Rates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:.1} H/s (search), {:.1} H/s (effective: wall time incl. templates, submissions and retries)",
+            self.search, self.effective
+        )?;
+        if self.preparing >= Duration::from_secs(1) {
+            write!(
+                f,
+                "; {:.0} s waiting for RandomX excluded",
+                self.preparing.as_secs_f64()
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
@@ -426,10 +515,10 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
         // The next key only steers a background build; a malformed one is
         // ignored (the template's own key stays authoritative).
         let next = next_seed_id.as_deref().and_then(parse_hash);
-        let ctx = self
-            .planner
-            .context(template.height, seed_id, next)
-            .map_err(|e| format!("RandomX key {}: {e}", hex::encode(&seed_id[..8])))?;
+        let preparing = Instant::now();
+        let ctx = self.planner.context(template.height, seed_id, next);
+        self.rate.prepared(preparing.elapsed());
+        let ctx = ctx.map_err(|e| format!("RandomX key {}: {e}", hex::encode(&seed_id[..8])))?;
         log::debug!(
             "template {} on {} (difficulty {})",
             template.height,
@@ -487,27 +576,24 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
             u64::MAX,
             &stop,
         );
+        let searched = started.elapsed();
         stop.store(true, Ordering::Relaxed);
         let moved = timer.join().unwrap_or(None);
         log::debug!(
-            "{hashes} hashes in {:.1?} ({:.1} H/s)",
-            started.elapsed(),
-            hashes as f64 / started.elapsed().as_secs_f64().max(1e-3)
+            "{hashes} hashes in {searched:.1?} ({:.1} H/s)",
+            per_second(hashes, searched)
         );
-        self.hashes += hashes;
-        if self.since.elapsed() >= HASHRATE_EVERY {
-            let rate = self.hashes as f64 / self.since.elapsed().as_secs_f64();
+        self.rate.searched(started, searched, hashes);
+        if let Some(rate) = self.rate.due(Instant::now(), HASHRATE_EVERY) {
             let mode = if ctx.is_full() { "full" } else { "light" };
             if SELF_TEST_SKIPPED.load(Ordering::Relaxed) {
                 log::warn!(
-                    "hash rate {rate:.1} H/s ({mode} mode); RandomX self-test SKIPPED \
+                    "hash rate {rate} ({mode} mode); RandomX self-test SKIPPED \
                      (--skip-randomx-self-test)"
                 );
             } else {
-                log::info!("hash rate {rate:.1} H/s ({mode} mode)");
+                log::info!("hash rate {rate} ({mode} mode)");
             }
-            self.hashes = 0;
-            self.since = Instant::now();
         }
 
         let Some(f) = found else {
@@ -648,8 +734,7 @@ fn run(args: Args) -> Result<(), Fatal> {
         rng,
         threads,
         refresh: Duration::from_secs(args.refresh),
-        hashes: 0,
-        since: Instant::now(),
+        rate: HashRate::default(),
     };
     hedge.zeroize();
     loop {
@@ -830,8 +915,7 @@ mod tests {
             // Regtest difficulty 1 (the genesis gap): the first hash finds
             // the block, so the refresh never ends a round.
             refresh: Duration::from_secs(60),
-            hashes: 0,
-            since: Instant::now(),
+            rate: HashRate::default(),
         };
         (m, builds)
     }
@@ -929,8 +1013,7 @@ mod tests {
             rng: m.rng,
             threads: 1,
             refresh: m.refresh,
-            hashes: 0,
-            since: Instant::now(),
+            rate: HashRate::default(),
         };
         assert!(down.round().unwrap_err().contains("503"));
     }
@@ -1032,5 +1115,63 @@ mod tests {
         assert!(Args::try_parse_from(["blacksilk-miner"]).is_err());
         let a = parse(&[]);
         assert!(!a.randomx_self_test && !a.skip_randomx_self_test);
+    }
+
+    /// A6: the first hash-rate window opens at the first search, so the
+    /// dataset build before it is not counted (the first line used to read
+    /// about 0 H/s after a minutes-long build).
+    #[test]
+    fn the_hash_rate_window_opens_at_the_first_search() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut r = HashRate::default();
+        // A 700 s dataset build, then the first search.
+        r.prepared(s(700));
+        assert_eq!(r.due(t0 + s(700), HASHRATE_EVERY), None, "no search yet");
+        r.searched(t0 + s(700), s(30), 2100);
+        assert_eq!(r.due(t0 + s(730), HASHRATE_EVERY), None, "30 s window");
+        r.searched(t0 + s(731), s(30), 2100);
+        let rates = r.due(t0 + s(761), HASHRATE_EVERY).expect("61 s window");
+        assert_eq!(rates.search, 70.0);
+        assert!((rates.effective - 4200.0 / 61.0).abs() < 1e-9, "{rates:?}");
+        assert_eq!(rates.preparing, Duration::ZERO, "the build is outside");
+    }
+
+    /// A6: the search rate counts only time inside `search`; the effective
+    /// rate counts the window's wall time (templates, submissions) minus the
+    /// RandomX preparation; a reported window starts a fresh one.
+    #[test]
+    fn search_and_effective_hash_rates() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut r = HashRate::default();
+        r.searched(t0, s(20), 1380);
+        // A key switch: 40 s waiting for the new context.
+        r.prepared(s(40));
+        r.searched(t0 + s(62), s(18), 1242);
+        let rates = r.due(t0 + s(90), HASHRATE_EVERY).expect("90 s window");
+        assert_eq!(rates.search, 69.0);
+        assert_eq!(rates.effective, 2622.0 / 50.0);
+        assert_eq!(rates.preparing, s(40));
+        assert_eq!(
+            rates.to_string(),
+            "69.0 H/s (search), 52.4 H/s (effective: wall time incl. templates, \
+             submissions and retries); 40 s waiting for RandomX excluded"
+        );
+        // The next window opens at the report, empty.
+        assert_eq!(r.due(t0 + s(149), HASHRATE_EVERY), None);
+        r.searched(t0 + s(149), s(1), 70);
+        let rates = r.due(t0 + s(150), HASHRATE_EVERY).expect("60 s window");
+        assert_eq!((rates.search, rates.preparing), (70.0, Duration::ZERO));
+        assert_eq!(rates.effective, 70.0 / 60.0);
+        assert_eq!(
+            rates.to_string(),
+            "70.0 H/s (search), 1.2 H/s (effective: wall time incl. templates, submissions and retries)"
+        );
+        // No hashes and no search time: zero, not NaN.
+        let mut idle = HashRate::default();
+        idle.searched(t0, Duration::ZERO, 0);
+        let rates = idle.due(t0 + s(60), HASHRATE_EVERY).unwrap();
+        assert_eq!((rates.search, rates.effective), (0.0, 0.0));
     }
 }
