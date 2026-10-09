@@ -17,7 +17,13 @@ What it is:
   `GATE-MISMATCH` when xmrig disagrees; it never retries or rewrites a blob.
 - `blacksilk-stratum-bridge recompute --log <submits.jsonl>`: recomputes every
   logged submission offline with `blacksilk-randomx` light mode (stale,
-  duplicate and `Busy` ones included) and exits 1 on any mismatch.
+  duplicate and `Busy` ones included) and exits 1 on any mismatch. The gate
+  run uses `recompute --only-agent XMRig/`: without the filter the probe's
+  deliberate bad results would count as mismatches. With the filter, an xmrig
+  submission that cannot be recomputed (unknown job, malformed fields) and an
+  empty set both fail. A negative-control log is checked with
+  `--expect-negative-control` as well, so a control without any `rx/0`
+  record cannot pass.
 - `blacksilk-stratum-probe`: the client that sends the invalid shares xmrig
   never sends (`cases`, `replay`), and a block that misses its difficulty
   straight to the node (`direct-to-node`). Each case expects one exact reply.

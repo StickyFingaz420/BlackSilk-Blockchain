@@ -13,7 +13,7 @@ compile_error!(
 
 use blacksilk_consensus::RandomXPow;
 use blacksilk_stratum_bridge::build_guard::{parse_args, require_clean_build};
-use blacksilk_stratum_bridge::recompute::{recompute, LightHasher};
+use blacksilk_stratum_bridge::recompute::{recompute, LightHasher, Options};
 use blacksilk_stratum_bridge::{submit_log, Bridge, Config};
 use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
@@ -86,9 +86,16 @@ struct Recompute {
     /// The submit log (`serve --log-submits`).
     #[arg(long)]
     log: PathBuf,
-    /// Only the records whose login agent starts with this (e.g. `XMRig/`).
+    /// Only the records whose login agent starts with this. The gate run
+    /// uses `XMRig/` (the probe's deliberate bad results would otherwise
+    /// count); then every such submission must be recomputable, and at
+    /// least one must exist.
     #[arg(long)]
     only_agent: Option<String>,
+    /// The log is of a negative-control run: at least one rx/0 record is
+    /// required, and every one must be Monero's rx/0 hash.
+    #[arg(long)]
+    expect_negative_control: bool,
 }
 
 fn main() {
@@ -113,11 +120,11 @@ fn main() {
             for line in &bad {
                 println!("UNREADABLE line {line}");
             }
-            let s = recompute(
-                &records,
-                r.only_agent.as_deref(),
-                &mut LightHasher::default(),
-            );
+            let options = Options {
+                only_agent: r.only_agent,
+                expect_negative_control: r.expect_negative_control,
+            };
+            let s = recompute(&records, &options, &mut LightHasher::default());
             print!("{}", s.render());
             if !s.passed() || !bad.is_empty() {
                 std::process::exit(1);

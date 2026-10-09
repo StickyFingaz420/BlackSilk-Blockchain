@@ -68,16 +68,61 @@ pub struct Summary {
     pub nc_records: usize,
     pub nc_rx0_matches: usize,
     pub nc_blacksilk_matches: usize,
+    /// The options the records were checked under.
+    pub options: Options,
+}
+
+/// What a recompute requires.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// Only the records whose login agent starts with this (the gate run:
+    /// `XMRig/`, so the probe's deliberate bad results do not count). With
+    /// it set, every considered record must be recomputable: a submission
+    /// without inputs (unknown job, malformed nonce, wrong session) fails
+    /// the check, and so does an empty set.
+    pub only_agent: Option<String>,
+    /// The run was a negative control: at least one `rx/0` record is
+    /// required, so an empty control cannot pass.
+    pub expect_negative_control: bool,
 }
 
 impl Summary {
     /// No mismatch and no inconsistency among the `rx/blacksilk` records,
     /// and every negative-control record identified as `rx/0`.
     pub fn passed(&self) -> bool {
-        self.mismatches.is_empty()
-            && self.inconsistent.is_empty()
-            && self.nc_rx0_matches == self.nc_records
-            && self.nc_blacksilk_matches == 0
+        self.failures().is_empty()
+    }
+
+    /// Why the check fails (empty: it passes).
+    pub fn failures(&self) -> Vec<String> {
+        let mut f = Vec::new();
+        if !self.mismatches.is_empty() {
+            f.push(format!("{} mismatches", self.mismatches.len()));
+        }
+        if !self.inconsistent.is_empty() {
+            f.push(format!("{} inconsistent records", self.inconsistent.len()));
+        }
+        if self.nc_rx0_matches != self.nc_records || self.nc_blacksilk_matches != 0 {
+            f.push(format!(
+                "negative control: {} of {} records identified as rx/0, {} as BlackSilk",
+                self.nc_rx0_matches, self.nc_records, self.nc_blacksilk_matches
+            ));
+        }
+        if let Some(agent) = &self.options.only_agent {
+            if self.without_inputs > 0 {
+                f.push(format!(
+                    "{} {agent} submissions could not be recomputed (no job or malformed fields)",
+                    self.without_inputs
+                ));
+            }
+            if self.records == 0 {
+                f.push(format!("no {agent} submissions in the log"));
+            }
+        }
+        if self.options.expect_negative_control && self.nc_records == 0 {
+            f.push("a negative control was expected, but there are no rx/0 records".into());
+        }
+        f
     }
 
     pub fn render(&self) -> String {
@@ -105,6 +150,9 @@ impl Summary {
         for m in &self.inconsistent {
             s.push_str(&format!("INCONSISTENT {m}\n"));
         }
+        for r in self.failures() {
+            s.push_str(&format!("FAILURE {r}\n"));
+        }
         s.push_str(if self.passed() { "PASS\n" } else { "FAIL\n" });
         s
     }
@@ -117,14 +165,18 @@ fn inputs(r: &SubmitRecord) -> Option<(Hash, PowBlob, Hash)> {
     Some((seed, blob, result))
 }
 
-/// Recomputes `records`; with `only_agent`, only those whose agent starts
-/// with it (e.g. `XMRig/`).
+/// Recomputes `records` under `options` ([`Options::only_agent`]: only
+/// those whose agent starts with it, e.g. `XMRig/`).
 pub fn recompute(
     records: &[SubmitRecord],
-    only_agent: Option<&str>,
+    options: &Options,
     hasher: &mut dyn VariantHasher,
 ) -> Summary {
-    let mut s = Summary::default();
+    let mut s = Summary {
+        options: options.clone(),
+        ..Summary::default()
+    };
+    let only_agent = options.only_agent.as_deref();
     let mut todo = Vec::new();
     for (i, r) in records.iter().enumerate() {
         if only_agent.is_some_and(|p| !r.agent.starts_with(p)) {
@@ -244,7 +296,7 @@ mod tests {
         };
         no_job.job_id = "999".into();
         let all = [good, bad, nc, probe, torn, no_job];
-        let s = recompute(&all, Some("XMRig/"), &mut Fake);
+        let s = recompute(&all, &xmrig(), &mut Fake);
         assert_eq!(s.records, 5);
         assert_eq!(s.skipped_agent, 1);
         assert_eq!(s.without_inputs, 1);
@@ -254,8 +306,74 @@ mod tests {
         assert_eq!(s.inconsistent.len(), 1);
         assert_eq!((s.nc_records, s.nc_rx0_matches), (1, 1));
         assert!(!s.passed());
-        let clean = recompute(&all[..1], None, &mut Fake);
+        let clean = recompute(&all[..1], &Options::default(), &mut Fake);
         assert!(clean.passed(), "{}", clean.render());
         assert!(clean.render().ends_with("PASS\n"));
+    }
+
+    fn xmrig() -> Options {
+        Options {
+            only_agent: Some("XMRig/".into()),
+            ..Options::default()
+        }
+    }
+
+    /// With an agent filter, an xmrig submission that cannot be recomputed
+    /// fails the check, and so does an empty set (rule H3: every xmrig
+    /// submission is recomputed).
+    #[test]
+    fn the_gate_run_requires_every_submission_recomputed() {
+        let good = record([1, 0, 0, 0], "rx/blacksilk", None);
+        assert!(recompute(std::slice::from_ref(&good), &xmrig(), &mut Fake).passed());
+        let no_job = SubmitRecord {
+            agent: "XMRig/6.26.0".into(),
+            job_id: "999".into(),
+            outcome: "stale_job".into(),
+            ..Default::default()
+        };
+        let s = recompute(&[good.clone(), no_job.clone()], &xmrig(), &mut Fake);
+        assert!(!s.passed());
+        assert!(
+            s.render().contains("could not be recomputed"),
+            "{}",
+            s.render()
+        );
+        // Without the filter the record only counts as "without inputs".
+        let s = recompute(&[good.clone(), no_job], &Options::default(), &mut Fake);
+        assert!(s.passed(), "{}", s.render());
+        let mut probe = good;
+        probe.agent = "blacksilk-stratum-probe/0.1.0".into();
+        let s = recompute(&[probe], &xmrig(), &mut Fake);
+        assert!(!s.passed());
+        assert!(s.render().contains("no XMRig/ submissions"));
+    }
+
+    /// An expected negative control needs at least one rx/0 record, and
+    /// every one must be the rx/0 hash.
+    #[test]
+    fn an_empty_negative_control_does_not_pass() {
+        let nc = Options {
+            expect_negative_control: true,
+            ..xmrig()
+        };
+        let s = recompute(
+            &[record([1, 0, 0, 0], "rx/blacksilk", None)],
+            &nc,
+            &mut Fake,
+        );
+        assert!(!s.passed());
+        assert!(s.render().contains("no rx/0 records"), "{}", s.render());
+        let s = recompute(&[record([3, 0, 0, 0], ALGO_RX0, None)], &nc, &mut Fake);
+        assert!(s.passed(), "{}", s.render());
+        assert_eq!(s.nc_rx0_matches, 1);
+        // A BlackSilk hash for an rx/0 job fails the control.
+        let mut blob = [0u8; POW_BLOB_SIZE];
+        blob[..7].copy_from_slice(POW_BLOB_TAG);
+        blob[39..43].copy_from_slice(&[4, 0, 0, 0]);
+        let bs = Fake.hash(Variant::BlackSilk, &[5; 32], &blob);
+        let wrong = record([4, 0, 0, 0], ALGO_RX0, Some(bs));
+        let s = recompute(&[wrong], &nc, &mut Fake);
+        assert!(!s.passed());
+        assert_eq!(s.nc_blacksilk_matches, 1);
     }
 }

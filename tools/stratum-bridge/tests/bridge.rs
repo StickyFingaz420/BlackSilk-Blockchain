@@ -17,7 +17,7 @@ use blacksilk_consensus::{check_hash, ChainParams, Hash, Network, PowBlob, PowFu
 use blacksilk_crypto::keys::{Address, SubaddressIndex, WalletKeys};
 use blacksilk_node::{router, Shared};
 use blacksilk_rpc::Client;
-use blacksilk_stratum_bridge::recompute::{recompute, VariantHasher};
+use blacksilk_stratum_bridge::recompute::{recompute, Options, VariantHasher};
 use blacksilk_stratum_bridge::submit_log;
 use blacksilk_stratum_bridge::{probe, Bridge, Config, ControlHash, StartError};
 use blacksilk_tx::params::TxRules;
@@ -859,7 +859,11 @@ fn every_submit_is_logged_and_recomputed() {
             fake_hash(seed, blob)
         }
     }
-    let s = recompute(&records, Some("XMRig/"), &mut FakeVariants);
+    let options = Options {
+        only_agent: Some("XMRig/".into()),
+        ..Options::default()
+    };
+    let s = recompute(&records, &options, &mut FakeVariants);
     assert_eq!(s.recomputed, 4);
     assert_eq!(s.hashed_live, 2);
     assert_eq!(s.matches, 3);
