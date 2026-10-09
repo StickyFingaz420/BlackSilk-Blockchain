@@ -400,6 +400,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "blacksilk-stratum-bridge"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blacksilk-chain",
+ "blacksilk-consensus",
+ "blacksilk-crypto",
+ "blacksilk-miner",
+ "blacksilk-node",
+ "blacksilk-randomx",
+ "blacksilk-rpc",
+ "blacksilk-tx",
+ "clap",
+ "env_logger",
+ "getrandom 0.2.17",
+ "hex",
+ "log",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "blacksilk-supply-audit"
 version = "0.1.0"
 dependencies = [
