@@ -29,8 +29,11 @@ pub struct SubmitRecord {
     pub height: Option<u64>,
     /// The RandomX key (hex).
     pub seed: Option<String>,
-    /// The 47-byte PoW input of the share (hex): `pow_blob` of the rebuilt
-    /// header, when the job was found and the nonce decoded.
+    /// The 47-byte PoW input of the share (hex), when the job was found and
+    /// the nonce decoded: the served blob with the 4 submitted nonce bytes
+    /// written at 39..43, i.e. what xmrig hashed. For every hashed share the
+    /// verifier checks that it equals `pow_blob` of the rebuilt header (a
+    /// difference is `GATE-INTERNAL` and stops the bridge).
     pub blob: Option<String>,
     /// The rebuilt header nonce `(X << 32) | LE32(nonce)`.
     pub header_nonce: Option<u64>,

@@ -32,7 +32,12 @@ pub struct Job {
     /// The block's difficulty (the header's, from the template).
     pub block_diff: u64,
     /// `max(block_diff, the session's floor)`: only shapes xmrig's local
-    /// filter (the target); acceptance is decided by `block_diff`.
+    /// filter (the target); acceptance is decided by `block_diff`. In the
+    /// floor regime (`share_diff > block_diff`) a hash that xmrig filters
+    /// out locally can still meet `block_diff`: that valid block is never
+    /// submitted, lost by design. Acceptable for the regtest gate (critique
+    /// M1): the floor only keeps the light-mode verification from being
+    /// flooded.
     pub share_diff: u64,
     /// The template's `prev_id`: the job is stale once the node's best tip
     /// (as the bridge last saw it in a template) differs.

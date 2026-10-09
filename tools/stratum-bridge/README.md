@@ -33,7 +33,12 @@ zero in the job), the bridge puts a fresh random extranonce at 43..47, and the
 header nonce is `(extranonce << 32) | u32::from_le_bytes(<the 4 bytes>)`
 (docs/consensus.md §3). The job target is `min(⌈2^64/d⌉, u64::MAX)` as 16 hex
 characters of its little-endian bytes; acceptance is decided by the block's
-difficulty with `check_hash`.
+difficulty with `check_hash`. The share difficulty is
+`max(block difficulty, floor)`, so in the floor regime (share difficulty
+above the block's) a hash that xmrig filters out locally can still be a valid
+block: it is never submitted, lost by design. That is acceptable for a
+regtest gate; the floor only keeps light-mode verification from being
+flooded.
 
 Test knobs, refused unless the node reports regtest: `--allow-session-diff`
 (a login `pass` of `diff=N` sets the session floor, for the probe) and

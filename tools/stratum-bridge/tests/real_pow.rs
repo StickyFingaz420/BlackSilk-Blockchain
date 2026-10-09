@@ -186,7 +186,9 @@ fn real_randomx_through_the_bridge_and_the_node() {
     );
     let n = mine_one(&mut c, &mut hasher, 0);
     assert_eq!(node.height(), 1);
-    // The node checked the block's PoW with the shared RandomXPow.
+    // The shared RandomXPow built a cache (the bridge's hash alone would do
+    // that); the proof that the node itself hashes is the InsufficientWork
+    // refusal above.
     assert!(node.pow.builds() >= 1);
 
     // A wrong result: the true hash of n, sent for nonce n + 1.
