@@ -1829,3 +1829,28 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   superseded, the budget-cap evidence summary, the prover's early stop at the cycle
   cap, and `zkvm/src/program.rs` and `exec.rs` as consensus-gate paths (record
   "px-deploy-row-caps", Follow-up).
+
+## xmrig compatibility gate: before the freeze (owner decision, 2026-10-05)
+
+- **Decision:** a pre-freeze gate checks that real xmrig can mine BlackSilk blocks over
+  the frozen PoW input (the 47-byte mining blob, nonce at byte 39, salt
+  `"BlackSilk/RandomX/v1"`). An incompatibility found after the freeze would need a
+  consensus change; found before it, it is a pre-freeze finding.
+- **Scope of the gate:**
+  - A local xmrig build with an `rx/blacksilk` algorithm that changes only the Argon2
+    salt. It is an external test tool: never built by the workspace, never distributed.
+    The patch is recorded as a description and checksum, not as GPL source in this
+    repository, which has no outbound licence yet.
+  - A minimal pure-Rust stratum bridge (`tools/stratum-bridge`, an evidence and test tool,
+    not part of the release package). It verifies every share with the node's own
+    `RandomXPow::pow_hash` and `check_hash` before submitting the block.
+  - Regtest blocks mined by xmrig and accepted by the node. Invalid shares and an invalid
+    block are rejected. A negative control (xmrig hashing with Monero's salt) must be
+    rejected in full.
+- **Design review (internal, 2026-10-05 to 2026-10-09):** three research passes, a design
+  and two adversarial reviews (gate validity; consensus and correctness). They found no
+  consensus-level incompatibility on paper; only the gate run can confirm that. Their
+  changes to the bridge and the gate procedure are required.
+- **After the freeze (planned):** the production stratum server, a pinned xmrig build for
+  the testnet and the upstream pull request, all built against the frozen spec (see
+  "Proof of work: SKC-1 research, the RandomX salt, the mining blob, xmrig").
