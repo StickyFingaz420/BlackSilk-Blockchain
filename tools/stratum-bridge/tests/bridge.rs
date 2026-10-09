@@ -980,10 +980,23 @@ fn connections_are_capped_before_login() {
     // The slot is free once the first connection's thread has ended.
     wait_until("a free slot", || {
         let mut d = Fake::connect(b.local_addr());
-        let id = d.send(
-            "login",
-            json!({"login": "x", "pass": "x", "agent": XMRIG_AGENT, "algo": ["rx/blacksilk"]}),
-        );
+        // A refused connection may already be reset: a failed write is a
+        // "not yet", not a test failure.
+        let login = json!({"id": 1, "jsonrpc": "2.0", "method": "login",
+            "params": {"login": "x", "pass": "x", "agent": XMRIG_AGENT, "algo": ["rx/blacksilk"]}});
+        if d.w
+            .write_all(
+                format!(
+                    "{login}
+"
+                )
+                .as_bytes(),
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let id = 1;
         loop {
             match d.read() {
                 None => return false,
