@@ -19,6 +19,7 @@ members = [
     "tools/supply-audit", # blacksilk-supply-audit: closed-set supply check (trial)
     "tools/genesis", # blacksilk-genesis: beacon-derived genesis construction and verification
     "tools/daa-sim", # blacksilk-daa-sim: difficulty-rule simulation harness (evidence, not consensus)
+    "tools/stratum-bridge", # blacksilk-stratum-bridge: xmrig gate stratum bridge (evidence tool, not released)
 ]
 # The pre-rebuild code once kept in `legacy/` was removed from the tree on 2026-10-04
 # (see git history up to 57dd81a), the post-quantum `research/` tree on 2026-10-05

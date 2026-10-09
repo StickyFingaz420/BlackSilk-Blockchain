@@ -1,0 +1,50 @@
+[package]
+name = "blacksilk-stratum-bridge"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Evidence and test tool: a loopback-only Monero-style stratum bridge for the xmrig compatibility gate (not part of the release package)"
+
+[lib]
+name = "blacksilk_stratum_bridge"
+
+# The bridge (`serve`) and the offline recompute of its submit log
+# (`recompute`).
+[[bin]]
+name = "blacksilk-stratum-bridge"
+path = "src/main.rs"
+
+# The invalid-share client of the gate run, and its direct-to-node case.
+[[bin]]
+name = "blacksilk-stratum-probe"
+path = "src/bin/probe.rs"
+
+# Every dependency is already in Cargo.lock, at the miner's and wallet's
+# version specifications (deny.toml: multiple-versions = "deny").
+[dependencies]
+blacksilk-randomx = { path = "../../randomx" }
+blacksilk-consensus = { path = "../../consensus" }
+blacksilk-crypto = { path = "../../crypto" }
+blacksilk-chain = { path = "../../chain" }
+blacksilk-rpc = { path = "../../rpc" }
+blacksilk-miner = { path = "../../miner" }
+rand_chacha = { version = "0.3", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+log = "0.4"
+env_logger = { version = "0.8", default-features = false, features = ["humantime"] }
+getrandom = "0.2"
+zeroize = "1.8"
+
+[dev-dependencies]
+blacksilk-node = { path = "../../node" }
+blacksilk-tx = { path = "../../tx" }
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
+
+# `cfg(fuzzing)`: set by cargo-fuzz in fuzz builds only; both binaries refuse
+# to compile with it (W4-GUARD).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
