@@ -109,7 +109,7 @@ Each principle names the decision or specification section that records its reas
 
 ### Crate map (root workspace)
 
-The root [Cargo.toml](Cargo.toml) has eighteen members. "Depends on" lists only dependencies on other BlackSilk crates, as declared in each crate's `Cargo.toml`.
+The root [Cargo.toml](Cargo.toml) has nineteen members. "Depends on" lists only dependencies on other BlackSilk crates, as declared in each crate's `Cargo.toml`.
 
 | Crate (directory) | Responsibility | Depends on (BlackSilk crates) |
 |---|---|---|
@@ -131,6 +131,7 @@ The root [Cargo.toml](Cargo.toml) has eighteen members. "Depends on" lists only 
 | `blacksilk-supply-audit` (`tools/supply-audit/`) | Closed-set supply check for a trial: wallet holdings against emission and the PX pool | consensus, chain, rpc, tx, wallet |
 | `blacksilk-genesis` (`tools/genesis/`) | Builds and verifies a genesis block derived from a Bitcoin block-hash beacon | consensus |
 | `blacksilk-daa-sim` (`tools/daa-sim/`) | Monte Carlo harness for the difficulty rule (evidence, not consensus) | consensus |
+| `blacksilk-stratum-bridge` (`tools/stratum-bridge/`) | Loopback, regtest-only stratum bridge that let real xmrig mine for the xmrig compatibility gate; verifies every share with the node's own PoW code. An evidence and test tool, not a pool, and not in the release package | randomx, consensus, crypto, chain, rpc, miner |
 
 The dependency graph has no cycles, and the PX crates sit below `tx`. `px-core` is the one source shared by nodes, wallets and the kernel guest, so no separate circuit description can drift from what a proof establishes ([px-core/src/lib.rs](px-core/src/lib.rs)). `consensus` is shared by the node and the miner, so the two cannot disagree on what a valid header is ([consensus/src/lib.rs](consensus/src/lib.rs)). Workspaces outside the root build are listed under [Repository structure](#repository-structure).
 
@@ -386,7 +387,7 @@ RandomX does not hash the 172-byte header. It hashes a fixed 47-byte blob:
 The block id is still the hash of the full header, nonce included. `PowFunction::pow_hash` takes a typed `PowBlob` (`[u8; 47]`), so code that passes raw header bytes fails to compile.
 
 **Why.**
-- **Compatibility with existing miners.** Stock xmrig writes its 4-byte RandomX nonce at byte 39 of the job blob, and the offset is compiled into xmrig per algorithm. With the nonce at byte 39, xmrig needs only a small patch adding an `rx/blacksilk` algorithm entry (the salt), not a change to its nonce handling ([xmrig-compatibility.md](docs/pow/xmrig-compatibility.md), historical research note). This rests on reading xmrig's code; it has not been tested (see [Third-party miners](#third-party-miners-xmrig)).
+- **Compatibility with existing miners.** Stock xmrig writes its 4-byte RandomX nonce at byte 39 of the job blob, and the offset is compiled into xmrig per algorithm. With the nonce at byte 39, xmrig needs only a small patch adding an `rx/blacksilk` algorithm entry (the salt), not a change to its nonce handling ([xmrig-compatibility.md](docs/pow/xmrig-compatibility.md), historical research note). The xmrig compatibility gate tested this on regtest: real xmrig with only the salt patch mined blocks the node accepted (see [Third-party miners](#third-party-miners-xmrig)).
 - **Room for a pool extranonce.** xmrig iterates bytes 39..43; a pool server could own bytes 43..47. `blacksilk-miner` iterates the whole `u64`.
 - **Constant size.** The blob is fixed-length and derived by every node from the header, never transmitted, so it has no field a miner could vary to produce equal-work duplicates.
 - **Commitment and network separation.** `mining_hash` commits to every field except the nonce and binds the network id, so work never carries across networks. Future header changes do not affect the blob layout miners see.
@@ -463,12 +464,12 @@ Blocks are announced without delay, so the IP address of the mining node is not 
 | Item | Status |
 |---|---|
 | Blob layout compatible with xmrig's nonce offset | Implemented in consensus (above) |
-| xmrig compatibility gate: a local xmrig build with an `rx/blacksilk` entry that changes **only the Argon2 salt**, driven by a minimal pure-Rust stratum bridge on regtest, mining blocks the node accepts | **Not implemented**: designed and reviewed internally, no consensus-level incompatibility found on paper; the bridge is being implemented; no xmrig run yet ([STATUS.md §5](docs/STATUS.md); decisions "xmrig compatibility gate: before the freeze") |
+| xmrig compatibility gate: a local xmrig build with an `rx/blacksilk` entry that changes **only the Argon2 salt**, driven by a minimal pure-Rust stratum bridge on regtest, mining blocks the node accepts | **Complete but requires further testing**: real xmrig v6.26.0 mined 2,133 regtest blocks the node accepted, in fast and light mode and across the first RandomX key switch; every xmrig result byte-equal to BlackSilk's own hash (offline recompute of every submission); invalid shares, a bad block and a negative control (Monero's salt) rejected; no consensus finding. One machine and CPU ([gate evidence](docs/evidence/xmrig-gate-2026-10-09/README.md); [xmrig-mining.md](docs/pow/xmrig-mining.md); [STATUS.md §5](docs/STATUS.md)) |
 | Pure-Rust stratum server for external miners (decided as optional) | **Planned**, after the freeze (decisions "xmrig compatibility gate: before the freeze") |
 | Pinned `rx/blacksilk` xmrig build for the testnet | **Planned**, after the freeze (decisions "xmrig compatibility gate: before the freeze") |
 | Upstream xmrig pull request for `rx/blacksilk` | **Planned**; after the stratum server and a tested patch exist |
 
-The compatibility gate is a test, not a mining product. xmrig is C++, so neither xmrig nor the test bridge becomes part of the node, the miner or the wallet. An earlier desk assessment (reading xmrig's source, no build) found that a BlackSilk salt configuration is a change to about five xmrig files, that xmrig would search only the low 32 bits of the nonce unless extended, and that xmrig's daemon mode cannot read a BlackSilk template; this was **not tested** ([randomx-reference evidence](docs/evidence/randomx-reference-2026-10-04/README.md), "xmrig").
+The compatibility gate is a test, not a mining product. xmrig is C++, so neither xmrig nor the test bridge becomes part of the node, the miner or the wallet. An earlier desk assessment (reading xmrig's source, no build) found that a BlackSilk salt configuration is a change to about five xmrig files, that xmrig would search only the low 32 bits of the nonce unless extended, and that xmrig's daemon mode cannot read a BlackSilk template; the gate then built and ran it (above). How to mine regtest with xmrig through the bridge, and xmrig's nonce fingerprint (its low 32 nonce bits count up from 0, so its blocks are distinguishable), are in [xmrig-mining.md](docs/pow/xmrig-mining.md).
 
 ### SKC-1: research only
 
@@ -1042,7 +1043,7 @@ Measured values, fingerprints and test counts are deliberately not copied here; 
 
 ### Pure Rust and `unsafe` code
 
-- Every root-workspace crate root carries `#![forbid(unsafe_code)]` (checked by grep over the library and binary roots of all eighteen members). The CI `lint` job checks a subset of them: its list omits `tools/supply-audit` and `tools/daa-sim`.
+- Every root-workspace crate root carries `#![forbid(unsafe_code)]` (checked by grep over the library and binary roots of all nineteen members), and the CI `lint` job checks every one of them.
 - The only `unsafe` code in the repository is in the patched Plonky3 crates in `third_party/` (upstream's `unsafe`, unchanged) and the zkVM guest SDK's single `ecall` block (`zkvm/sdk/src/lib.rs`), which runs inside the virtual machine, never in a shipped binary. The guest programs (`zkvm/guests/`) use no `unsafe` but do not declare the `forbid` yet; adding it needs a guest rebuild, because their pinned binaries must stay byte-identical.
 - There is no C, no C++ and no FFI in the project's own code. The fuzz binaries link LLVM's libFuzzer (C++) and are never part of the node, wallet or miner.
 - Dependencies contain `unsafe` internally; [unsafe-inventory.md](docs/reviews/unsafe-inventory.md) counts it per crate (a review aid, not an assessment). Dependency rules and verdicts: [SECURITY.md](SECURITY.md) ("Dependency policy") and [dependency-review.md](docs/reviews/dependency-review.md).
@@ -1267,7 +1268,7 @@ The root-workspace crates and their dependencies are in the [crate map](#crate-m
 | `randomx/`, `consensus/`, `crypto/`, `tx/`, `chain/`, `p2p/`, `rpc/` | Core libraries |
 | `zk/`, `zkvm/`, `px-core/`, `px/` | Proof system, BVM-1 zkVM and PX |
 | `node/`, `miner/`, `wallet/` | The three binaries |
-| `tools/genesis/`, `tools/labnet/`, `tools/supply-audit/`, `tools/daa-sim/` | Root-workspace tools: genesis, lab network, supply check, difficulty simulation |
+| `tools/genesis/`, `tools/labnet/`, `tools/supply-audit/`, `tools/daa-sim/`, `tools/stratum-bridge/` | Root-workspace tools: genesis, lab network, supply check, difficulty simulation, the xmrig gate's stratum bridge |
 | `tools/tpgate/` | The third-party gate's checker (its own workspace, so CI can build it from a trusted revision) |
 | `tools/vectors/` | Independent standard-library Python vector generators (test tooling only) |
 | `tools/*.sh` | Release build, build-flag and test-feature checks, boundary and fingerprint mutation scripts |
@@ -1327,7 +1328,7 @@ The main open gates; the full list is in [STATUS.md §5](docs/STATUS.md).
 | Freeze-commit verification | The full test suite on the freeze commit, including the PX-proving tests; every CI job green on GitHub; the fingerprint-mutation script re-run | STATUS §5; decisions "RT-FREEZE-V" |
 | Full-mode RandomX against the reference | B4 reproduced the known answers in **light mode only**; full-mode hashing has not been run against the reference | STATUS §5, B4 row |
 | Labnet reruns | The quiet-window reruns (ring topology, address relay, late joiner) | STATUS §5, labnet row |
-| xmrig compatibility gate | **Not implemented**: designed and reviewed internally, no consensus-level incompatibility found on paper; the bridge is being implemented; no xmrig run yet. Tests the claim that the 47-byte mining blob needs only a salt-only xmrig patch ([Third-party miners](#third-party-miners-xmrig)) | STATUS §5, xmrig row; decisions "xmrig compatibility gate: before the freeze"; [xmrig-compatibility.md](docs/pow/xmrig-compatibility.md) (historical research) |
+| xmrig compatibility gate | **Passed** (Complete but requires further testing): 2,133 regtest blocks mined by real xmrig, across the first key switch, every result byte-equal to BlackSilk's hash; one machine and CPU. Confirms that the 47-byte mining blob needs only a salt-only xmrig patch ([Third-party miners](#third-party-miners-xmrig)) | STATUS §5, xmrig row; decisions "xmrig compatibility gate: before the freeze"; [xmrig-compatibility.md](docs/pow/xmrig-compatibility.md) (historical research) |
 | Supply audit with a PX pool | **Not implemented**: a multi-machine 72-hour run | STATUS §5; [testnet.md §7](docs/testnet.md) |
 | Second threat-model round | **Partially implemented**: the four internal reports are written; their P0 items are open STATUS rows | STATUS §5 |
 | CI on the release commit | **Not verified**: all jobs green on GitHub; CI results live on GitHub, not in the repository | STATUS §5 |
