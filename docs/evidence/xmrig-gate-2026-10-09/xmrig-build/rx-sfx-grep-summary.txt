@@ -1,0 +1,26 @@
+# Summary of the RX_SFX grep check after patching: grep -rn "RX_SFX\|RX_BLACKSILK\|BlackSilk" src/ in the xmrig v6.26.0 tree.
+# The raw output quotes xmrig (GPLv3) source lines, so only file:line and the matched identifier are recorded here; the raw output is kept off-tree.
+# Format: file:line: matched identifiers
+src/backend/opencl/cl/cn/algorithm.cl:25: RX_SFX
+src/base/crypto/Algorithm.cpp:84: RX_SFX
+src/base/crypto/Algorithm.cpp:85: RX_BLACKSILK
+src/base/crypto/Algorithm.cpp:152: RX_SFX
+src/base/crypto/Algorithm.cpp:153: RX_BLACKSILK
+src/base/crypto/Algorithm.cpp:268: RX_SFX
+src/base/crypto/Algorithm.cpp:269: RX_SFX
+src/base/crypto/Algorithm.cpp:270: RX_BLACKSILK
+src/base/crypto/Algorithm.cpp:360: RX_BLACKSILK RX_SFX
+src/base/crypto/Algorithm.h:80: RX_SFX
+src/base/crypto/Algorithm.h:81: BlackSilk RX_BLACKSILK
+src/base/crypto/Algorithm.h:148: RX_SFX
+src/base/crypto/Algorithm.h:149: RX_BLACKSILK
+src/crypto/randomx/randomx.cpp:116: BlackSilk
+src/crypto/randomx/randomx.cpp:117: BlackSilk
+src/crypto/randomx/randomx.cpp:119: BlackSilk
+src/crypto/randomx/randomx.cpp:396: BlackSilk
+src/crypto/randomx/randomx.h:156: BlackSilk
+src/crypto/randomx/randomx.h:165: BlackSilk
+src/crypto/rx/RxAlgo.cpp:47: RX_SFX
+src/crypto/rx/RxAlgo.cpp:50: RX_BLACKSILK
+src/crypto/rx/RxAlgo.cpp:51: BlackSilk
+src/crypto/rx/RxAlgo.h:50: RX_SFX

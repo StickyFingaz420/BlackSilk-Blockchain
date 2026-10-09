@@ -98,7 +98,7 @@ its hash and this description are recorded.
    creates no `DonateStrategy` (`Network.cpp`), so no donation-pool connection can
    be made.
 
-### RX_SFX grep audit and the rx/0 known-answer test (from the build record)
+### RX_SFX grep check and the rx/0 known-answer test (from the build record)
 
 - `grep -rn "RX_SFX\|RX_BLACKSILK\|BlackSilk" src/` after patching: every switch
   or list that names `RX_SFX` either has an `RX_BLACKSILK` arm or does not matter
@@ -113,6 +113,12 @@ its hash and this description are recorded.
   patch. `--bench=250K --algo=rx/blacksilk` gave a different sum
   (`017D8A83D6C55AA2`), showing the salt took effect; xmrig has no BlackSilk
   reference value, which is what this gate supplies.
+- Program output, copied here: `xmrig-build/bench-results.txt` (the two bench
+  result lines) and `xmrig-build/rx-sfx-grep-summary.txt` (file, line and matched
+  identifier of every grep hit). The raw grep output quotes xmrig source lines, so
+  only that summary is committed. The raw output, the bench logs and the build
+  record (`BUILD-RECORD.md` of the local xmrig build) stay off-tree with the xmrig
+  build.
 
 ## Runs and command lines
 
@@ -150,9 +156,9 @@ blacksilk-stratum-bridge recompute --log runNC-submits.jsonl --only-agent XMRig/
 blacksilk-rx-verify --node 127.0.0.1:39333 --cookie C:\bsgate\node\rpc.cookie --network regtest --full 480-556 --threads 4 --out rx-verify.json
 ```
 
-The share floor 3600 is about 3 times xmrig's measured hash rate: 1,170 to 1,212 H/s
-on 4 threads in fast mode during run A (xmrig's `speed` lines), about 228 H/s in
-light mode.
+The share floor 3600 is about 3 times xmrig's measured hash rate. In run A (fast
+mode, 4 threads) xmrig's 10 s `speed` readings outside the two pauses were 1,112
+to 1,206 H/s, with a logged maximum of 1,211.8 H/s; in light mode about 228 H/s.
 
 ## Results
 
@@ -161,8 +167,12 @@ light mode.
 | A | fast (dataset verified) | 1 to 543 | 744 | 542 | 200 | 2 | 0 | 59 (heights 485 to 543) | 1 to 8,671 |
 | L | light | 544 to 556 | 13 | 13 | 0 | 0 | 0 | 13 | 4,197 to 7,258 |
 | NC | fast, `rx/0` | none (tip stayed 556) | 33 | 0 | 0 | 0 | 33 `Invalid result`, all `nc_rx0_match` | n/a | 4,058 |
-| probe | n/a | 10 | 7 (cases) | 1 (case d, labelled `A-probe` in `blocks.tsv`) | 0 | 2 | 4 | 0 | 1 |
+| probe | n/a | 10 | 7 probe submissions (not xmrig) | 1 (case d, labelled `A-probe` in `blocks.tsv`) | 0 | 2 | 4 | 0 | 1 |
 
+- Plan (D) asked for "all on the best chain". That was replaced by the bridge
+  critique's L7 accounting: best-chain blocks (`OK`) and blocks the node accepted
+  off the best chain (`OK_OFF_BEST_CHAIN`) are counted separately, and neither is
+  a rejection.
 - Height 543 includes one block per height from 1 to 543: 542 xmrig blocks and
   the probe's case (d) at height 10.
 - Run A: LWMA reached the floor at height 485 (difficulty 3605) and 8,671 at most.
@@ -204,8 +214,15 @@ xmrig was paused but still connected; xmrig's session kept mining after `r`.
 | e | (b) again on the still-current job | `Duplicate share` | `Duplicate share` | yes |
 | d | a valid share | `OK` | `OK` (block height 10) | moved, as expected |
 | e2 | (d) again after the new job | `Stale job` | `Stale job` | yes |
-| f | xmrig's accepted share (job 9, nonce `13000000`) replayed on a new probe session (session-scoped jobs) | `Stale job` | `Stale job` | yes |
+| f | job 9 / nonce `13000000` (xmrig's accepted share) submitted on a new probe session; see the note below | `Stale job` | `Stale job` | yes |
 | direct-to-node | a node-template block whose hash fails the block difficulty (226, height 352), sent straight to `/block` | `InsufficientWork` | `InsufficientWork`; node log: `block rejected: Header(InsufficientWork)` | yes |
+
+Note on case f: the replayed `result` carried a trailing carriage return
+(`logs/runA-stratum.log` line 60), an artefact of the shell that passed xmrig's
+result to the probe. The `Stale job` reply still shows that jobs are
+session-scoped, because the bridge checks the job before it parses the result;
+but the case is best read as "job 9 / nonce `13000000` submitted on a new
+session", not as a byte-exact replay of xmrig's share.
 
 ### Negative control
 
@@ -239,10 +256,12 @@ were not hashed live.
 | NC | 0 / 33 | 0 | 33 |
 
 Run A's one-share difference: submit id 745 (job 546, block height 543) reached
-the bridge at 04:16:06.820 UTC and was answered `OK` at 04:16:07.888; the node
-accepted the block. xmrig was stopped with Ctrl-C in that second and exited
-before it logged the reply (its last line is at 06:16:00.414 local time, which
-is 04:16:00 UTC).
+the bridge at 04:16:06.820 UTC; the node accepted the block, and the bridge wrote
+`OK` to its stratum log at 04:16:07.888. xmrig was stopped with Ctrl-C in that
+second, and xmrig's connection closed before the reply was written: the bridge
+logged `session 0c3be847 closed` at 04:16:07 before its `BLOCK height 543` line
+(`logs/runA-bridge.log` line 1295), so the `OK` was probably never delivered.
+xmrig's last log line is at 06:16:00.414 local time (04:16:00 UTC).
 xmrig's 2 rejections are the 2 `Stale job` replies.
 
 ### Job difficulty as xmrig decoded it (M4, L1)
@@ -275,7 +294,7 @@ nodes agree true (1..=556), light 556 checked / 0 failed, consensus accepted 556
 
 The full-mode range 480 to 556 covers run A's above-floor blocks and all of run
 L. The node was then stopped with Ctrl-C and restarted: it loaded `height 556,
-tip 5e0ea890f7196a1a`, the same tip (`logs/node-restart.log`, the first 20
+tip 5e0ea890f7196a1a`, the same tip (`logs/node-restart.log`, the first 10
 lines; it also re-verified 64 of 756 stored proof-of-work hashes at load).
 
 ### xmrig network posture
@@ -283,10 +302,17 @@ lines; it also re-verified 64 of 756 stored proof-of-work hashes at load).
 `logs/donate-pool-grep.txt`. In all three xmrig logs the only donate line is
 `* DONATE 0%`, and the only address is `127.0.0.1:3334` (545, 20 and 5 occurrences),
 plus the bare `127.0.0.1` of the `use pool` line. The control is the patched
-`donate.h` together with `--donate-level 0` and `"donate-level": 0`. **No firewall
-rule was in place**: Windows Firewall reported its profiles on with the default
-outbound policy `AllowOutbound`, and no rule names the gate's xmrig binary. The
-owner had disabled Windows Defender for this work. No netstat sampling was done.
+`donate.h` together with `--donate-level 0` and `"donate-level": 0`.
+
+Firewall:
+- The owner said the firewall was disabled for this work.
+- `netsh advfirewall show allprofiles` showed all three profiles `ON`, each with
+  the policy `BlockInbound,AllowOutbound` (`firewall-netsh.txt`; captured after
+  runs A, L and NC, during run B).
+- No firewall rule targeted the gate's xmrig binary, so the planned outbound-block
+  guard was absent.
+- The only controls were the patched `donate.h`, `--donate-level 0` and the log
+  grep above. No netstat sampling was done.
 
 ## Run B (seed switch)
 
@@ -309,13 +335,18 @@ is not in this record. Until run B has its own evidence, the seed switch counts 
 | `rx-verify.txt`, `rx-verify.json` | the chain recheck |
 | `build/` | build log, `--version` output, build-flag check, binary SHA-256 |
 | `config/` | `gate.json` and the two copies used for runs L and NC |
+| `xmrig-build/` | the two xmrig bench result lines and the RX_SFX grep summary (program output) |
+| `firewall-netsh.txt` | `netsh advfirewall show allprofiles`, captured during run B |
 | `SHA256SUMS` | SHA-256 of every other file here |
 
 **Redaction.** No file here contains a path under the user profile (checked with
 `grep -iE 'c:[\/]users|home 01|home01|/c/users'`), and none contains the RPC
-cookie value (the current cookie was grepped for; the node never logs the cookie,
-and every 64-hex value in the node logs is the genesis id or the consensus
-fingerprint). The paths that remain are `C:\bsgate\...` (runtime data),
+cookie value. The cookie used during runs A, L and NC was overwritten when the
+node restarted, so it could not be grepped for directly; the restart's cookie was
+grepped for and is absent, and every 64-hex value in these files was accounted
+for: block ids, xmrig results and bridge hashes, the RandomX seed, SHA-256 values
+of files and binaries, and the digests the node prints in `--version` (plus three
+SHA-256 values from the xmrig build record in this README). The paths that remain are `C:\bsgate\...` (runtime data),
 `C:\bsxmrig\...` (the xmrig build) and the build worktree `C:\bszkeval\...`. The
 wallet's seed words, password and the regtest payout address are not recorded.
 The submit logs record the block ids and the session ids only.

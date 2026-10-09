@@ -1,0 +1,6 @@
+# xmrig built-in benchmark result lines (program output), from the local build's bench logs (bench-rx0-1M.log, bench-blacksilk-250K.log; kept off-tree)
+# commands: xmrig-notls.exe --bench=1M --algo=rx/0 --donate-level=0 --no-color; xmrig-notls.exe --bench=250K --algo=rx/blacksilk --donate-level=0 --no-color
+# rx/0 1M reference in xmrig's BenchState_test.h (multi-thread table): 0x898B6E0431C28A6B -> MATCH
+# rx/blacksilk has no xmrig reference; its sum differs from rx/0's 250K reference 0x7D6054757BB08A63 (salt active)
+rx/0 1M:          [2026-10-09 04:32:51.726]  bench    benchmark finished in 819.938 seconds (1219.6 h/s) hash sum = 898B6E0431C28A6B
+rx/blacksilk 250K: [2026-10-09 04:36:42.330]  bench    benchmark finished in 209.037 seconds (1196.0 h/s) hash sum = 017D8A83D6C55AA2
