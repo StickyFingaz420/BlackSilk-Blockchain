@@ -18,3 +18,7 @@ hex = "0.4"
 # The independent check of the Argon2 cache fill (record #rx-salt): already in
 # the lockfile (wallet), pinned to that version; tests only.
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc"] }
+# IEEE 754 oracle for the FPU differential test (decisions "Agent 44"; dossier
+# 05 C3): a pure-Rust port of LLVM APFloat, tests only. The crates.io version
+# is 0.2.3+llvm-462a31f5a5ab (build metadata is not part of the requirement).
+rustc_apfloat = "=0.2.3"

@@ -231,7 +231,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: "1.98.1"
-      - name: Full mode vectors and full/light agreement (about 2.3 GiB RAM)
+      # `--ignored` also runs the FPU oracle's 10^7-per-op run (fpu_oracle_full)
+      # and the 256-case equivalence digest (pinned_digest_large): about 4 to 6
+      # more minutes.
+      - name: Full mode vectors, full/light agreement, FPU oracle (10^7) and large digest (about 2.3 GiB RAM)
         run: cargo test --locked --release -p blacksilk-randomx -- --ignored --nocapture
 
   # The only regression test for the Plonky3 spin-lock hang (AUDIT.md ZK-F11,
