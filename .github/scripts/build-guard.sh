@@ -29,10 +29,11 @@
 set -euo pipefail
 
 pkgs=(blacksilk-node blacksilk-miner blacksilk-wallet blacksilk-genesis
-  blacksilk-supply-audit blacksilk-labnet)
+  blacksilk-supply-audit blacksilk-labnet blacksilk-stratum-bridge)
 dir="${CARGO_TARGET_DIR:-target}/release"
 bins=(blacksilk-node blacksilk-miner blacksilk-wallet blacksilk-genesis
-  blacksilk-supply-audit blacksilk-labnet blacksilk-labnet-report blacksilk-rx-verify)
+  blacksilk-supply-audit blacksilk-labnet blacksilk-labnet-report blacksilk-rx-verify
+  blacksilk-stratum-bridge blacksilk-stratum-probe)
 check=tools/check-build-flags.sh
 features='test-hooks|test-util|test-utils|mock'
 tmp="$(mktemp -d)"
