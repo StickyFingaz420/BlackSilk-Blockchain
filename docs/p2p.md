@@ -47,7 +47,7 @@ All integers are little-endian unless stated otherwise. Encoding primitives
   (`FrameWriter::send`, §3), so **an observer of a node's own link** (its ISP, or
   its Tor guard) sees when the node sends a transaction-sized message that no peer
   sent it first: it learns that the node **originated** a transaction, **v1 as well
-  as PX**. A PX transaction (about 2.2 MB) is unmistakable even over Tor; a v1
+  as PX**. A PX transaction (about 2.4 MB or more) is unmistakable even over Tor; a v1
   transaction (a few kB, a few Tor cells) is a weaker signal over Tor, not a hidden
   one. Dandelion++ (§8) does not help against this observer; only padding or a
   private broadcast design would (transport v2, §3.1, design only).
@@ -865,8 +865,9 @@ never used in any check or sent to a peer:
     maximum of its decoded answers to our requests (each answer, or 7/8 of the last
     figure, whichever is larger; a frame its slow lane dropped undecoded does not
     count, RT4), at least 8 KiB, and half the budget before its first answer: a PX
-    answer is about 2.2 MB, so two PX requests at once, and one small answer after a
-    large one does not open 16 (RT3 F3). A candidate whose peer is at a cap is
+    answer is about 2.4 MB or more, so at most two PX requests at once (one for the
+    largest call proofs), and one small answer after a large one does not open 16
+    (RT3 F3). A candidate whose peer is at a cap is
     skipped: junk from one peer consumes only that peer's own allowance (RT2 F1,
     F4).
   - **Busy.** An answer this node drops for the peer's relay share is not the

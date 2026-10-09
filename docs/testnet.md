@@ -669,10 +669,15 @@ public launch, run this procedure on at least **3 machines in 2 different networ
 Record the results as an evidence directory under `docs/evidence/` and link it from
 [STATUS.md](STATUS.md) (AUDIT.md is a historical log and is no longer updated).
 
-**Redact before anything enters the repository** (it is public): node logs at `info`
-carry peer IP addresses and onion names; remove them (for example replace every
-IPv4, IPv6 and `.onion` address with a placeholder) and keep the unredacted logs
-off the repository. Never commit `debug` logs of a trial device, any
+**Redact before anything enters the repository** (it is public). Node logs at `info`
+name peers by a local numeric id, not by address: peer IP addresses and onion names
+appear only at `debug` (`p2p/src/net/conn.rs`, `peers.rs`). No log line, at any level,
+prints the id of a transaction this node originated: it reads "a local tx"
+(`tx_log_id`, `p2p/src/net/state.rs`). `info` and `warn` lines still carry the node's
+own listening and public addresses and the configured seed names; remove those (for
+example replace every IPv4, IPv6 and `.onion` address and host name with a
+placeholder) and keep the unredacted logs off the repository. Never commit `debug`
+logs of a trial device, any
 `originated.json`, `peers.json`, `anchors.json` or `bans.json`, or wallet files.
 For the supply audit, commit only the chain figures, `totals` and the differences,
 not the per-wallet rows (§7.1).

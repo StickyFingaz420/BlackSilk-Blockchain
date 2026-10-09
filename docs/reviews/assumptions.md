@@ -97,7 +97,7 @@ Source: docs/consensus.md, docs/blocks.md.
 | I2 | The OS CSPRNG works (hedged where it matters: C5, Z7) | Keys, proof randomness | Standard; hedging bounds a failure |
 | I3 | `wasmi` executes deterministically with exact fuel metering on every platform | Transparent-contract consensus (not integrated; not in consensus) | Tested (fuzzing: determinism across two executor instances in one process); cross-platform untested |
 | I4 | The wallet host is not compromised | Keys and every private property | Explicit non-goal |
-| I5 | Rust's memory safety holds: the project's own `unsafe` is minimal and reviewed; the dependencies' `unsafe` is trusted | Memory safety | dependency-review.md; not audited line by line |
+| I5 | Rust's memory safety holds: every crate of the root workspace declares `#![forbid(unsafe_code)]`, and the project's only own `unsafe` is the zkVM guest SDK's `ecall` (`zkvm/sdk/src/lib.rs`), which runs inside the VM, not in a shipped binary; the dependencies' `unsafe` is trusted | Memory safety | unsafe-inventory.md; SECURITY.md; dependency-review.md; dependencies not audited line by line |
 
 ## 7. Open items
 

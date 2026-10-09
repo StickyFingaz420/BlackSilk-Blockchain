@@ -2,12 +2,12 @@
 //!
 //! | Module | Spec | Content |
 //! |---|---|---|
-//! | [`isa`] | §4 | strict RV32IM decoding and encoding |
+//! | [`isa`] | §4 | strict RV32I + Zmmul decoding and encoding (no division) |
 //! | [`program`] | §3 | ELF loading, program ids |
 //! | [`exec`] | §2–5 | the reference interpreter and its witness |
 //!
-//! The constraint tables that prove executions are built on this witness
-//! (ZK-3, in progress).
+//! The constraint tables that prove executions ([`air`], [`prove`]) are
+//! built on this witness.
 
 #![forbid(unsafe_code)]
 

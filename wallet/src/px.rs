@@ -3,10 +3,11 @@
 //!
 //! **Privacy of scanning.** The wallet learns about its records only from
 //! data every wallet downloads alike: whole blocks (records, nullifiers,
-//! commitments) and, below its restore height or for an imported record, the
-//! complete, ordered list of commitments (`/px/commitments`, fetched in
-//! bulk). It never asks the node about a specific record, position or
-//! nullifier, so the node cannot tell which records are the wallet's.
+//! commitments) and, below its restore height only, the complete, ordered
+//! list of commitments (`/px/commitments`, fetched in bulk; an imported
+//! record is placed without it, RTW3-15). It never asks the node about a
+//! specific record, position or nullifier, so the node cannot tell which
+//! records are the wallet's.
 //!
 //! **Keys.** PX keys derive from the same 27-word seed (format v1) as the v1 keys
 //! (domain-separated, `blacksilk_px::wallet::Account`).

@@ -736,7 +736,7 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 
 - Wallets scan whole blocks (`/blocks`) and fetch, whole and in order:
   - the commitment list (`/px/commitments`), in pages, only below their restore height
-    (once) and to place an imported record (below):
+    (once; an imported record is placed without it, below):
     `GET /px/commitments?from=F&limit=L` returns the `(height, commitment)`
     entries at tree positions `F..F+L`, the `total` count, the current tree `root`,
     the tip `height`, and `next` (the `from` of the following page, or `null` at the
@@ -868,9 +868,11 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   (`/tx/status`) and the transactions you submit. The
   decoy distribution of your v1 rings comes from the wallet's own output index, not
   from the node; after a restore, the part below the restore height is the node's
-  unverified backfill, which that node controls, and the node used for the restore is
-  trusted for the positions of your outputs (transactions.md §11.3.1). It does not
-  learn which outputs or records are yours from scanning: the wallet scans whole
+  `/outputs` backfill, checked before it is stored against the output range the
+  synced block's header commits to (`output_count`, `output_root`; B-OMR), and every
+  scanned block's first output position against its header, so neither the backfill
+  nor the positions of your outputs is the node's word (transactions.md §11.3.1).
+  It does not learn which outputs or records are yours from scanning: the wallet scans whole
   blocks and builds rings and the PX tree from its own index (docs/testnet.md §11).
 - **Give each counterparty its own PX address** (`px-address --index`). Addresses of
   one wallet are unlinkable.
