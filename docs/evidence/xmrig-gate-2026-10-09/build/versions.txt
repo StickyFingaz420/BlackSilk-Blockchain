@@ -1,0 +1,28 @@
+== blacksilk-node
+blacksilk-node 0.1.0
+commit 65d5a70d0b86668ff8662163d3bfe59809e81d1d
+build flags: none
+testnet: fingerprint f6d04adf7e19dc04 (f6d04adf7e19dc04820f665f8e3d948907af57ccb12eb625747642178251f9e8)
+testnet: rules 68aff77abdebf4daa143f94e412ba03f5b4227b1d8823ce215c872341dad0253
+testnet: identity 3ad61ec9d375629ebcc56fa9231bb2d946a50c26c913d471495a7c10b3f62603
+testnet: genesis b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0
+regtest: fingerprint a8669525661569ca (a8669525661569ca5345ed0b6af610712d85e7c84802c01e40c563c4c95d7238)
+regtest: rules a5fe79371067581727d6d5682c17f1d4ff4813fea1cbe50f550a4af2908b7aae
+regtest: identity 93d0d09dc0dee8070e8d0cfde0d10db3484c31bf65301eab09056f34aa72a79b
+regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141
+mainnet: fingerprint 282d81ec26b90b9b (282d81ec26b90b9b7e5f5e55b49d92414833c04166acec7b95ac9d58508d34a6)
+mainnet: rules bebfe3a7d12d57247080b25ad922794db3d90806cb3f95675eadb9aa5c875e1c
+mainnet: identity 4e8f80d69dccb7dc9ace4acc870f3f3dd7fa0b047e05dac91a12d298716798d8
+mainnet: genesis 59f74a4965f7302ad4db6e7993d8f3542ddb147c84819dd63dd71f9f76f784e5
+== blacksilk-stratum-bridge
+blacksilk-stratum-bridge 0.1.0 (commit unknown)
+build flags: none
+== blacksilk-stratum-probe
+blacksilk-stratum-probe 0.1.0 (commit unknown)
+build flags: none
+== blacksilk-rx-verify
+blacksilk-rx-verify 0.1.0 (commit unknown)
+build flags: none
+== blacksilk-wallet
+blacksilk-wallet 0.1.0 (commit unknown)
+build flags: none

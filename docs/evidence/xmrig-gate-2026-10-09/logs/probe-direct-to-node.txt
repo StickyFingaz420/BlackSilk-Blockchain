@@ -1,0 +1,3 @@
+blacksilk-stratum-probe 0.1.0, build flags: none
+probe case=direct-to-node expect="InsufficientWork" got="InsufficientWork" tip_unchanged=true result=PASS
+probe: all 1 cases PASS

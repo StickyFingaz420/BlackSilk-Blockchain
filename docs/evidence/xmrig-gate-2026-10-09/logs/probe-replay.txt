@@ -1,0 +1,4 @@
+blacksilk-stratum-probe 0.1.0, build flags: none
+probe case=f expect="Stale job" got="Stale job" tip_unchanged=true result=PASS
+probe: all 1 cases PASS
+replayed job_id=9 nonce=13000000 result=9459b5298c5133a1a6958bba5d15474cf0158c012b8746b3b458e85162220e00

@@ -1,0 +1,31 @@
+== A: xmrig submissions 744 (sessions ['0c3be847']); other agents 7
+  outcome ok: 542
+  outcome ok_off_best_chain: 200
+  outcome stale_job: 2
+  gate_mismatch flags: 0
+  hashed live: 742
+  blocks on best chain (ok): 542; at block_diff > floor 3600: 59
+  heights 1..543; block_diff range 1..8671
+  hashed xmrig records with result != bridge_hash: 0
+  xmrig final counters accepted/rejected: 741/2; bridge OK-status replies 742, error replies 2
+  job notifications to xmrig: 543; xmrig 'new job' lines: 543
+  job-diff check: 543 pairs, 0 mismatches
+== L: xmrig submissions 13 (sessions ['39ef33ac']); other agents 0
+  outcome ok: 13
+  gate_mismatch flags: 0
+  hashed live: 13
+  blocks on best chain (ok): 13; at block_diff > floor 3600: 13
+  heights 544..556; block_diff range 4197..7258
+  hashed xmrig records with result != bridge_hash: 0
+  xmrig final counters accepted/rejected: 13/0; bridge OK-status replies 13, error replies 0
+  job notifications to xmrig: 18; xmrig 'new job' lines: 18
+  job-diff check: 18 pairs, 0 mismatches
+== NC: xmrig submissions 33 (sessions ['145b18d5']); other agents 0
+  outcome nc_rx0_match: 33
+  gate_mismatch flags: 33
+  hashed live: 33
+  blocks on best chain (ok): 0; at block_diff > floor 3600: 0
+  hashed xmrig records with result != bridge_hash: 33
+  xmrig final counters accepted/rejected: 0/33; bridge OK-status replies 0, error replies 33
+  job notifications to xmrig: 3; xmrig 'new job' lines: 3
+  job-diff check: 3 pairs, 0 mismatches

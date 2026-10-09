@@ -1,0 +1,60 @@
+ * ABOUT        XMRig/6.26.0 MSVC/2022 (built for Windows x86-64, 64 bit)
+ * LIBS         libuv/1.51.0 
+ * HUGE PAGES   disabled
+ * 1GB PAGES    unavailable
+ * CPU          Intel(R) Core(TM) i7-6700 CPU @ 3.40GHz (1) 64-bit AES VM
+                threads:8
+ * MEMORY       7.4/15.9 GB (46%)
+                DIMM1: 8 GB DDR3 @ 1600 MHz M471B1G73DB0-YK0  
+                DIMM2: 8 GB DDR3 @ 1600 MHz M471B1G73EB0-YK0  
+ * MOTHERBOARD  Dell Inc. - OptiPlex 3240 AIO
+ * DONATE       0%
+ * ASSEMBLY     auto:intel
+ * POOL #1      127.0.0.1:3334 algo rx/blacksilk
+ * COMMANDS     'h' hashrate, 'p' pause, 'r' resume, 's' results, 'c' connection
+[2026-10-09 06:16:26.579]  net      use pool 127.0.0.1:3334  127.0.0.1
+[2026-10-09 06:16:26.579]  net      new job from 127.0.0.1:3334 diff 7257 algo rx/blacksilk height 544
+[2026-10-09 06:16:26.580]  cpu      use argon2 implementation AVX2
+[2026-10-09 06:16:26.580]  randomx  init dataset algo rx/blacksilk (4 threads) seed 3dbdba2aca8842cd...
+[2026-10-09 06:16:26.583]  randomx  fast RandomX mode disabled by config
+[2026-10-09 06:16:26.583]  randomx  failed to allocate RandomX dataset, switching to slow mode (1 ms)
+[2026-10-09 06:16:26.957]  randomx  dataset ready (374 ms)
+[2026-10-09 06:16:26.958]  cpu      use profile  rx  (4 threads) scratchpad 2048 KB
+[2026-10-09 06:16:26.959]  cpu      READY threads 4/4 (4) huge pages 0% 0/4 memory 8192 KB (1 ms)
+[2026-10-09 06:17:23.519]  net      new job from 127.0.0.1:3334 diff 7257 algo rx/blacksilk height 544
+[2026-10-09 06:17:27.275]  miner    speed 10s/60s/15m 227.9 n/a n/a H/s max 229.7 H/s
+[2026-10-09 06:18:23.597]  net      new job from 127.0.0.1:3334 diff 7257 algo rx/blacksilk height 544
+[2026-10-09 06:18:27.536]  miner    speed 10s/60s/15m 225.0 227.4 n/a H/s max 229.9 H/s
+[2026-10-09 06:18:28.166]  cpu      accepted (1/0) diff 7257 (1734 ms)
+[2026-10-09 06:18:28.187]  net      new job from 127.0.0.1:3334 diff 6187 algo rx/blacksilk height 545
+[2026-10-09 06:18:36.353]  cpu      accepted (2/0) diff 6187 (957 ms)
+[2026-10-09 06:18:36.367]  net      new job from 127.0.0.1:3334 diff 6267 algo rx/blacksilk height 546
+[2026-10-09 06:19:27.813]  miner    speed 10s/60s/15m 227.4 227.9 n/a H/s max 229.9 H/s
+[2026-10-09 06:19:36.411]  net      new job from 127.0.0.1:3334 diff 6267 algo rx/blacksilk height 546
+[2026-10-09 06:19:39.375]  cpu      accepted (3/0) diff 6267 (911 ms)
+[2026-10-09 06:19:39.399]  net      new job from 127.0.0.1:3334 diff 5480 algo rx/blacksilk height 547
+[2026-10-09 06:20:28.123]  miner    speed 10s/60s/15m 228.8 225.0 n/a H/s max 230.1 H/s
+[2026-10-09 06:20:39.438]  net      new job from 127.0.0.1:3334 diff 5480 algo rx/blacksilk height 547
+[2026-10-09 06:21:06.670]  cpu      accepted (4/0) diff 5480 (1035 ms)
+[2026-10-09 06:21:06.700]  net      new job from 127.0.0.1:3334 diff 4877 algo rx/blacksilk height 548
+[2026-10-09 06:21:28.384]  miner    speed 10s/60s/15m 227.1 228.0 n/a H/s max 230.1 H/s
+[2026-10-09 06:21:45.157]  cpu      accepted (5/0) diff 4877 (983 ms)
+[2026-10-09 06:21:45.178]  net      new job from 127.0.0.1:3334 diff 4710 algo rx/blacksilk height 549
+[2026-10-09 06:21:55.743]  cpu      accepted (6/0) diff 4710 (987 ms)
+[2026-10-09 06:21:55.757]  net      new job from 127.0.0.1:3334 diff 4445 algo rx/blacksilk height 550
+[2026-10-09 06:22:07.181]  cpu      accepted (7/0) diff 4445 (993 ms)
+[2026-10-09 06:22:07.194]  net      new job from 127.0.0.1:3334 diff 4457 algo rx/blacksilk height 551
+[2026-10-09 06:22:10.774]  cpu      accepted (8/0) diff 4457 (1047 ms)
+[2026-10-09 06:22:10.799]  net      new job from 127.0.0.1:3334 diff 4450 algo rx/blacksilk height 552
+[2026-10-09 06:22:20.606]  cpu      accepted (9/0) diff 4450 (1027 ms)
+[2026-10-09 06:22:20.606]  net      new job from 127.0.0.1:3334 diff 4507 algo rx/blacksilk height 553
+[2026-10-09 06:22:28.695]  miner    speed 10s/60s/15m 228.7 228.4 n/a H/s max 230.1 H/s
+[2026-10-09 06:22:59.097]  cpu      accepted (10/0) diff 4507 (957 ms)
+[2026-10-09 06:22:59.126]  net      new job from 127.0.0.1:3334 diff 4538 algo rx/blacksilk height 554
+[2026-10-09 06:23:23.972]  cpu      accepted (11/0) diff 4538 (975 ms)
+[2026-10-09 06:23:23.997]  net      new job from 127.0.0.1:3334 diff 4297 algo rx/blacksilk height 555
+[2026-10-09 06:23:29.004]  miner    speed 10s/60s/15m 227.1 227.6 n/a H/s max 230.1 H/s
+[2026-10-09 06:23:53.574]  cpu      accepted (12/0) diff 4297 (976 ms)
+[2026-10-09 06:23:53.593]  net      new job from 127.0.0.1:3334 diff 4196 algo rx/blacksilk height 556
+[2026-10-09 06:24:09.510]  cpu      accepted (13/0) diff 4196 (961 ms)
+[2026-10-09 06:24:09.535]  net      new job from 127.0.0.1:3334 diff 4057 algo rx/blacksilk height 557

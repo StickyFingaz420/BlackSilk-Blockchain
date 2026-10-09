@@ -1,0 +1,35 @@
+[2026-10-09T04:16:23Z INFO  blacksilk_stratum_bridge] blacksilk-stratum-bridge 0.1.0 commit unknown, build flags: none
+[2026-10-09T04:16:23Z INFO  blacksilk_stratum_bridge::server] stratum bridge on 127.0.0.1:3334: node 127.0.0.1:39333 network regtest id 0x00deb06e, algo rx/blacksilk, share floor 3600, --allow-session-diff
+[2026-10-09T04:16:23Z INFO  blacksilk_stratum_bridge::server] work: height 544 difficulty 7258 seed 3dbdba2aca8842cd parent 89d3cd7f17cd25e7 (0 sessions)
+[2026-10-09T04:16:26Z INFO  blacksilk_stratum_bridge::server] session 39ef33ac logged in: agent "XMRig/6.26.0 (Windows NT 10.0; Win64; x64) libuv/1.51.0 msvc/2022", share floor 3600
+[2026-10-09T04:17:23Z INFO  blacksilk_stratum_bridge::server] work: height 544 difficulty 7258 seed 3dbdba2aca8842cd parent 89d3cd7f17cd25e7 (1 sessions)
+[2026-10-09T04:18:23Z INFO  blacksilk_stratum_bridge::server] work: height 544 difficulty 7258 seed 3dbdba2aca8842cd parent 89d3cd7f17cd25e7 (1 sessions)
+[2026-10-09T04:18:28Z INFO  blacksilk_stratum_bridge::server] BLOCK height 544 id 110273fe01befac3bf2b5f5bd8b8bd9385b0e47f2ac70dc8677949885ef205e7 nonce 11344899672771723425 result 3bf82544e94511b4214edea8f0d3fa64dbbc6793f1035c7bc5dead7dc6ba0000 session 39ef33ac
+[2026-10-09T04:18:28Z INFO  blacksilk_stratum_bridge::server] work: height 545 difficulty 6188 seed 3dbdba2aca8842cd parent 110273fe01befac3 (1 sessions)
+[2026-10-09T04:18:36Z INFO  blacksilk_stratum_bridge::server] BLOCK height 545 id aed130ee275a845a9ec19d8d2e6db0c67228484cbc306d9460398388ba6e332b nonce 14660142283823776157 result 120f487557ee31f77316c5895f31fd725d610c6c9b55ba5052871a09b8910100 session 39ef33ac
+[2026-10-09T04:18:36Z INFO  blacksilk_stratum_bridge::server] work: height 546 difficulty 6268 seed 3dbdba2aca8842cd parent aed130ee275a845a (1 sessions)
+[2026-10-09T04:19:36Z INFO  blacksilk_stratum_bridge::server] work: height 546 difficulty 6268 seed 3dbdba2aca8842cd parent aed130ee275a845a (1 sessions)
+[2026-10-09T04:19:39Z INFO  blacksilk_stratum_bridge::server] BLOCK height 546 id 1608c116f1310f3a6139793f9b8a3ba1776f6add2625b9690d1c959e78a75ba5 nonce 12909453999828172916 result 119af3855d0e017221478ff9d0fde717820cfd7d02f43fb3840e7a72aca90000 session 39ef33ac
+[2026-10-09T04:19:39Z INFO  blacksilk_stratum_bridge::server] work: height 547 difficulty 5481 seed 3dbdba2aca8842cd parent 1608c116f1310f3a (1 sessions)
+[2026-10-09T04:20:39Z INFO  blacksilk_stratum_bridge::server] work: height 547 difficulty 5481 seed 3dbdba2aca8842cd parent 1608c116f1310f3a (1 sessions)
+[2026-10-09T04:21:06Z INFO  blacksilk_stratum_bridge::server] BLOCK height 547 id 0c633de48124a1e37c7a20cec40b81166deedfbe5db0ffc336a0f2a42bdda354 nonce 11490339613445260762 result cf232b1ab176f4700739545cf6b01d24705ff59e3783caa4c1ee973685580200 session 39ef33ac
+[2026-10-09T04:21:06Z INFO  blacksilk_stratum_bridge::server] work: height 548 difficulty 4878 seed 3dbdba2aca8842cd parent 0c633de48124a1e3 (1 sessions)
+[2026-10-09T04:21:45Z INFO  blacksilk_stratum_bridge::server] BLOCK height 548 id d6f6d2f9587dfa00ad2b38689c77b2198fd65d613a6e7eccaab8387bdf259552 nonce 2293092715895785553 result be25e38a15fa0aa699d94d4013f5b7a8eb145fb0789e40076207409fd07f0200 session 39ef33ac
+[2026-10-09T04:21:45Z INFO  blacksilk_stratum_bridge::server] work: height 549 difficulty 4711 seed 3dbdba2aca8842cd parent d6f6d2f9587dfa00 (1 sessions)
+[2026-10-09T04:21:55Z INFO  blacksilk_stratum_bridge::server] BLOCK height 549 id 76a075e23dc30cc362b777401d6bdc81f3aabcd1b79645b33c92d2b52ecd549d nonce 11290118378523558435 result a590a851404eef925207c9901fa579ff60d728e405158b0ec0e116bb30050000 session 39ef33ac
+[2026-10-09T04:21:55Z INFO  blacksilk_stratum_bridge::server] work: height 550 difficulty 4446 seed 3dbdba2aca8842cd parent 76a075e23dc30cc3 (1 sessions)
+[2026-10-09T04:22:07Z INFO  blacksilk_stratum_bridge::server] BLOCK height 550 id efc78c9e67218bbd9bcea46f0642ba926655d4ca2a05068cf7374bbd3488eca4 nonce 4666396630398861908 result a8eb4c74ab73402cf091b3520f57eb9a754dac0f46e812637c7f86e655380600 session 39ef33ac
+[2026-10-09T04:22:07Z INFO  blacksilk_stratum_bridge::server] work: height 551 difficulty 4458 seed 3dbdba2aca8842cd parent efc78c9e67218bbd (1 sessions)
+[2026-10-09T04:22:10Z INFO  blacksilk_stratum_bridge::server] BLOCK height 551 id 388110e5e81ca15a7d240a06341fa857f1dac45003ebbc7430cd467548d5b18d nonce 4567556204418564239 result 3a8a5752f20ddf3857846262c62c208b834c0d7eccca2b4b36117265154d0100 session 39ef33ac
+[2026-10-09T04:22:10Z INFO  blacksilk_stratum_bridge::server] work: height 552 difficulty 4451 seed 3dbdba2aca8842cd parent 388110e5e81ca15a (1 sessions)
+[2026-10-09T04:22:20Z INFO  blacksilk_stratum_bridge::server] BLOCK height 552 id 1caf4946b46a2da0c7bdd835bba59794723c50f08a973a62db8bb6b0dd85dc33 nonce 2959934548068008440 result 0f9005669f0feea57224fc80e7ddc838ae843bdc692c5ab7a0cd99ae352d0e00 session 39ef33ac
+[2026-10-09T04:22:20Z INFO  blacksilk_stratum_bridge::server] work: height 553 difficulty 4508 seed 3dbdba2aca8842cd parent 1caf4946b46a2da0 (1 sessions)
+[2026-10-09T04:22:59Z INFO  blacksilk_stratum_bridge::server] BLOCK height 553 id 8996f3e3c97ddafa26db4afadf6a20ab1a4dd2d1a2c10f25b9d1c76ce890d679 nonce 3727621074184046685 result ebebe5a54be0c40c09413b18b6b26a20b22f9b6165710e2a10664e501b1b0000 session 39ef33ac
+[2026-10-09T04:22:59Z INFO  blacksilk_stratum_bridge::server] work: height 554 difficulty 4539 seed 3dbdba2aca8842cd parent 8996f3e3c97ddafa (1 sessions)
+[2026-10-09T04:23:23Z INFO  blacksilk_stratum_bridge::server] BLOCK height 554 id 3492320eded1dab8d6ac70ecdb6c001e9c440433bd21d9dbd651ce4dd17e66d1 nonce 13600165666798732613 result 56a159a4a1593a30d78fd5cc675d9f5d46208090cf070373ae6b6b116b880800 session 39ef33ac
+[2026-10-09T04:23:23Z INFO  blacksilk_stratum_bridge::server] work: height 555 difficulty 4298 seed 3dbdba2aca8842cd parent 3492320eded1dab8 (1 sessions)
+[2026-10-09T04:23:53Z INFO  blacksilk_stratum_bridge::server] BLOCK height 555 id dc04f8c0347da40e814dc01454506bf273c57ba5c07303a8f9009d20ebcd39a6 nonce 16240958087207356005 result 766854d05d37ed67bd93bb099d013bc7178dff95b9a0733d432724d2ee7f0800 session 39ef33ac
+[2026-10-09T04:23:53Z INFO  blacksilk_stratum_bridge::server] work: height 556 difficulty 4197 seed 3dbdba2aca8842cd parent dc04f8c0347da40e (1 sessions)
+[2026-10-09T04:24:09Z INFO  blacksilk_stratum_bridge::server] BLOCK height 556 id 5e0ea890f7196a1ad3f49804862eb9c0f799758734c6e4e3b75146e15de74053 nonce 18031205399411098438 result 2778e5ce23b7431c9fba7e86bba3d17171e3244b5b56b0104e45b9afa86e0c00 session 39ef33ac
+[2026-10-09T04:24:09Z INFO  blacksilk_stratum_bridge::server] work: height 557 difficulty 4058 seed 3dbdba2aca8842cd parent 5e0ea890f7196a1a (1 sessions)
+[2026-10-09T04:24:13Z INFO  blacksilk_stratum_bridge::server] session 39ef33ac closed
