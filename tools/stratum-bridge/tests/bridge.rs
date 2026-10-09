@@ -984,6 +984,12 @@ fn accepted_off_the_best_chain_is_its_own_outcome() {
         "submit",
         json!({"id": g.session, "job_id": gj["job_id"], "nonce": nonce_hex(m), "result": hex::encode(hm), "algo": "rx/blacksilk"}),
     );
+    // The session thread handles lines in order: once the keepalive is
+    // answered, the submit has passed the stale check and is on the queue.
+    assert_eq!(
+        g.call("keepalived", json!({"id": g.session}))["result"]["status"],
+        "KEEPALIVED"
+    );
     node.pow.set_hold(false);
     assert_eq!(outcome(&f.reply(fa)), Ok("OK".into()));
     assert_eq!(outcome(&g.reply(gb)), Ok("OK_OFF_BEST_CHAIN".into()));
