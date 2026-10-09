@@ -1,0 +1,70 @@
+1791519868498 - < {"id":1,"jsonrpc":"2.0","method":"login","params":{"login":"x","pass":"x","agent":"XMRig/6.26.0 (Windows NT 10.0; Win64; x64) libuv/1.51.0 msvc/2022","algo":["rx/0","cn/2","cn/r","cn/fast","cn/half","cn/xao","cn/rto","cn/rwz","cn/zls","cn/double","cn/ccx","cn-lite/1","cn-heavy/0","cn-heavy/tube","cn-heavy/xhv","cn-pico","cn-pico/tlo","cn/upx2","cn/1","rx/2","rx/wow","rx/arq","rx/graft","rx/sfx","rx/blacksilk","rx/yada","argon2/chukwa","argon2/chukwav2","argon2/ninja"]}}
+1791519868498 145b18d5 > {"error":null,"id":1,"jsonrpc":"2.0","result":{"extensions":["algo","keepalive"],"id":"145b18d5","job":{"algo":"rx/0","blob":"4253696c6b2f31043c3fa35671a08bffee1734b8997d1fbf38962dbb69a8e01f47ecdcaf3ae0430000000040f9c262","height":557,"job_id":"1","seed_hash":"3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141","target":"5bd559185b261000"},"status":"OK"}}
+1791519881443 145b18d5 < {"id":2,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"9b060100","result":"17903b7c59d00a2292605b0788c19e55ce8f4ebdc195068247b8924f962d0a00","algo":"rx/0"}}
+1791519882912 145b18d5 < {"id":3,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"21880100","result":"190f563106de9e9750751a4868950e9ef47aa50a4a6c828f3760f4dc569e0000","algo":"rx/0"}}
+1791519884213 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":2,"jsonrpc":"2.0","result":null}
+1791519885278 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":3,"jsonrpc":"2.0","result":null}
+1791519886473 145b18d5 < {"id":4,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"228c0000","result":"abf3fe0a8033ce5e47e4d23c8a00efc4c238dd1a88660450cb7810450fb90b00","algo":"rx/0"}}
+1791519887515 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":4,"jsonrpc":"2.0","result":null}
+1791519887711 145b18d5 < {"id":5,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"4f8d0100","result":"ae3ac0a79fa52e72de1c65604d15c015a159c83dd5bb6d8a0e4236d0600c0700","algo":"rx/0"}}
+1791519888735 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":5,"jsonrpc":"2.0","result":null}
+1791519890192 145b18d5 < {"id":6,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"27900100","result":"5c71e92f4c3776855752130405989b89749a1a34fa415d1cb8b22ae0aec30e00","algo":"rx/0"}}
+1791519891207 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":6,"jsonrpc":"2.0","result":null}
+1791519896564 145b18d5 < {"id":7,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"87970100","result":"33a1e718520e414e0b7f8a2cea03fbcf0c52c08cc3b6566a9aab878965fd0c00","algo":"rx/0"}}
+1791519897589 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":7,"jsonrpc":"2.0","result":null}
+1791519905249 145b18d5 < {"id":8,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"d1a10100","result":"58038b0e6d5d47aadb62d27266b8cb584748887fcecf7e19935ebf6c0c720200","algo":"rx/0"}}
+1791519905558 145b18d5 < {"id":9,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"79220100","result":"67e3889224ba06c19ec14fcdbdeb68b35b564588b1f6effe15984f077ce70600","algo":"rx/0"}}
+1791519906241 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":8,"jsonrpc":"2.0","result":null}
+1791519907196 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":9,"jsonrpc":"2.0","result":null}
+1791519914039 145b18d5 < {"id":10,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"57ac0000","result":"1709bb0aaa07cdccb1c6cc677f04cccaddde5a0250321443684536b6ea060600","algo":"rx/0"}}
+1791519914958 145b18d5 < {"id":11,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"feac0100","result":"4a39cfd7e5b396150548e0c0caa9c042c0443cd274f3a81b724a5a8a526b0300","algo":"rx/0"}}
+1791519915079 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":10,"jsonrpc":"2.0","result":null}
+1791519915907 145b18d5 < {"id":12,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"1","nonce":"79ae0000","result":"b07ecd526e0cec12405e473d38c146a93ebc976ef649f80f94e31d3475050b00","algo":"rx/0"}}
+1791519916090 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":11,"jsonrpc":"2.0","result":null}
+1791519917098 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":12,"jsonrpc":"2.0","result":null}
+1791519919511 145b18d5 > {"jsonrpc":"2.0","method":"job","params":{"algo":"rx/0","blob":"4253696c6b2f312609985feb6f7b1cb79dec31eb88a24082896d32eb6e743e4008a2cf2e035891000000006ddd958e","height":557,"job_id":"2","seed_hash":"3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141","target":"5bd559185b261000"}}
+1791519928889 145b18d5 < {"id":13,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"198b0100","result":"ecfa8c6359bd57fc6c38d86bfaeb925a20deeebcc6115c59fbc16b4bf84e0200","algo":"rx/0"}}
+1791519929067 145b18d5 < {"id":14,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"540b0000","result":"24f1116bc132d82889e98b2045461d092a096b7ccd64130c910f363850860900","algo":"rx/0"}}
+1791519929896 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":13,"jsonrpc":"2.0","result":null}
+1791519930957 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":14,"jsonrpc":"2.0","result":null}
+1791519933867 145b18d5 < {"id":15,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"bd900100","result":"ea4c614b48d9c655dcab62b47e5a4868305d877a245fb876e9379b4e22330c00","algo":"rx/0"}}
+1791519934922 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":15,"jsonrpc":"2.0","result":null}
+1791519937232 145b18d5 < {"id":16,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"92140100","result":"a865ae68a9d9661b5b4b622258ab7cda03cb46a72c74dd56ed98ac0ac1470500","algo":"rx/0"}}
+1791519938252 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":16,"jsonrpc":"2.0","result":null}
+1791519939944 145b18d5 < {"id":17,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"cc970100","result":"0db65384d7b503dfc5129767db69cfab2215f3b420ef1e83bfea5afd98330400","algo":"rx/0"}}
+1791519940618 145b18d5 < {"id":18,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"b3980000","result":"022344710839beb137eb922f6b507224e3b430630391d22770e1fe49c5350400","algo":"rx/0"}}
+1791519940990 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":17,"jsonrpc":"2.0","result":null}
+1791519942030 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":18,"jsonrpc":"2.0","result":null}
+1791519948971 145b18d5 < {"id":19,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"1ea20100","result":"8bcafd75e7e29bff03829ef8a31afa657b7746ad1283bdb8ca2b68e7f5450900","algo":"rx/0"}}
+1791519949988 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":19,"jsonrpc":"2.0","result":null}
+1791519959954 145b18d5 < {"id":20,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"4e2f0000","result":"c66e087682492e5108dc2bc778ab3ac1591e8c31f72df369cafce336e89d0500","algo":"rx/0"}}
+1791519961028 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":20,"jsonrpc":"2.0","result":null}
+1791519961289 145b18d5 < {"id":21,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"f7b00000","result":"bfef1061589e1cc1b1a3320cc0418ab15dbedf917e587ad2f6c78d2cbbd90200","algo":"rx/0"}}
+1791519962367 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":21,"jsonrpc":"2.0","result":null}
+1791519967190 145b18d5 < {"id":22,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"5c370000","result":"9dee3ec83086a3cd206ffc861e22bfe5bb2d143cc89cbbdbf98ff520f32b0800","algo":"rx/0"}}
+1791519967562 145b18d5 < {"id":23,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"2","nonce":"7a370100","result":"e4749187fd5c30547145cf0037c9b79418e07228aab826a195d748de7e5d0c00","algo":"rx/0"}}
+1791519968206 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":22,"jsonrpc":"2.0","result":null}
+1791519969214 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":23,"jsonrpc":"2.0","result":null}
+1791519979554 145b18d5 > {"jsonrpc":"2.0","method":"job","params":{"algo":"rx/0","blob":"4253696c6b2f318530333f08eaec907d98f2dd1c40a73f92244003759496ef50dc7c66b34680d100000000e8a44f46","height":557,"job_id":"3","seed_hash":"3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141","target":"5bd559185b261000"}}
+1791519984474 145b18d5 < {"id":24,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"ce850100","result":"42dc9e3c347170d6f5dc1b88ec66aa88b7eb7fcf214470cafbd68a9938a90000","algo":"rx/0"}}
+1791519985447 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":24,"jsonrpc":"2.0","result":null}
+1791519996538 145b18d5 < {"id":25,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"f3130100","result":"e66cfa00164cfd1dae66882ad3b985909465cff29202f6cee1705a1a3b9d0b00","algo":"rx/0"}}
+1791519997530 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":25,"jsonrpc":"2.0","result":null}
+1791519999448 145b18d5 < {"id":26,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"55170000","result":"cbde461936cb2ca2a676b3d26d0df3d51317bd951ebc1228c32fc916446d0a00","algo":"rx/0"}}
+1791520000489 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":26,"jsonrpc":"2.0","result":null}
+1791520001196 145b18d5 < {"id":27,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"75190100","result":"1f77852befd4c95aba9fd129874434035982bcdf5fc44840c9b557b05df20d00","algo":"rx/0"}}
+1791520002233 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":27,"jsonrpc":"2.0","result":null}
+1791520006502 145b18d5 < {"id":28,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"bc1f0100","result":"84a36b3bbf152d0a2e721a27a731f4c431bd9872c7c156d4a493eab88b0f0800","algo":"rx/0"}}
+1791520007524 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":28,"jsonrpc":"2.0","result":null}
+1791520014948 145b18d5 < {"id":29,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"6f290100","result":"8c5b9ade9dba99b603920d999c97b94787929168da9cf61d021551fbef5d0c00","algo":"rx/0"}}
+1791520015988 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":29,"jsonrpc":"2.0","result":null}
+1791520017006 145b18d5 < {"id":30,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"d52b0100","result":"43eacb4a742857faa94b19a8e47cb19dc678a58220bbaf1f133f8de197aa0100","algo":"rx/0"}}
+1791520017973 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":30,"jsonrpc":"2.0","result":null}
+1791520019800 145b18d5 < {"id":31,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"ea2e0100","result":"e356553a5324e9d1e20eab05b42ef1bddb988cd555c310b11f768f1c35830700","algo":"rx/0"}}
+1791520020831 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":31,"jsonrpc":"2.0","result":null}
+1791520021885 145b18d5 < {"id":32,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"2d310000","result":"3b6dad65785f91d1654d38aced165b6017a561f3d73a3f99efd2dc737c3a0000","algo":"rx/0"}}
+1791520022904 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":32,"jsonrpc":"2.0","result":null}
+1791520023958 145b18d5 < {"id":33,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"6e330000","result":"e0b9df946b3b60519249adbba2ca771c05a4d45c972b9ac9190e8b38f39b0700","algo":"rx/0"}}
+1791520024963 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":33,"jsonrpc":"2.0","result":null}
+1791520024978 145b18d5 < {"id":34,"jsonrpc":"2.0","method":"submit","params":{"id":"145b18d5","job_id":"3","nonce":"d3b40000","result":"0b5ba9650d53e2a3e153d26e60ad11fc8df99ae7ddef1ecdd560bd86cdce0d00","algo":"rx/0"}}
+1791520025968 145b18d5 > {"error":{"code":-1,"message":"Invalid result"},"id":34,"jsonrpc":"2.0","result":null}

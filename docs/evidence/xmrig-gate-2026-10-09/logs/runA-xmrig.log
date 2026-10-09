@@ -1,0 +1,1353 @@
+ * ABOUT        XMRig/6.26.0 MSVC/2022 (built for Windows x86-64, 64 bit)
+ * LIBS         libuv/1.51.0 
+ * HUGE PAGES   disabled
+ * 1GB PAGES    unavailable
+ * CPU          Intel(R) Core(TM) i7-6700 CPU @ 3.40GHz (1) 64-bit AES VM
+                threads:8
+ * MEMORY       8.0/15.9 GB (50%)
+                DIMM1: 8 GB DDR3 @ 1600 MHz M471B1G73DB0-YK0  
+                DIMM2: 8 GB DDR3 @ 1600 MHz M471B1G73EB0-YK0  
+ * MOTHERBOARD  Dell Inc. - OptiPlex 3240 AIO
+ * DONATE       0%
+ * ASSEMBLY     auto:intel
+ * POOL #1      127.0.0.1:3334 algo rx/blacksilk
+ * COMMANDS     'h' hashrate, 'p' pause, 'r' resume, 's' results, 'c' connection
+[2026-10-09 05:34:39.951]  net      use pool 127.0.0.1:3334  127.0.0.1
+[2026-10-09 05:34:39.952]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 1
+[2026-10-09 05:34:39.952]  cpu      use argon2 implementation AVX2
+[2026-10-09 05:34:39.952]  randomx  init dataset algo rx/blacksilk (4 threads) seed 3dbdba2aca8842cd...
+[2026-10-09 05:34:39.953]  randomx  allocated 2336 MB (2080+256) huge pages 0% 0/1168 +JIT (0 ms)
+[2026-10-09 05:34:47.477]  randomx  dataset ready (7525 ms)
+[2026-10-09 05:34:47.478]  cpu      use profile  rx  (4 threads) scratchpad 2048 KB
+[2026-10-09 05:34:47.479]  cpu      READY threads 4/4 (4) huge pages 0% 0/4 memory 8192 KB (0 ms)
+[2026-10-09 05:34:59.720]  cpu      accepted (1/0) diff 3599 (1879 ms)
+[2026-10-09 05:34:59.743]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 2
+[2026-10-09 05:35:10.484]  cpu      accepted (2/0) diff 3599 (1045 ms)
+[2026-10-09 05:35:10.509]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 3
+[2026-10-09 05:35:11.565]  cpu      accepted (3/0) diff 3599 (2115 ms)
+[2026-10-09 05:35:14.760]  cpu      accepted (4/0) diff 3599 (1020 ms)
+[2026-10-09 05:35:14.782]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 4
+[2026-10-09 05:35:15.825]  cpu      accepted (5/0) diff 3599 (1660 ms)
+[2026-10-09 05:35:16.857]  cpu      accepted (6/0) diff 3599 (2359 ms)
+[2026-10-09 05:35:17.897]  cpu      accepted (7/0) diff 3599 (2984 ms)
+[2026-10-09 05:35:17.920]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 5
+[2026-10-09 05:35:19.925]  cpu      accepted (8/0) diff 3599 (1037 ms)
+[2026-10-09 05:35:19.957]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 6
+[2026-10-09 05:35:21.576]  cpu      accepted (9/0) diff 3599 (1089 ms)
+[2026-10-09 05:35:21.594]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 7
+[2026-10-09 05:35:22.668]  cpu      accepted (10/0) diff 3599 (1571 ms)
+[2026-10-09 05:35:23.743]  cpu      accepted (11/0) diff 3599 (2632 ms)
+[2026-10-09 05:35:29.719]  cpu      accepted (12/0) diff 3599 (1061 ms)
+[2026-10-09 05:35:29.737]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 8
+[2026-10-09 05:35:37.483]  cpu      accepted (13/0) diff 3599 (1068 ms)
+[2026-10-09 05:35:37.501]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 9
+[2026-10-09 05:35:38.652]  cpu      accepted (14/0) diff 3599 (1084 ms)
+[2026-10-09 05:35:38.670]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 10
+[2026-10-09 05:35:39.809]  cpu      accepted (15/0) diff 3599 (1859 ms)
+[2026-10-09 05:35:39.859]  miner    paused, press  r  to resume
+[2026-10-09 05:35:47.784]  miner    speed 10s/60s/15m 159.5 n/a n/a H/s max 1201.7 H/s
+[2026-10-09 05:35:53.744]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 11
+[2026-10-09 05:36:02.935]  miner    resumed
+[2026-10-09 05:36:06.819]  cpu      accepted (16/0) diff 3599 (990 ms)
+[2026-10-09 05:36:06.847]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 12
+[2026-10-09 05:36:08.777]  cpu      accepted (17/0) diff 3599 (1005 ms)
+[2026-10-09 05:36:08.799]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 13
+[2026-10-09 05:36:13.315]  cpu      accepted (18/0) diff 3599 (1079 ms)
+[2026-10-09 05:36:13.339]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 14
+[2026-10-09 05:36:18.902]  cpu      accepted (19/0) diff 3599 (1116 ms)
+[2026-10-09 05:36:18.932]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 15
+[2026-10-09 05:36:19.980]  cpu      accepted (20/0) diff 3599 (2172 ms)
+[2026-10-09 05:36:21.602]  cpu      accepted (21/0) diff 3599 (1054 ms)
+[2026-10-09 05:36:21.633]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 16
+[2026-10-09 05:36:24.186]  cpu      accepted (22/0) diff 3599 (1095 ms)
+[2026-10-09 05:36:24.207]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 17
+[2026-10-09 05:36:25.267]  cpu      accepted (23/0) diff 3599 (1202 ms)
+[2026-10-09 05:36:31.762]  cpu      accepted (24/0) diff 3599 (1025 ms)
+[2026-10-09 05:36:31.785]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 18
+[2026-10-09 05:36:32.827]  cpu      accepted (25/0) diff 3599 (1499 ms)
+[2026-10-09 05:36:33.890]  cpu      accepted (26/0) diff 3599 (2177 ms)
+[2026-10-09 05:36:36.105]  cpu      accepted (27/0) diff 3599 (1019 ms)
+[2026-10-09 05:36:36.127]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 19
+[2026-10-09 05:36:37.169]  cpu      accepted (28/0) diff 3599 (1882 ms)
+[2026-10-09 05:36:39.078]  cpu      accepted (29/0) diff 3599 (1066 ms)
+[2026-10-09 05:36:39.096]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 20
+[2026-10-09 05:36:41.171]  cpu      accepted (30/0) diff 3599 (1063 ms)
+[2026-10-09 05:36:41.200]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 21
+[2026-10-09 05:36:44.125]  cpu      accepted (31/0) diff 3599 (991 ms)
+[2026-10-09 05:36:44.125]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 22
+[2026-10-09 05:36:45.808]  cpu      accepted (32/0) diff 3599 (1068 ms)
+[2026-10-09 05:36:45.824]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 23
+[2026-10-09 05:36:47.048]  cpu      accepted (33/0) diff 3599 (1046 ms)
+[2026-10-09 05:36:47.074]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 24
+[2026-10-09 05:36:48.095]  miner    speed 10s/60s/15m 1143.8 868.5 n/a H/s max 1201.7 H/s
+[2026-10-09 05:36:50.441]  cpu      accepted (34/0) diff 3599 (1019 ms)
+[2026-10-09 05:36:50.463]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 25
+[2026-10-09 05:37:12.997]  cpu      accepted (35/0) diff 3599 (1123 ms)
+[2026-10-09 05:37:13.016]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 26
+[2026-10-09 05:37:14.089]  cpu      accepted (36/0) diff 3599 (1961 ms)
+[2026-10-09 05:37:16.092]  cpu      accepted (37/0) diff 3599 (1075 ms)
+[2026-10-09 05:37:16.092]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 27
+[2026-10-09 05:37:18.874]  cpu      accepted (38/0) diff 3599 (1035 ms)
+[2026-10-09 05:37:18.893]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 28
+[2026-10-09 05:37:21.975]  cpu      accepted (39/0) diff 3599 (1027 ms)
+[2026-10-09 05:37:21.997]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 29
+[2026-10-09 05:37:25.640]  cpu      accepted (40/0) diff 3599 (1088 ms)
+[2026-10-09 05:37:25.653]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 30
+[2026-10-09 05:37:27.478]  cpu      accepted (41/0) diff 3599 (1033 ms)
+[2026-10-09 05:37:27.478]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 31
+[2026-10-09 05:37:29.442]  cpu      accepted (42/0) diff 3599 (1023 ms)
+[2026-10-09 05:37:29.459]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 32
+[2026-10-09 05:37:30.451]  cpu      accepted (43/0) diff 3599 (1779 ms)
+[2026-10-09 05:37:37.890]  cpu      accepted (44/0) diff 3599 (996 ms)
+[2026-10-09 05:37:37.922]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 33
+[2026-10-09 05:37:45.096]  cpu      accepted (45/0) diff 3599 (1155 ms)
+[2026-10-09 05:37:45.096]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 34
+[2026-10-09 05:37:46.982]  cpu      accepted (46/0) diff 3599 (992 ms)
+[2026-10-09 05:37:47.002]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 35
+[2026-10-09 05:37:48.385]  miner    speed 10s/60s/15m 1113.6 1145.3 n/a H/s max 1201.7 H/s
+[2026-10-09 05:37:50.726]  cpu      accepted (47/0) diff 3599 (1050 ms)
+[2026-10-09 05:37:50.759]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 36
+[2026-10-09 05:37:55.331]  cpu      accepted (48/0) diff 3599 (1075 ms)
+[2026-10-09 05:37:55.349]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 37
+[2026-10-09 05:37:59.216]  cpu      accepted (49/0) diff 3599 (1028 ms)
+[2026-10-09 05:37:59.238]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 38
+[2026-10-09 05:38:06.181]  cpu      accepted (50/0) diff 3599 (1040 ms)
+[2026-10-09 05:38:06.200]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 39
+[2026-10-09 05:38:07.231]  cpu      accepted (51/0) diff 3599 (1599 ms)
+[2026-10-09 05:38:15.491]  cpu      accepted (52/0) diff 3599 (1006 ms)
+[2026-10-09 05:38:15.513]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 40
+[2026-10-09 05:38:16.526]  cpu      accepted (53/0) diff 3599 (1382 ms)
+[2026-10-09 05:38:18.578]  cpu      accepted (54/0) diff 3599 (1002 ms)
+[2026-10-09 05:38:18.601]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 41
+[2026-10-09 05:38:19.605]  cpu      accepted (55/0) diff 3599 (1024 ms)
+[2026-10-09 05:38:28.023]  cpu      accepted (56/0) diff 3599 (1040 ms)
+[2026-10-09 05:38:28.023]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 42
+[2026-10-09 05:38:30.098]  cpu      accepted (57/0) diff 3599 (1076 ms)
+[2026-10-09 05:38:30.104]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 43
+[2026-10-09 05:38:31.752]  cpu      accepted (58/0) diff 3599 (1025 ms)
+[2026-10-09 05:38:31.772]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 44
+[2026-10-09 05:38:34.594]  cpu      accepted (59/0) diff 3599 (1072 ms)
+[2026-10-09 05:38:34.610]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 45
+[2026-10-09 05:38:44.690]  cpu      accepted (60/0) diff 3599 (1065 ms)
+[2026-10-09 05:38:44.708]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 46
+[2026-10-09 05:38:48.682]  miner    speed 10s/60s/15m 1114.7 1166.7 n/a H/s max 1201.7 H/s
+[2026-10-09 05:38:50.031]  cpu      accepted (61/0) diff 3599 (1114 ms)
+[2026-10-09 05:38:50.032]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 47
+[2026-10-09 05:38:52.036]  cpu      accepted (62/0) diff 3599 (1014 ms)
+[2026-10-09 05:38:52.053]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 48
+[2026-10-09 05:38:53.083]  cpu      accepted (63/0) diff 3599 (1991 ms)
+[2026-10-09 05:38:54.124]  cpu      accepted (64/0) diff 3599 (2185 ms)
+[2026-10-09 05:38:55.127]  cpu      accepted (65/0) diff 3599 (1988 ms)
+[2026-10-09 05:38:55.159]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 49
+[2026-10-09 05:38:59.266]  cpu      accepted (66/0) diff 3599 (1028 ms)
+[2026-10-09 05:38:59.283]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 50
+[2026-10-09 05:39:00.630]  cpu      accepted (67/0) diff 3599 (1034 ms)
+[2026-10-09 05:39:00.649]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 51
+[2026-10-09 05:39:01.682]  cpu      accepted (68/0) diff 3599 (1155 ms)
+[2026-10-09 05:39:05.340]  cpu      accepted (69/0) diff 3599 (1059 ms)
+[2026-10-09 05:39:05.358]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 52
+[2026-10-09 05:39:08.435]  cpu      accepted (70/0) diff 3599 (1011 ms)
+[2026-10-09 05:39:08.463]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 53
+[2026-10-09 05:39:11.960]  cpu      accepted (71/0) diff 3599 (1016 ms)
+[2026-10-09 05:39:11.985]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 54
+[2026-10-09 05:39:13.025]  cpu      accepted (72/0) diff 3599 (1223 ms)
+[2026-10-09 05:39:15.244]  cpu      accepted (73/0) diff 3599 (1025 ms)
+[2026-10-09 05:39:15.244]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 55
+[2026-10-09 05:39:18.890]  cpu      accepted (74/0) diff 3599 (1044 ms)
+[2026-10-09 05:39:18.913]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 56
+[2026-10-09 05:39:20.023]  cpu      accepted (75/0) diff 3599 (1038 ms)
+[2026-10-09 05:39:20.047]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 57
+[2026-10-09 05:39:21.333]  cpu      accepted (76/0) diff 3599 (1055 ms)
+[2026-10-09 05:39:21.351]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 58
+[2026-10-09 05:39:24.468]  cpu      accepted (77/0) diff 3599 (1096 ms)
+[2026-10-09 05:39:24.486]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 59
+[2026-10-09 05:39:25.525]  cpu      accepted (78/0) diff 3599 (1611 ms)
+[2026-10-09 05:39:26.606]  cpu      accepted (79/0) diff 3599 (1902 ms)
+[2026-10-09 05:39:26.623]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 60
+[2026-10-09 05:39:29.671]  cpu      accepted (80/0) diff 3599 (1047 ms)
+[2026-10-09 05:39:29.696]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 61
+[2026-10-09 05:39:30.697]  cpu      accepted (81/0) diff 3599 (1702 ms)
+[2026-10-09 05:39:31.701]  cpu      accepted (82/0) diff 3599 (2586 ms)
+[2026-10-09 05:39:33.829]  cpu      accepted (83/0) diff 3599 (1046 ms)
+[2026-10-09 05:39:33.835]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 62
+[2026-10-09 05:39:35.963]  cpu      accepted (84/0) diff 3599 (1065 ms)
+[2026-10-09 05:39:35.989]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 63
+[2026-10-09 05:39:36.996]  cpu      accepted (85/0) diff 3599 (1373 ms)
+[2026-10-09 05:39:43.658]  cpu      accepted (86/0) diff 3599 (1050 ms)
+[2026-10-09 05:39:43.658]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 64
+[2026-10-09 05:39:43.659]  cpu      rejected (86/1) diff 3599 "Stale job" (0 ms)
+[2026-10-09 05:39:44.795]  cpu      accepted (87/1) diff 3599 (2151 ms)
+[2026-10-09 05:39:48.892]  miner    speed 10s/60s/15m 1139.1 1154.0 n/a H/s max 1201.7 H/s
+[2026-10-09 05:39:51.028]  cpu      accepted (88/1) diff 3599 (1036 ms)
+[2026-10-09 05:39:51.047]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 65
+[2026-10-09 05:39:53.461]  cpu      accepted (89/1) diff 3599 (1076 ms)
+[2026-10-09 05:39:53.482]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 66
+[2026-10-09 05:39:54.738]  cpu      accepted (90/1) diff 3599 (1054 ms)
+[2026-10-09 05:39:54.769]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 67
+[2026-10-09 05:39:55.786]  cpu      accepted (91/1) diff 3599 (1526 ms)
+[2026-10-09 05:39:56.848]  cpu      accepted (92/1) diff 3599 (1375 ms)
+[2026-10-09 05:39:56.872]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 68
+[2026-10-09 05:39:57.916]  cpu      accepted (93/1) diff 3599 (1464 ms)
+[2026-10-09 05:39:58.979]  cpu      accepted (94/1) diff 3599 (1197 ms)
+[2026-10-09 05:39:58.979]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 69
+[2026-10-09 05:40:08.029]  cpu      accepted (95/1) diff 3599 (1009 ms)
+[2026-10-09 05:40:08.055]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 70
+[2026-10-09 05:40:11.236]  cpu      accepted (96/1) diff 3599 (1074 ms)
+[2026-10-09 05:40:11.261]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 71
+[2026-10-09 05:40:12.696]  cpu      accepted (97/1) diff 3599 (996 ms)
+[2026-10-09 05:40:12.714]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 72
+[2026-10-09 05:40:16.694]  cpu      accepted (98/1) diff 3599 (1042 ms)
+[2026-10-09 05:40:16.719]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 73
+[2026-10-09 05:40:19.704]  cpu      accepted (99/1) diff 3599 (1051 ms)
+[2026-10-09 05:40:19.725]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 74
+[2026-10-09 05:40:26.605]  cpu      accepted (100/1) diff 3599 (1033 ms)
+[2026-10-09 05:40:26.634]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 75
+[2026-10-09 05:40:30.262]  cpu      accepted (101/1) diff 3599 (1051 ms)
+[2026-10-09 05:40:30.275]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 76
+[2026-10-09 05:40:31.296]  cpu      accepted (102/1) diff 3599 (1427 ms)
+[2026-10-09 05:40:35.212]  cpu      accepted (103/1) diff 3599 (1055 ms)
+[2026-10-09 05:40:35.231]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 77
+[2026-10-09 05:40:36.265]  cpu      accepted (104/1) diff 3599 (1898 ms)
+[2026-10-09 05:40:37.301]  cpu      accepted (105/1) diff 3599 (2435 ms)
+[2026-10-09 05:40:41.401]  cpu      accepted (106/1) diff 3599 (1075 ms)
+[2026-10-09 05:40:41.408]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 78
+[2026-10-09 05:40:42.430]  cpu      accepted (107/1) diff 3599 (1741 ms)
+[2026-10-09 05:40:45.497]  cpu      accepted (108/1) diff 3599 (1122 ms)
+[2026-10-09 05:40:45.530]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 79
+[2026-10-09 05:40:46.590]  cpu      accepted (109/1) diff 3599 (1676 ms)
+[2026-10-09 05:40:47.640]  cpu      accepted (110/1) diff 3599 (2127 ms)
+[2026-10-09 05:40:48.670]  cpu      accepted (111/1) diff 3599 (2704 ms)
+[2026-10-09 05:40:48.702]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 80
+[2026-10-09 05:40:49.203]  miner    speed 10s/60s/15m 1112.2 1158.6 n/a H/s max 1201.7 H/s
+[2026-10-09 05:40:51.224]  cpu      accepted (112/1) diff 3599 (1027 ms)
+[2026-10-09 05:40:51.241]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 81
+[2026-10-09 05:40:52.244]  cpu      accepted (113/1) diff 3599 (1834 ms)
+[2026-10-09 05:40:53.299]  cpu      accepted (114/1) diff 3599 (1633 ms)
+[2026-10-09 05:40:53.300]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 82
+[2026-10-09 05:40:55.088]  cpu      accepted (115/1) diff 3599 (1028 ms)
+[2026-10-09 05:40:55.112]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 83
+[2026-10-09 05:40:58.349]  cpu      accepted (116/1) diff 3599 (1023 ms)
+[2026-10-09 05:40:58.368]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 84
+[2026-10-09 05:40:59.437]  cpu      accepted (117/1) diff 3599 (1003 ms)
+[2026-10-09 05:40:59.470]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 85
+[2026-10-09 05:41:00.487]  cpu      accepted (118/1) diff 3599 (1557 ms)
+[2026-10-09 05:41:01.524]  cpu      accepted (119/1) diff 3599 (1912 ms)
+[2026-10-09 05:41:01.539]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 86
+[2026-10-09 05:41:02.575]  cpu      accepted (120/1) diff 3599 (2923 ms)
+[2026-10-09 05:41:03.645]  cpu      accepted (121/1) diff 3599 (3713 ms)
+[2026-10-09 05:41:04.629]  cpu      accepted (122/1) diff 3599 (4073 ms)
+[2026-10-09 05:41:05.647]  cpu      accepted (123/1) diff 3599 (1421 ms)
+[2026-10-09 05:41:05.660]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 87
+[2026-10-09 05:41:07.716]  cpu      accepted (124/1) diff 3599 (1040 ms)
+[2026-10-09 05:41:07.732]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 88
+[2026-10-09 05:41:12.517]  cpu      accepted (125/1) diff 3599 (1048 ms)
+[2026-10-09 05:41:12.539]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 89
+[2026-10-09 05:41:14.564]  cpu      accepted (126/1) diff 3599 (1049 ms)
+[2026-10-09 05:41:14.593]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 90
+[2026-10-09 05:41:19.122]  cpu      accepted (127/1) diff 3599 (1040 ms)
+[2026-10-09 05:41:19.122]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 91
+[2026-10-09 05:41:20.374]  cpu      accepted (128/1) diff 3599 (1052 ms)
+[2026-10-09 05:41:20.374]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 92
+[2026-10-09 05:41:22.091]  cpu      accepted (129/1) diff 3599 (1084 ms)
+[2026-10-09 05:41:22.121]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 93
+[2026-10-09 05:41:23.147]  cpu      accepted (130/1) diff 3599 (1735 ms)
+[2026-10-09 05:41:26.244]  cpu      accepted (131/1) diff 3599 (1028 ms)
+[2026-10-09 05:41:26.260]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 94
+[2026-10-09 05:41:27.520]  cpu      accepted (132/1) diff 3599 (1116 ms)
+[2026-10-09 05:41:27.546]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 95
+[2026-10-09 05:41:28.656]  cpu      accepted (133/1) diff 3599 (1032 ms)
+[2026-10-09 05:41:28.680]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 96
+[2026-10-09 05:41:30.602]  cpu      accepted (134/1) diff 3599 (1052 ms)
+[2026-10-09 05:41:30.631]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 97
+[2026-10-09 05:41:31.596]  cpu      accepted (135/1) diff 3599 (1462 ms)
+[2026-10-09 05:41:32.634]  cpu      accepted (136/1) diff 3599 (1498 ms)
+[2026-10-09 05:41:32.654]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 98
+[2026-10-09 05:41:34.663]  cpu      accepted (137/1) diff 3599 (1035 ms)
+[2026-10-09 05:41:34.690]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 99
+[2026-10-09 05:41:38.417]  cpu      accepted (138/1) diff 3599 (1041 ms)
+[2026-10-09 05:41:38.428]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 100
+[2026-10-09 05:41:43.215]  cpu      accepted (139/1) diff 3599 (981 ms)
+[2026-10-09 05:41:43.236]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 101
+[2026-10-09 05:41:49.497]  miner    speed 10s/60s/15m 1164.2 1146.0 n/a H/s max 1201.7 H/s
+[2026-10-09 05:42:02.296]  cpu      accepted (140/1) diff 3599 (1068 ms)
+[2026-10-09 05:42:02.317]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 102
+[2026-10-09 05:42:03.318]  cpu      accepted (141/1) diff 3599 (1770 ms)
+[2026-10-09 05:42:04.352]  cpu      accepted (142/1) diff 3599 (2039 ms)
+[2026-10-09 05:42:07.854]  cpu      accepted (143/1) diff 3599 (1060 ms)
+[2026-10-09 05:42:07.875]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 103
+[2026-10-09 05:42:09.662]  cpu      accepted (144/1) diff 3599 (1056 ms)
+[2026-10-09 05:42:09.694]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 104
+[2026-10-09 05:42:10.727]  cpu      accepted (145/1) diff 3599 (1087 ms)
+[2026-10-09 05:42:13.117]  cpu      accepted (146/1) diff 3599 (1077 ms)
+[2026-10-09 05:42:13.134]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 105
+[2026-10-09 05:42:14.131]  cpu      accepted (147/1) diff 3599 (1504 ms)
+[2026-10-09 05:42:15.176]  cpu      accepted (148/1) diff 3599 (1045 ms)
+[2026-10-09 05:42:15.176]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 106
+[2026-10-09 05:42:20.979]  cpu      accepted (149/1) diff 3599 (1095 ms)
+[2026-10-09 05:42:20.996]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 107
+[2026-10-09 05:42:22.028]  cpu      accepted (150/1) diff 3599 (1305 ms)
+[2026-10-09 05:42:23.095]  cpu      accepted (151/1) diff 3599 (1865 ms)
+[2026-10-09 05:42:23.117]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 108
+[2026-10-09 05:42:24.186]  cpu      accepted (152/1) diff 3599 (2939 ms)
+[2026-10-09 05:42:25.758]  cpu      accepted (153/1) diff 3599 (1049 ms)
+[2026-10-09 05:42:25.758]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 109
+[2026-10-09 05:42:26.819]  cpu      accepted (154/1) diff 3599 (1854 ms)
+[2026-10-09 05:42:36.249]  cpu      accepted (155/1) diff 3599 (1056 ms)
+[2026-10-09 05:42:36.270]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 110
+[2026-10-09 05:42:37.242]  cpu      accepted (156/1) diff 3599 (1289 ms)
+[2026-10-09 05:42:42.797]  cpu      accepted (157/1) diff 3599 (1012 ms)
+[2026-10-09 05:42:42.812]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 111
+[2026-10-09 05:42:43.835]  cpu      accepted (158/1) diff 3599 (1597 ms)
+[2026-10-09 05:42:48.621]  cpu      accepted (159/1) diff 3599 (1065 ms)
+[2026-10-09 05:42:48.639]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 112
+[2026-10-09 05:42:49.741]  miner    speed 10s/60s/15m 1165.3 1167.1 n/a H/s max 1201.7 H/s
+[2026-10-09 05:42:55.598]  cpu      accepted (160/1) diff 3599 (1074 ms)
+[2026-10-09 05:42:55.617]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 113
+[2026-10-09 05:42:56.688]  cpu      accepted (161/1) diff 3599 (1150 ms)
+[2026-10-09 05:42:57.704]  cpu      accepted (162/1) diff 3599 (1212 ms)
+[2026-10-09 05:42:57.719]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 114
+[2026-10-09 05:42:58.741]  cpu      accepted (163/1) diff 3599 (2154 ms)
+[2026-10-09 05:42:59.761]  cpu      accepted (164/1) diff 3599 (1560 ms)
+[2026-10-09 05:42:59.790]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 115
+[2026-10-09 05:43:03.577]  cpu      accepted (165/1) diff 3599 (1072 ms)
+[2026-10-09 05:43:03.595]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 116
+[2026-10-09 05:43:04.601]  cpu      accepted (166/1) diff 3599 (1656 ms)
+[2026-10-09 05:43:05.650]  cpu      accepted (167/1) diff 3599 (1686 ms)
+[2026-10-09 05:43:05.666]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 117
+[2026-10-09 05:43:06.680]  cpu      accepted (168/1) diff 3599 (1962 ms)
+[2026-10-09 05:43:09.744]  cpu      accepted (169/1) diff 3599 (1056 ms)
+[2026-10-09 05:43:09.746]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 118
+[2026-10-09 05:43:10.836]  cpu      accepted (170/1) diff 3599 (2086 ms)
+[2026-10-09 05:43:13.049]  cpu      accepted (171/1) diff 3599 (1053 ms)
+[2026-10-09 05:43:13.076]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 119
+[2026-10-09 05:43:14.110]  cpu      accepted (172/1) diff 3599 (1581 ms)
+[2026-10-09 05:43:15.168]  cpu      accepted (173/1) diff 3599 (2031 ms)
+[2026-10-09 05:43:15.197]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 120
+[2026-10-09 05:43:18.912]  cpu      accepted (174/1) diff 3599 (1035 ms)
+[2026-10-09 05:43:18.936]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 121
+[2026-10-09 05:43:21.672]  cpu      accepted (175/1) diff 3599 (1010 ms)
+[2026-10-09 05:43:21.690]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 122
+[2026-10-09 05:43:28.416]  cpu      accepted (176/1) diff 3599 (1047 ms)
+[2026-10-09 05:43:28.435]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 123
+[2026-10-09 05:43:29.448]  cpu      accepted (177/1) diff 3599 (1135 ms)
+[2026-10-09 05:43:31.410]  cpu      accepted (178/1) diff 3599 (1096 ms)
+[2026-10-09 05:43:31.410]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 124
+[2026-10-09 05:43:35.182]  cpu      accepted (179/1) diff 3599 (1065 ms)
+[2026-10-09 05:43:35.211]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 125
+[2026-10-09 05:43:38.853]  cpu      accepted (180/1) diff 3599 (1007 ms)
+[2026-10-09 05:43:38.885]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 126
+[2026-10-09 05:43:39.882]  cpu      accepted (181/1) diff 3599 (1943 ms)
+[2026-10-09 05:43:44.219]  cpu      accepted (182/1) diff 3599 (1021 ms)
+[2026-10-09 05:43:44.242]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 127
+[2026-10-09 05:43:50.018]  miner    speed 10s/60s/15m 1165.0 1161.4 n/a H/s max 1201.7 H/s
+[2026-10-09 05:43:53.530]  cpu      accepted (183/1) diff 3599 (1009 ms)
+[2026-10-09 05:43:53.557]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 128
+[2026-10-09 05:43:54.651]  cpu      accepted (184/1) diff 3599 (1491 ms)
+[2026-10-09 05:43:56.142]  cpu      accepted (185/1) diff 3599 (1053 ms)
+[2026-10-09 05:43:56.162]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 129
+[2026-10-09 05:44:00.928]  cpu      accepted (186/1) diff 3599 (1041 ms)
+[2026-10-09 05:44:00.951]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 130
+[2026-10-09 05:44:02.092]  cpu      accepted (187/1) diff 3599 (1042 ms)
+[2026-10-09 05:44:02.103]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 131
+[2026-10-09 05:44:10.961]  cpu      accepted (188/1) diff 3599 (1075 ms)
+[2026-10-09 05:44:10.982]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 132
+[2026-10-09 05:44:13.231]  cpu      accepted (189/1) diff 3599 (1015 ms)
+[2026-10-09 05:44:13.254]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 133
+[2026-10-09 05:44:15.291]  cpu      accepted (190/1) diff 3599 (1055 ms)
+[2026-10-09 05:44:15.322]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 134
+[2026-10-09 05:44:16.316]  cpu      accepted (191/1) diff 3599 (1596 ms)
+[2026-10-09 05:44:21.911]  cpu      accepted (192/1) diff 3599 (1051 ms)
+[2026-10-09 05:44:21.932]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 135
+[2026-10-09 05:44:22.950]  cpu      accepted (193/1) diff 3599 (1145 ms)
+[2026-10-09 05:44:29.122]  cpu      accepted (194/1) diff 3599 (1044 ms)
+[2026-10-09 05:44:29.146]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 136
+[2026-10-09 05:44:33.930]  cpu      accepted (195/1) diff 3599 (1072 ms)
+[2026-10-09 05:44:33.954]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 137
+[2026-10-09 05:44:34.943]  cpu      accepted (196/1) diff 3599 (1668 ms)
+[2026-10-09 05:44:35.986]  cpu      accepted (197/1) diff 3599 (2103 ms)
+[2026-10-09 05:44:37.005]  cpu      accepted (198/1) diff 3599 (1138 ms)
+[2026-10-09 05:44:37.025]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 138
+[2026-10-09 05:44:47.884]  cpu      accepted (199/1) diff 3599 (1031 ms)
+[2026-10-09 05:44:47.908]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 139
+[2026-10-09 05:44:50.244]  cpu      accepted (200/1) diff 3599 (1046 ms)
+[2026-10-09 05:44:50.262]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 140
+[2026-10-09 05:44:50.327]  miner    speed 10s/60s/15m 1180.4 1164.9 n/a H/s max 1201.7 H/s
+[2026-10-09 05:44:51.721]  cpu      accepted (201/1) diff 3599 (996 ms)
+[2026-10-09 05:44:51.748]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 141
+[2026-10-09 05:44:54.236]  cpu      accepted (202/1) diff 3599 (1051 ms)
+[2026-10-09 05:44:54.251]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 142
+[2026-10-09 05:44:55.247]  cpu      accepted (203/1) diff 3599 (1111 ms)
+[2026-10-09 05:44:59.586]  cpu      accepted (204/1) diff 3599 (1030 ms)
+[2026-10-09 05:44:59.608]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 143
+[2026-10-09 05:45:01.627]  cpu      accepted (205/1) diff 3599 (1051 ms)
+[2026-10-09 05:45:01.646]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 144
+[2026-10-09 05:45:03.178]  cpu      accepted (206/1) diff 3599 (1042 ms)
+[2026-10-09 05:45:03.198]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 145
+[2026-10-09 05:45:04.232]  cpu      accepted (207/1) diff 3599 (1194 ms)
+[2026-10-09 05:45:09.887]  cpu      accepted (208/1) diff 3599 (1056 ms)
+[2026-10-09 05:45:09.906]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 146
+[2026-10-09 05:45:10.886]  cpu      accepted (209/1) diff 3599 (1676 ms)
+[2026-10-09 05:45:15.310]  cpu      accepted (210/1) diff 3599 (1080 ms)
+[2026-10-09 05:45:15.334]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 147
+[2026-10-09 05:45:16.394]  cpu      accepted (211/1) diff 3599 (1155 ms)
+[2026-10-09 05:45:17.562]  cpu      accepted (212/1) diff 3599 (1008 ms)
+[2026-10-09 05:45:17.587]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 148
+[2026-10-09 05:45:19.628]  cpu      accepted (213/1) diff 3599 (1008 ms)
+[2026-10-09 05:45:19.658]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 149
+[2026-10-09 05:45:20.994]  cpu      accepted (214/1) diff 3599 (1030 ms)
+[2026-10-09 05:45:21.025]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 150
+[2026-10-09 05:45:24.588]  cpu      accepted (215/1) diff 3599 (1007 ms)
+[2026-10-09 05:45:24.616]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 151
+[2026-10-09 05:45:25.657]  cpu      accepted (216/1) diff 3599 (1390 ms)
+[2026-10-09 05:45:26.698]  cpu      accepted (217/1) diff 3599 (1741 ms)
+[2026-10-09 05:45:26.718]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 152
+[2026-10-09 05:45:27.736]  cpu      accepted (218/1) diff 3599 (1513 ms)
+[2026-10-09 05:45:29.371]  cpu      accepted (219/1) diff 3599 (1016 ms)
+[2026-10-09 05:45:29.389]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 153
+[2026-10-09 05:45:30.970]  cpu      accepted (220/1) diff 3599 (1023 ms)
+[2026-10-09 05:45:30.992]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 154
+[2026-10-09 05:45:31.983]  cpu      accepted (221/1) diff 3599 (1777 ms)
+[2026-10-09 05:45:33.026]  cpu      accepted (222/1) diff 3599 (2504 ms)
+[2026-10-09 05:45:39.535]  cpu      accepted (223/1) diff 3599 (1065 ms)
+[2026-10-09 05:45:39.556]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 155
+[2026-10-09 05:45:46.082]  cpu      accepted (224/1) diff 3599 (1063 ms)
+[2026-10-09 05:45:46.100]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 156
+[2026-10-09 05:45:49.812]  cpu      accepted (225/1) diff 3599 (1032 ms)
+[2026-10-09 05:45:49.839]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 157
+[2026-10-09 05:45:50.589]  miner    speed 10s/60s/15m 1183.2 1156.4 n/a H/s max 1201.7 H/s
+[2026-10-09 05:45:53.084]  cpu      accepted (226/1) diff 3599 (1053 ms)
+[2026-10-09 05:45:53.109]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 158
+[2026-10-09 05:45:58.307]  cpu      accepted (227/1) diff 3599 (1032 ms)
+[2026-10-09 05:45:58.335]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 159
+[2026-10-09 05:46:00.194]  cpu      accepted (228/1) diff 3599 (1083 ms)
+[2026-10-09 05:46:00.220]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 160
+[2026-10-09 05:46:01.235]  cpu      accepted (229/1) diff 3599 (1873 ms)
+[2026-10-09 05:46:02.293]  cpu      accepted (230/1) diff 3599 (1609 ms)
+[2026-10-09 05:46:02.325]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 161
+[2026-10-09 05:46:03.280]  cpu      accepted (231/1) diff 3599 (2323 ms)
+[2026-10-09 05:46:04.282]  cpu      accepted (232/1) diff 3599 (1725 ms)
+[2026-10-09 05:46:04.283]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 162
+[2026-10-09 05:46:09.827]  cpu      accepted (233/1) diff 3599 (1051 ms)
+[2026-10-09 05:46:09.852]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 163
+[2026-10-09 05:46:11.053]  cpu      accepted (234/1) diff 3599 (1029 ms)
+[2026-10-09 05:46:11.071]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 164
+[2026-10-09 05:46:12.845]  cpu      accepted (235/1) diff 3599 (1016 ms)
+[2026-10-09 05:46:12.874]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 165
+[2026-10-09 05:46:15.334]  cpu      accepted (236/1) diff 3599 (1093 ms)
+[2026-10-09 05:46:15.335]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 166
+[2026-10-09 05:46:22.133]  cpu      accepted (237/1) diff 3599 (1039 ms)
+[2026-10-09 05:46:22.155]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 167
+[2026-10-09 05:46:32.753]  cpu      accepted (238/1) diff 3599 (1116 ms)
+[2026-10-09 05:46:32.771]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 168
+[2026-10-09 05:46:35.353]  cpu      accepted (239/1) diff 3599 (1074 ms)
+[2026-10-09 05:46:35.374]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 169
+[2026-10-09 05:46:38.933]  cpu      accepted (240/1) diff 3599 (1055 ms)
+[2026-10-09 05:46:38.961]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 170
+[2026-10-09 05:46:39.986]  cpu      accepted (241/1) diff 3599 (1118 ms)
+[2026-10-09 05:46:41.038]  cpu      accepted (242/1) diff 3599 (1410 ms)
+[2026-10-09 05:46:41.050]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 171
+[2026-10-09 05:46:42.221]  cpu      accepted (243/1) diff 3599 (1060 ms)
+[2026-10-09 05:46:42.236]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 172
+[2026-10-09 05:46:43.295]  cpu      accepted (244/1) diff 3599 (1156 ms)
+[2026-10-09 05:46:44.509]  cpu      accepted (245/1) diff 3599 (1026 ms)
+[2026-10-09 05:46:44.523]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 173
+[2026-10-09 05:46:45.736]  cpu      accepted (246/1) diff 3599 (1023 ms)
+[2026-10-09 05:46:45.759]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 174
+[2026-10-09 05:46:50.849]  miner    speed 10s/60s/15m 1150.7 1160.0 n/a H/s max 1201.7 H/s
+[2026-10-09 05:47:04.432]  cpu      accepted (247/1) diff 3599 (1025 ms)
+[2026-10-09 05:47:04.452]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 175
+[2026-10-09 05:47:05.449]  cpu      accepted (248/1) diff 3599 (2039 ms)
+[2026-10-09 05:47:06.445]  cpu      accepted (249/1) diff 3599 (2244 ms)
+[2026-10-09 05:47:20.678]  cpu      accepted (250/1) diff 3599 (1025 ms)
+[2026-10-09 05:47:20.696]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 176
+[2026-10-09 05:47:23.845]  cpu      accepted (251/1) diff 3599 (1090 ms)
+[2026-10-09 05:47:23.866]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 177
+[2026-10-09 05:47:24.951]  cpu      accepted (252/1) diff 3599 (1014 ms)
+[2026-10-09 05:47:24.970]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 178
+[2026-10-09 05:47:30.889]  cpu      accepted (253/1) diff 3599 (1082 ms)
+[2026-10-09 05:47:30.912]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 179
+[2026-10-09 05:47:35.774]  cpu      accepted (254/1) diff 3599 (1049 ms)
+[2026-10-09 05:47:35.774]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 180
+[2026-10-09 05:47:46.437]  cpu      accepted (255/1) diff 3599 (1070 ms)
+[2026-10-09 05:47:46.452]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 181
+[2026-10-09 05:47:47.804]  cpu      accepted (256/1) diff 3599 (1113 ms)
+[2026-10-09 05:47:47.822]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 182
+[2026-10-09 05:47:48.875]  cpu      accepted (257/1) diff 3599 (1375 ms)
+[2026-10-09 05:47:49.910]  cpu      accepted (258/1) diff 3599 (1764 ms)
+[2026-10-09 05:47:49.940]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 183
+[2026-10-09 05:47:50.940]  cpu      accepted (259/1) diff 3599 (2574 ms)
+[2026-10-09 05:47:51.142]  miner    speed 10s/60s/15m 1117.5 1147.3 n/a H/s max 1201.7 H/s
+[2026-10-09 05:47:51.949]  cpu      accepted (260/1) diff 3599 (1377 ms)
+[2026-10-09 05:47:51.959]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 184
+[2026-10-09 05:48:05.350]  cpu      accepted (261/1) diff 3599 (1113 ms)
+[2026-10-09 05:48:05.381]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 185
+[2026-10-09 05:48:09.044]  cpu      accepted (262/1) diff 3599 (1037 ms)
+[2026-10-09 05:48:09.044]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 186
+[2026-10-09 05:48:19.918]  cpu      accepted (263/1) diff 3599 (1074 ms)
+[2026-10-09 05:48:19.938]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 187
+[2026-10-09 05:48:24.644]  cpu      accepted (264/1) diff 3599 (1074 ms)
+[2026-10-09 05:48:24.661]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 188
+[2026-10-09 05:48:38.633]  cpu      accepted (265/1) diff 3599 (1055 ms)
+[2026-10-09 05:48:38.652]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 189
+[2026-10-09 05:48:45.498]  cpu      accepted (266/1) diff 3599 (1049 ms)
+[2026-10-09 05:48:45.498]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 190
+[2026-10-09 05:48:51.420]  miner    speed 10s/60s/15m 1191.1 1184.6 n/a H/s max 1202.0 H/s
+[2026-10-09 05:48:58.085]  cpu      accepted (267/1) diff 3599 (1069 ms)
+[2026-10-09 05:48:58.115]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 191
+[2026-10-09 05:49:03.135]  cpu      accepted (268/1) diff 3599 (1050 ms)
+[2026-10-09 05:49:03.155]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 192
+[2026-10-09 05:49:08.108]  cpu      accepted (269/1) diff 3599 (1048 ms)
+[2026-10-09 05:49:08.130]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 193
+[2026-10-09 05:49:10.140]  cpu      accepted (270/1) diff 3599 (1038 ms)
+[2026-10-09 05:49:10.163]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 194
+[2026-10-09 05:49:13.846]  cpu      accepted (271/1) diff 3599 (1001 ms)
+[2026-10-09 05:49:13.846]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 195
+[2026-10-09 05:49:20.620]  cpu      accepted (272/1) diff 3599 (1023 ms)
+[2026-10-09 05:49:20.649]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 196
+[2026-10-09 05:49:21.667]  cpu      accepted (273/1) diff 3599 (1338 ms)
+[2026-10-09 05:49:24.187]  cpu      accepted (274/1) diff 3599 (1020 ms)
+[2026-10-09 05:49:24.203]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 197
+[2026-10-09 05:49:27.873]  cpu      accepted (275/1) diff 3599 (1071 ms)
+[2026-10-09 05:49:27.895]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 198
+[2026-10-09 05:49:27.899]  cpu      rejected (275/2) diff 3599 "Stale job" (0 ms)
+[2026-10-09 05:49:30.346]  cpu      accepted (276/2) diff 3599 (1053 ms)
+[2026-10-09 05:49:30.365]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 199
+[2026-10-09 05:49:32.438]  cpu      accepted (277/2) diff 3599 (1019 ms)
+[2026-10-09 05:49:32.439]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 200
+[2026-10-09 05:49:37.896]  cpu      accepted (278/2) diff 3599 (1046 ms)
+[2026-10-09 05:49:37.926]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 201
+[2026-10-09 05:49:46.129]  cpu      accepted (279/2) diff 3599 (1022 ms)
+[2026-10-09 05:49:46.154]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 202
+[2026-10-09 05:49:48.326]  cpu      accepted (280/2) diff 3599 (1087 ms)
+[2026-10-09 05:49:48.342]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 203
+[2026-10-09 05:49:51.731]  miner    speed 10s/60s/15m 1154.4 1165.1 1129.6 H/s max 1202.0 H/s
+[2026-10-09 05:49:54.757]  cpu      accepted (281/2) diff 3599 (1058 ms)
+[2026-10-09 05:49:54.757]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 204
+[2026-10-09 05:49:55.878]  cpu      accepted (282/2) diff 3599 (1073 ms)
+[2026-10-09 05:49:55.878]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 205
+[2026-10-09 05:49:57.559]  cpu      accepted (283/2) diff 3599 (1020 ms)
+[2026-10-09 05:49:57.571]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 206
+[2026-10-09 05:50:01.012]  cpu      accepted (284/2) diff 3599 (1022 ms)
+[2026-10-09 05:50:01.030]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 207
+[2026-10-09 05:50:03.031]  cpu      accepted (285/2) diff 3599 (1028 ms)
+[2026-10-09 05:50:03.062]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 208
+[2026-10-09 05:50:04.870]  cpu      accepted (286/2) diff 3599 (1050 ms)
+[2026-10-09 05:50:04.870]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 209
+[2026-10-09 05:50:05.958]  cpu      accepted (287/2) diff 3599 (1080 ms)
+[2026-10-09 05:50:05.987]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 210
+[2026-10-09 05:50:06.965]  cpu      accepted (288/2) diff 3599 (1258 ms)
+[2026-10-09 05:50:11.947]  cpu      accepted (289/2) diff 3599 (1051 ms)
+[2026-10-09 05:50:11.979]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 211
+[2026-10-09 05:50:13.353]  cpu      accepted (290/2) diff 3599 (1080 ms)
+[2026-10-09 05:50:13.354]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 212
+[2026-10-09 05:50:14.441]  cpu      accepted (291/2) diff 3599 (1583 ms)
+[2026-10-09 05:50:16.630]  cpu      accepted (292/2) diff 3599 (1023 ms)
+[2026-10-09 05:50:16.652]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 213
+[2026-10-09 05:50:20.414]  cpu      accepted (293/2) diff 3599 (1079 ms)
+[2026-10-09 05:50:20.414]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 214
+[2026-10-09 05:50:22.901]  cpu      accepted (294/2) diff 3599 (1047 ms)
+[2026-10-09 05:50:22.929]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 215
+[2026-10-09 05:50:30.292]  cpu      accepted (295/2) diff 3599 (1037 ms)
+[2026-10-09 05:50:30.309]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 216
+[2026-10-09 05:50:31.315]  cpu      accepted (296/2) diff 3599 (1426 ms)
+[2026-10-09 05:50:32.406]  cpu      accepted (297/2) diff 3599 (1034 ms)
+[2026-10-09 05:50:32.427]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 217
+[2026-10-09 05:50:33.465]  cpu      accepted (298/2) diff 3599 (1690 ms)
+[2026-10-09 05:50:37.150]  cpu      accepted (299/2) diff 3599 (1067 ms)
+[2026-10-09 05:50:37.169]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 218
+[2026-10-09 05:50:40.014]  cpu      accepted (300/2) diff 3599 (1153 ms)
+[2026-10-09 05:50:40.039]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 219
+[2026-10-09 05:50:44.625]  cpu      accepted (301/2) diff 3599 (1050 ms)
+[2026-10-09 05:50:44.647]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 220
+[2026-10-09 05:50:46.628]  cpu      accepted (302/2) diff 3599 (1003 ms)
+[2026-10-09 05:50:46.649]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 221
+[2026-10-09 05:50:47.699]  cpu      accepted (303/2) diff 3599 (1563 ms)
+[2026-10-09 05:50:50.368]  cpu      accepted (304/2) diff 3599 (1054 ms)
+[2026-10-09 05:50:50.390]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 222
+[2026-10-09 05:50:51.795]  cpu      accepted (305/2) diff 3599 (1041 ms)
+[2026-10-09 05:50:51.795]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 223
+[2026-10-09 05:50:52.025]  miner    speed 10s/60s/15m 1154.7 1157.6 1145.5 H/s max 1202.0 H/s
+[2026-10-09 05:50:52.864]  cpu      accepted (306/2) diff 3599 (1796 ms)
+[2026-10-09 05:50:58.439]  cpu      accepted (307/2) diff 3599 (1017 ms)
+[2026-10-09 05:50:58.467]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 224
+[2026-10-09 05:51:01.585]  cpu      accepted (308/2) diff 3599 (1030 ms)
+[2026-10-09 05:51:01.605]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 225
+[2026-10-09 05:51:04.972]  cpu      accepted (309/2) diff 3599 (1068 ms)
+[2026-10-09 05:51:04.992]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 226
+[2026-10-09 05:51:08.499]  cpu      accepted (310/2) diff 3599 (1006 ms)
+[2026-10-09 05:51:08.517]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 227
+[2026-10-09 05:51:10.239]  cpu      accepted (311/2) diff 3599 (1082 ms)
+[2026-10-09 05:51:10.239]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 228
+[2026-10-09 05:51:11.332]  cpu      accepted (312/2) diff 3599 (1670 ms)
+[2026-10-09 05:51:12.409]  cpu      accepted (313/2) diff 3599 (2407 ms)
+[2026-10-09 05:51:13.487]  cpu      accepted (314/2) diff 3599 (2335 ms)
+[2026-10-09 05:51:13.505]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 229
+[2026-10-09 05:51:15.537]  cpu      accepted (315/2) diff 3599 (1032 ms)
+[2026-10-09 05:51:15.559]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 230
+[2026-10-09 05:51:23.880]  cpu      accepted (316/2) diff 3599 (1047 ms)
+[2026-10-09 05:51:23.909]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 231
+[2026-10-09 05:51:25.466]  cpu      accepted (317/2) diff 3599 (1076 ms)
+[2026-10-09 05:51:25.494]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 232
+[2026-10-09 05:51:43.372]  cpu      accepted (318/2) diff 3599 (1057 ms)
+[2026-10-09 05:51:43.389]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 233
+[2026-10-09 05:51:48.463]  cpu      accepted (319/2) diff 3599 (1027 ms)
+[2026-10-09 05:51:48.481]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 234
+[2026-10-09 05:51:49.892]  cpu      accepted (320/2) diff 3599 (1049 ms)
+[2026-10-09 05:51:49.916]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 235
+[2026-10-09 05:51:50.930]  cpu      accepted (321/2) diff 3599 (1056 ms)
+[2026-10-09 05:51:52.286]  miner    speed 10s/60s/15m 1155.5 1168.3 1160.4 H/s max 1202.0 H/s
+[2026-10-09 05:51:57.049]  cpu      accepted (322/2) diff 3599 (1050 ms)
+[2026-10-09 05:51:57.076]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 236
+[2026-10-09 05:51:58.705]  cpu      accepted (323/2) diff 3599 (1058 ms)
+[2026-10-09 05:51:58.728]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 237
+[2026-10-09 05:52:01.151]  cpu      accepted (324/2) diff 3599 (1038 ms)
+[2026-10-09 05:52:01.179]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 238
+[2026-10-09 05:52:04.832]  cpu      accepted (325/2) diff 3599 (1065 ms)
+[2026-10-09 05:52:04.832]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 239
+[2026-10-09 05:52:07.248]  cpu      accepted (326/2) diff 3599 (1025 ms)
+[2026-10-09 05:52:07.276]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 240
+[2026-10-09 05:52:09.249]  cpu      accepted (327/2) diff 3599 (1004 ms)
+[2026-10-09 05:52:09.277]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 241
+[2026-10-09 05:52:10.280]  cpu      accepted (328/2) diff 3599 (1421 ms)
+[2026-10-09 05:52:11.316]  cpu      accepted (329/2) diff 3599 (1511 ms)
+[2026-10-09 05:52:11.333]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 242
+[2026-10-09 05:52:12.336]  cpu      accepted (330/2) diff 3599 (1930 ms)
+[2026-10-09 05:52:13.338]  cpu      accepted (331/2) diff 3599 (2885 ms)
+[2026-10-09 05:52:14.392]  cpu      accepted (332/2) diff 3599 (2580 ms)
+[2026-10-09 05:52:14.419]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 243
+[2026-10-09 05:52:19.128]  cpu      accepted (333/2) diff 3599 (1020 ms)
+[2026-10-09 05:52:19.161]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 244
+[2026-10-09 05:52:20.155]  cpu      accepted (334/2) diff 3599 (1802 ms)
+[2026-10-09 05:52:21.811]  cpu      accepted (335/2) diff 3599 (1055 ms)
+[2026-10-09 05:52:21.833]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 245
+[2026-10-09 05:52:23.106]  cpu      accepted (336/2) diff 3599 (1072 ms)
+[2026-10-09 05:52:23.106]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 246
+[2026-10-09 05:52:25.307]  cpu      accepted (337/2) diff 3599 (1082 ms)
+[2026-10-09 05:52:25.308]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 247
+[2026-10-09 05:52:26.336]  cpu      accepted (338/2) diff 3599 (2071 ms)
+[2026-10-09 05:52:30.074]  cpu      accepted (339/2) diff 3599 (1082 ms)
+[2026-10-09 05:52:30.079]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 248
+[2026-10-09 05:52:31.132]  cpu      accepted (340/2) diff 3599 (1816 ms)
+[2026-10-09 05:52:32.156]  cpu      accepted (341/2) diff 3599 (2824 ms)
+[2026-10-09 05:52:33.245]  cpu      accepted (342/2) diff 3599 (3267 ms)
+[2026-10-09 05:52:42.562]  cpu      accepted (343/2) diff 3599 (1096 ms)
+[2026-10-09 05:52:42.580]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 249
+[2026-10-09 05:52:46.643]  cpu      accepted (344/2) diff 3599 (990 ms)
+[2026-10-09 05:52:46.655]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 250
+[2026-10-09 05:52:47.711]  cpu      accepted (345/2) diff 3599 (1827 ms)
+[2026-10-09 05:52:48.969]  cpu      accepted (346/2) diff 3599 (1075 ms)
+[2026-10-09 05:52:48.991]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 251
+[2026-10-09 05:52:52.409]  cpu      accepted (347/2) diff 3599 (1056 ms)
+[2026-10-09 05:52:52.429]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 252
+[2026-10-09 05:52:52.546]  miner    speed 10s/60s/15m 1137.4 1156.1 1160.8 H/s max 1202.0 H/s
+[2026-10-09 05:52:53.827]  cpu      accepted (348/2) diff 3599 (1063 ms)
+[2026-10-09 05:52:53.848]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 253
+[2026-10-09 05:52:55.680]  cpu      accepted (349/2) diff 3599 (1035 ms)
+[2026-10-09 05:52:55.699]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 254
+[2026-10-09 05:52:59.820]  cpu      accepted (350/2) diff 3599 (1062 ms)
+[2026-10-09 05:52:59.840]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 255
+[2026-10-09 05:53:00.901]  cpu      accepted (351/2) diff 3599 (1881 ms)
+[2026-10-09 05:53:01.950]  cpu      accepted (352/2) diff 3599 (2706 ms)
+[2026-10-09 05:53:03.936]  cpu      accepted (353/2) diff 3599 (1081 ms)
+[2026-10-09 05:53:03.964]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 256
+[2026-10-09 05:53:05.003]  cpu      accepted (354/2) diff 3599 (1960 ms)
+[2026-10-09 05:53:06.234]  cpu      accepted (355/2) diff 3599 (1051 ms)
+[2026-10-09 05:53:06.252]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 257
+[2026-10-09 05:53:08.931]  cpu      accepted (356/2) diff 3599 (1056 ms)
+[2026-10-09 05:53:08.956]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 258
+[2026-10-09 05:53:11.195]  cpu      accepted (357/2) diff 3599 (1086 ms)
+[2026-10-09 05:53:11.226]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 259
+[2026-10-09 05:53:12.609]  cpu      accepted (358/2) diff 3599 (1042 ms)
+[2026-10-09 05:53:12.628]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 260
+[2026-10-09 05:53:13.656]  cpu      accepted (359/2) diff 3599 (1209 ms)
+[2026-10-09 05:53:17.110]  cpu      accepted (360/2) diff 3599 (1042 ms)
+[2026-10-09 05:53:17.134]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 261
+[2026-10-09 05:53:18.190]  cpu      accepted (361/2) diff 3599 (1263 ms)
+[2026-10-09 05:53:19.305]  cpu      accepted (362/2) diff 3599 (1604 ms)
+[2026-10-09 05:53:19.337]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 262
+[2026-10-09 05:53:20.349]  cpu      accepted (363/2) diff 3599 (2234 ms)
+[2026-10-09 05:53:23.332]  cpu      accepted (364/2) diff 3599 (1066 ms)
+[2026-10-09 05:53:23.359]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 263
+[2026-10-09 05:53:24.640]  cpu      accepted (365/2) diff 3599 (1033 ms)
+[2026-10-09 05:53:24.660]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 264
+[2026-10-09 05:53:27.445]  cpu      accepted (366/2) diff 3599 (997 ms)
+[2026-10-09 05:53:27.467]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 265
+[2026-10-09 05:53:30.712]  cpu      accepted (367/2) diff 3599 (1027 ms)
+[2026-10-09 05:53:30.738]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 266
+[2026-10-09 05:53:35.962]  cpu      accepted (368/2) diff 3599 (1104 ms)
+[2026-10-09 05:53:35.979]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 267
+[2026-10-09 05:53:37.037]  cpu      accepted (369/2) diff 3599 (1904 ms)
+[2026-10-09 05:53:38.446]  cpu      accepted (370/2) diff 3599 (1037 ms)
+[2026-10-09 05:53:38.452]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 268
+[2026-10-09 05:53:41.519]  cpu      accepted (371/2) diff 3599 (1061 ms)
+[2026-10-09 05:53:41.539]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 269
+[2026-10-09 05:53:43.026]  cpu      accepted (372/2) diff 3599 (1032 ms)
+[2026-10-09 05:53:43.058]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 270
+[2026-10-09 05:53:44.128]  cpu      accepted (373/2) diff 3599 (1622 ms)
+[2026-10-09 05:53:47.614]  cpu      accepted (374/2) diff 3599 (1056 ms)
+[2026-10-09 05:53:47.632]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 271
+[2026-10-09 05:53:51.442]  cpu      accepted (375/2) diff 3599 (1166 ms)
+[2026-10-09 05:53:51.443]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 272
+[2026-10-09 05:53:52.770]  miner    speed 10s/60s/15m 1128.3 1151.9 1160.1 H/s max 1202.0 H/s
+[2026-10-09 05:53:53.933]  cpu      accepted (376/2) diff 3599 (1051 ms)
+[2026-10-09 05:53:53.958]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 273
+[2026-10-09 05:54:08.878]  cpu      accepted (377/2) diff 3599 (1000 ms)
+[2026-10-09 05:54:08.897]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 274
+[2026-10-09 05:54:14.001]  cpu      accepted (378/2) diff 3599 (1067 ms)
+[2026-10-09 05:54:14.023]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 275
+[2026-10-09 05:54:22.573]  cpu      accepted (379/2) diff 3599 (1087 ms)
+[2026-10-09 05:54:22.574]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 276
+[2026-10-09 05:54:28.724]  cpu      accepted (380/2) diff 3599 (1032 ms)
+[2026-10-09 05:54:28.745]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 277
+[2026-10-09 05:54:29.982]  cpu      accepted (381/2) diff 3599 (1043 ms)
+[2026-10-09 05:54:29.999]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 278
+[2026-10-09 05:54:31.036]  cpu      accepted (382/2) diff 3599 (1966 ms)
+[2026-10-09 05:54:32.095]  cpu      accepted (383/2) diff 3599 (1936 ms)
+[2026-10-09 05:54:32.117]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 279
+[2026-10-09 05:54:33.418]  cpu      accepted (384/2) diff 3599 (1023 ms)
+[2026-10-09 05:54:33.435]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 280
+[2026-10-09 05:54:48.532]  cpu      accepted (385/2) diff 3599 (1046 ms)
+[2026-10-09 05:54:48.559]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 281
+[2026-10-09 05:54:50.279]  cpu      accepted (386/2) diff 3599 (1063 ms)
+[2026-10-09 05:54:50.313]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 282
+[2026-10-09 05:54:52.896]  cpu      accepted (387/2) diff 3599 (1052 ms)
+[2026-10-09 05:54:52.913]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 283
+[2026-10-09 05:54:53.051]  miner    speed 10s/60s/15m 1160.9 1171.2 1161.3 H/s max 1202.0 H/s
+[2026-10-09 05:54:59.116]  cpu      accepted (388/2) diff 3599 (1051 ms)
+[2026-10-09 05:54:59.117]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 284
+[2026-10-09 05:55:00.129]  cpu      accepted (389/2) diff 3599 (1740 ms)
+[2026-10-09 05:55:08.237]  cpu      accepted (390/2) diff 3599 (1026 ms)
+[2026-10-09 05:55:08.257]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 285
+[2026-10-09 05:55:10.760]  cpu      accepted (391/2) diff 3599 (1051 ms)
+[2026-10-09 05:55:10.778]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 286
+[2026-10-09 05:55:11.804]  cpu      accepted (392/2) diff 3599 (1056 ms)
+[2026-10-09 05:55:15.201]  cpu      accepted (393/2) diff 3599 (1075 ms)
+[2026-10-09 05:55:15.219]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 287
+[2026-10-09 05:55:16.788]  cpu      accepted (394/2) diff 3599 (1028 ms)
+[2026-10-09 05:55:16.821]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 288
+[2026-10-09 05:55:19.742]  cpu      accepted (395/2) diff 3599 (1048 ms)
+[2026-10-09 05:55:19.758]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 289
+[2026-10-09 05:55:23.215]  cpu      accepted (396/2) diff 3599 (1106 ms)
+[2026-10-09 05:55:23.230]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 290
+[2026-10-09 05:55:24.260]  cpu      accepted (397/2) diff 3599 (1905 ms)
+[2026-10-09 05:55:28.755]  cpu      accepted (398/2) diff 3599 (1030 ms)
+[2026-10-09 05:55:28.774]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 291
+[2026-10-09 05:55:30.504]  cpu      accepted (399/2) diff 3599 (1048 ms)
+[2026-10-09 05:55:30.525]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 292
+[2026-10-09 05:55:31.502]  cpu      accepted (400/2) diff 3599 (1086 ms)
+[2026-10-09 05:55:32.603]  cpu      accepted (401/2) diff 3599 (1054 ms)
+[2026-10-09 05:55:32.628]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 293
+[2026-10-09 05:55:33.667]  cpu      accepted (402/2) diff 3599 (1296 ms)
+[2026-10-09 05:55:34.709]  cpu      accepted (403/2) diff 3599 (2195 ms)
+[2026-10-09 05:55:35.770]  cpu      accepted (404/2) diff 3599 (1884 ms)
+[2026-10-09 05:55:35.770]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 294
+[2026-10-09 05:55:37.652]  cpu      accepted (405/2) diff 3599 (1019 ms)
+[2026-10-09 05:55:37.670]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 295
+[2026-10-09 05:55:38.719]  cpu      accepted (406/2) diff 3599 (1411 ms)
+[2026-10-09 05:55:40.891]  cpu      accepted (407/2) diff 3599 (1063 ms)
+[2026-10-09 05:55:40.910]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 296
+[2026-10-09 05:55:41.970]  cpu      accepted (408/2) diff 3599 (1996 ms)
+[2026-10-09 05:55:42.999]  cpu      accepted (409/2) diff 3599 (1081 ms)
+[2026-10-09 05:55:43.029]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 297
+[2026-10-09 05:55:44.018]  cpu      accepted (410/2) diff 3599 (994 ms)
+[2026-10-09 05:55:47.750]  cpu      accepted (411/2) diff 3599 (1034 ms)
+[2026-10-09 05:55:47.770]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 298
+[2026-10-09 05:55:50.782]  cpu      accepted (412/2) diff 3599 (1210 ms)
+[2026-10-09 05:55:50.807]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 299
+[2026-10-09 05:55:53.376]  miner    speed 10s/60s/15m 1137.9 1155.7 1161.2 H/s max 1202.0 H/s
+[2026-10-09 05:55:56.100]  cpu      accepted (413/2) diff 3599 (1006 ms)
+[2026-10-09 05:55:56.131]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 300
+[2026-10-09 05:56:00.419]  cpu      accepted (414/2) diff 3599 (1032 ms)
+[2026-10-09 05:56:00.438]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 301
+[2026-10-09 05:56:01.479]  cpu      accepted (415/2) diff 3599 (1074 ms)
+[2026-10-09 05:56:03.282]  cpu      accepted (416/2) diff 3599 (1045 ms)
+[2026-10-09 05:56:03.282]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 302
+[2026-10-09 05:56:04.808]  cpu      accepted (417/2) diff 3599 (1024 ms)
+[2026-10-09 05:56:04.829]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 303
+[2026-10-09 05:56:05.876]  cpu      accepted (418/2) diff 3599 (1685 ms)
+[2026-10-09 05:56:06.962]  cpu      accepted (419/2) diff 3599 (2509 ms)
+[2026-10-09 05:56:10.872]  cpu      accepted (420/2) diff 3599 (1024 ms)
+[2026-10-09 05:56:10.888]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 304
+[2026-10-09 05:56:12.820]  cpu      accepted (421/2) diff 3599 (1048 ms)
+[2026-10-09 05:56:12.841]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 305
+[2026-10-09 05:56:14.598]  cpu      accepted (422/2) diff 3599 (1035 ms)
+[2026-10-09 05:56:14.628]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 306
+[2026-10-09 05:56:16.052]  cpu      accepted (423/2) diff 3599 (1036 ms)
+[2026-10-09 05:56:16.052]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 307
+[2026-10-09 05:56:28.548]  cpu      accepted (424/2) diff 3599 (1014 ms)
+[2026-10-09 05:56:28.565]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 308
+[2026-10-09 05:56:30.255]  cpu      accepted (425/2) diff 3599 (1000 ms)
+[2026-10-09 05:56:30.269]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 309
+[2026-10-09 05:56:36.940]  cpu      accepted (426/2) diff 3599 (1050 ms)
+[2026-10-09 05:56:36.963]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 310
+[2026-10-09 05:56:39.784]  cpu      accepted (427/2) diff 3599 (1048 ms)
+[2026-10-09 05:56:39.799]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 311
+[2026-10-09 05:56:46.668]  cpu      accepted (428/2) diff 3599 (1046 ms)
+[2026-10-09 05:56:46.695]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 312
+[2026-10-09 05:56:51.612]  cpu      accepted (429/2) diff 3599 (1052 ms)
+[2026-10-09 05:56:51.634]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 313
+[2026-10-09 05:56:53.588]  miner    speed 10s/60s/15m 1152.9 1165.7 1162.3 H/s max 1202.0 H/s
+[2026-10-09 05:56:54.175]  cpu      accepted (430/2) diff 3599 (1050 ms)
+[2026-10-09 05:56:54.189]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 314
+[2026-10-09 05:56:57.116]  cpu      accepted (431/2) diff 3599 (1023 ms)
+[2026-10-09 05:56:57.143]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 315
+[2026-10-09 05:57:00.489]  cpu      accepted (432/2) diff 3599 (1026 ms)
+[2026-10-09 05:57:00.515]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 316
+[2026-10-09 05:57:01.882]  cpu      accepted (433/2) diff 3599 (1019 ms)
+[2026-10-09 05:57:01.900]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 317
+[2026-10-09 05:57:03.937]  cpu      accepted (434/2) diff 3599 (1008 ms)
+[2026-10-09 05:57:03.953]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 318
+[2026-10-09 05:57:04.978]  cpu      accepted (435/2) diff 3599 (1885 ms)
+[2026-10-09 05:57:06.042]  cpu      accepted (436/2) diff 3599 (1948 ms)
+[2026-10-09 05:57:06.074]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 319
+[2026-10-09 05:57:07.088]  cpu      accepted (437/2) diff 3599 (1126 ms)
+[2026-10-09 05:57:15.623]  cpu      accepted (438/2) diff 3599 (1036 ms)
+[2026-10-09 05:57:15.638]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 320
+[2026-10-09 05:57:16.649]  cpu      accepted (439/2) diff 3599 (1730 ms)
+[2026-10-09 05:57:18.225]  cpu      accepted (440/2) diff 3599 (1001 ms)
+[2026-10-09 05:57:18.243]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 321
+[2026-10-09 05:57:22.356]  cpu      accepted (441/2) diff 3599 (1016 ms)
+[2026-10-09 05:57:22.380]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 322
+[2026-10-09 05:57:23.435]  cpu      accepted (442/2) diff 3599 (1780 ms)
+[2026-10-09 05:57:25.342]  cpu      accepted (443/2) diff 3599 (1030 ms)
+[2026-10-09 05:57:25.342]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 323
+[2026-10-09 05:57:36.530]  cpu      accepted (444/2) diff 3599 (1049 ms)
+[2026-10-09 05:57:36.554]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 324
+[2026-10-09 05:57:37.611]  cpu      accepted (445/2) diff 3599 (1893 ms)
+[2026-10-09 05:57:38.670]  cpu      accepted (446/2) diff 3599 (2010 ms)
+[2026-10-09 05:57:38.691]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 325
+[2026-10-09 05:57:44.870]  cpu      accepted (447/2) diff 3599 (1058 ms)
+[2026-10-09 05:57:44.902]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 326
+[2026-10-09 05:57:45.957]  cpu      accepted (448/2) diff 3599 (1690 ms)
+[2026-10-09 05:57:49.477]  cpu      accepted (449/2) diff 3599 (1076 ms)
+[2026-10-09 05:57:49.509]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 327
+[2026-10-09 05:57:50.560]  cpu      accepted (450/2) diff 3599 (1155 ms)
+[2026-10-09 05:57:51.577]  cpu      accepted (451/2) diff 3599 (2105 ms)
+[2026-10-09 05:57:52.685]  cpu      accepted (452/2) diff 3599 (1768 ms)
+[2026-10-09 05:57:52.713]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 328
+[2026-10-09 05:57:53.767]  cpu      accepted (453/2) diff 3599 (1791 ms)
+[2026-10-09 05:57:53.865]  miner    speed 10s/60s/15m 1122.4 1161.8 1161.9 H/s max 1202.0 H/s
+[2026-10-09 05:57:54.793]  cpu      accepted (454/2) diff 3599 (2489 ms)
+[2026-10-09 05:58:04.870]  cpu      accepted (455/2) diff 3599 (1025 ms)
+[2026-10-09 05:58:04.870]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 329
+[2026-10-09 05:58:07.483]  cpu      accepted (456/2) diff 3599 (1057 ms)
+[2026-10-09 05:58:07.504]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 330
+[2026-10-09 05:58:14.623]  cpu      accepted (457/2) diff 3599 (1027 ms)
+[2026-10-09 05:58:14.647]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 331
+[2026-10-09 05:58:21.349]  cpu      accepted (458/2) diff 3599 (1025 ms)
+[2026-10-09 05:58:21.350]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 332
+[2026-10-09 05:58:31.810]  cpu      accepted (459/2) diff 3599 (1073 ms)
+[2026-10-09 05:58:31.810]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 333
+[2026-10-09 05:58:39.158]  cpu      accepted (460/2) diff 3599 (1061 ms)
+[2026-10-09 05:58:39.159]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 334
+[2026-10-09 05:58:40.891]  cpu      accepted (461/2) diff 3599 (997 ms)
+[2026-10-09 05:58:40.923]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 335
+[2026-10-09 05:58:42.949]  cpu      accepted (462/2) diff 3599 (1039 ms)
+[2026-10-09 05:58:42.975]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 336
+[2026-10-09 05:58:44.161]  cpu      accepted (463/2) diff 3599 (1057 ms)
+[2026-10-09 05:58:44.176]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 337
+[2026-10-09 05:58:45.876]  cpu      accepted (464/2) diff 3599 (1039 ms)
+[2026-10-09 05:58:45.894]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 338
+[2026-10-09 05:58:49.804]  cpu      accepted (465/2) diff 3599 (1032 ms)
+[2026-10-09 05:58:49.815]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 339
+[2026-10-09 05:58:50.886]  cpu      accepted (466/2) diff 3599 (1347 ms)
+[2026-10-09 05:58:52.062]  cpu      accepted (467/2) diff 3599 (1289 ms)
+[2026-10-09 05:58:52.062]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 340
+[2026-10-09 05:58:54.091]  miner    speed 10s/60s/15m 1123.3 1164.9 1162.5 H/s max 1202.0 H/s
+[2026-10-09 05:58:54.264]  cpu      accepted (468/2) diff 3599 (1055 ms)
+[2026-10-09 05:58:54.264]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 341
+[2026-10-09 05:58:56.894]  cpu      accepted (469/2) diff 3599 (1055 ms)
+[2026-10-09 05:58:56.913]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 342
+[2026-10-09 05:59:05.037]  cpu      accepted (470/2) diff 3599 (1073 ms)
+[2026-10-09 05:59:05.059]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 343
+[2026-10-09 05:59:06.109]  cpu      accepted (471/2) diff 3599 (1479 ms)
+[2026-10-09 05:59:07.131]  cpu      accepted (472/2) diff 3599 (1180 ms)
+[2026-10-09 05:59:07.144]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 344
+[2026-10-09 05:59:09.785]  cpu      accepted (473/2) diff 3599 (1095 ms)
+[2026-10-09 05:59:09.798]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 345
+[2026-10-09 05:59:12.564]  cpu      accepted (474/2) diff 3599 (1063 ms)
+[2026-10-09 05:59:12.585]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 346
+[2026-10-09 05:59:15.131]  cpu      accepted (475/2) diff 3599 (1062 ms)
+[2026-10-09 05:59:15.131]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 347
+[2026-10-09 05:59:16.163]  cpu      accepted (476/2) diff 3599 (1612 ms)
+[2026-10-09 05:59:17.202]  cpu      accepted (477/2) diff 3599 (2239 ms)
+[2026-10-09 05:59:19.516]  cpu      accepted (478/2) diff 3599 (1053 ms)
+[2026-10-09 05:59:19.516]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 348
+[2026-10-09 05:59:21.148]  cpu      accepted (479/2) diff 3599 (1041 ms)
+[2026-10-09 05:59:21.168]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 349
+[2026-10-09 05:59:22.136]  cpu      accepted (480/2) diff 3599 (1141 ms)
+[2026-10-09 05:59:25.091]  cpu      accepted (481/2) diff 3599 (1070 ms)
+[2026-10-09 05:59:25.107]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 350
+[2026-10-09 05:59:26.154]  cpu      accepted (482/2) diff 3599 (2114 ms)
+[2026-10-09 05:59:27.995]  cpu      accepted (483/2) diff 3599 (1106 ms)
+[2026-10-09 05:59:27.996]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 351
+[2026-10-09 05:59:34.424]  miner    paused, press  r  to resume
+[2026-10-09 05:59:34.568]  cpu      accepted (484/2) diff 3599 (1102 ms)
+[2026-10-09 05:59:34.590]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 352
+[2026-10-09 05:59:41.196]  miner    resumed
+[2026-10-09 05:59:48.333]  cpu      accepted (485/2) diff 3599 (1022 ms)
+[2026-10-09 05:59:48.359]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 353
+[2026-10-09 05:59:51.112]  cpu      accepted (486/2) diff 3599 (1115 ms)
+[2026-10-09 05:59:51.129]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 354
+[2026-10-09 05:59:54.385]  miner    speed 10s/60s/15m 1151.3 1019.2 1152.7 H/s max 1202.0 H/s
+[2026-10-09 05:59:58.644]  config   "C:\bsxmrig\gate.json" was changed, reloading configuration
+[2026-10-09 05:59:58.656]  cpu      accepted (487/2) diff 3599 (1146 ms)
+[2026-10-09 05:59:58.679]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 355
+[2026-10-09 05:59:59.788]  cpu      accepted (488/2) diff 3599 (2089 ms)
+[2026-10-09 06:00:01.565]  cpu      accepted (489/2) diff 3599 (1103 ms)
+[2026-10-09 06:00:01.597]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 356
+[2026-10-09 06:00:04.543]  cpu      accepted (490/2) diff 3599 (1156 ms)
+[2026-10-09 06:00:04.568]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 357
+[2026-10-09 06:00:09.368]  cpu      accepted (491/2) diff 3599 (1181 ms)
+[2026-10-09 06:00:09.393]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 358
+[2026-10-09 06:00:10.468]  cpu      accepted (492/2) diff 3599 (1432 ms)
+[2026-10-09 06:00:11.901]  cpu      accepted (493/2) diff 3599 (1180 ms)
+[2026-10-09 06:00:11.930]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 359
+[2026-10-09 06:00:13.974]  cpu      accepted (494/2) diff 3599 (1076 ms)
+[2026-10-09 06:00:13.974]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 360
+[2026-10-09 06:00:22.139]  cpu      accepted (495/2) diff 3599 (983 ms)
+[2026-10-09 06:00:22.163]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 361
+[2026-10-09 06:00:27.515]  cpu      accepted (496/2) diff 3599 (1092 ms)
+[2026-10-09 06:00:27.539]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 362
+[2026-10-09 06:00:28.535]  cpu      accepted (497/2) diff 3599 (1298 ms)
+[2026-10-09 06:00:29.598]  cpu      accepted (498/2) diff 3599 (1906 ms)
+[2026-10-09 06:00:29.598]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 363
+[2026-10-09 06:00:31.163]  cpu      accepted (499/2) diff 3599 (1054 ms)
+[2026-10-09 06:00:31.178]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 364
+[2026-10-09 06:00:35.687]  cpu      accepted (500/2) diff 3599 (1025 ms)
+[2026-10-09 06:00:35.700]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 365
+[2026-10-09 06:00:36.965]  cpu      accepted (501/2) diff 3599 (1050 ms)
+[2026-10-09 06:00:36.986]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 366
+[2026-10-09 06:00:40.258]  cpu      accepted (502/2) diff 3599 (1038 ms)
+[2026-10-09 06:00:40.290]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 367
+[2026-10-09 06:00:42.371]  cpu      accepted (503/2) diff 3599 (1086 ms)
+[2026-10-09 06:00:42.395]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 368
+[2026-10-09 06:00:44.265]  cpu      accepted (504/2) diff 3599 (1033 ms)
+[2026-10-09 06:00:44.297]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 369
+[2026-10-09 06:00:45.745]  cpu      accepted (505/2) diff 3599 (1050 ms)
+[2026-10-09 06:00:45.766]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 370
+[2026-10-09 06:00:48.046]  cpu      accepted (506/2) diff 3599 (1069 ms)
+[2026-10-09 06:00:48.069]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 371
+[2026-10-09 06:00:49.925]  cpu      accepted (507/2) diff 3599 (1052 ms)
+[2026-10-09 06:00:49.937]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 372
+[2026-10-09 06:00:52.203]  cpu      accepted (508/2) diff 3599 (1087 ms)
+[2026-10-09 06:00:52.225]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 373
+[2026-10-09 06:00:54.696]  miner    speed 10s/60s/15m 1170.7 1121.1 1150.2 H/s max 1202.0 H/s
+[2026-10-09 06:01:03.935]  cpu      accepted (509/2) diff 3599 (1065 ms)
+[2026-10-09 06:01:03.958]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 374
+[2026-10-09 06:01:05.609]  cpu      accepted (510/2) diff 3599 (1032 ms)
+[2026-10-09 06:01:05.631]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 375
+[2026-10-09 06:01:11.940]  cpu      accepted (511/2) diff 3599 (1009 ms)
+[2026-10-09 06:01:11.958]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 376
+[2026-10-09 06:01:15.115]  cpu      accepted (512/2) diff 3599 (1006 ms)
+[2026-10-09 06:01:15.145]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 377
+[2026-10-09 06:01:16.138]  cpu      accepted (513/2) diff 3599 (1841 ms)
+[2026-10-09 06:01:17.140]  cpu      accepted (514/2) diff 3599 (2273 ms)
+[2026-10-09 06:01:18.152]  cpu      accepted (515/2) diff 3599 (1506 ms)
+[2026-10-09 06:01:18.184]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 378
+[2026-10-09 06:01:20.064]  cpu      accepted (516/2) diff 3599 (1047 ms)
+[2026-10-09 06:01:20.085]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 379
+[2026-10-09 06:01:23.738]  cpu      accepted (517/2) diff 3599 (1027 ms)
+[2026-10-09 06:01:23.757]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 380
+[2026-10-09 06:01:24.743]  cpu      accepted (518/2) diff 3599 (1061 ms)
+[2026-10-09 06:01:25.777]  cpu      accepted (519/2) diff 3599 (1024 ms)
+[2026-10-09 06:01:25.795]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 381
+[2026-10-09 06:01:26.833]  cpu      accepted (520/2) diff 3599 (1110 ms)
+[2026-10-09 06:01:32.097]  cpu      accepted (521/2) diff 3599 (1070 ms)
+[2026-10-09 06:01:32.121]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 382
+[2026-10-09 06:01:33.194]  cpu      accepted (522/2) diff 3599 (2151 ms)
+[2026-10-09 06:01:34.341]  cpu      accepted (523/2) diff 3599 (1085 ms)
+[2026-10-09 06:01:34.358]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 383
+[2026-10-09 06:01:36.116]  cpu      accepted (524/2) diff 3599 (1024 ms)
+[2026-10-09 06:01:36.145]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 384
+[2026-10-09 06:01:37.128]  cpu      accepted (525/2) diff 3599 (1528 ms)
+[2026-10-09 06:01:43.886]  cpu      accepted (526/2) diff 3599 (1032 ms)
+[2026-10-09 06:01:43.907]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 385
+[2026-10-09 06:01:45.581]  cpu      accepted (527/2) diff 3599 (1013 ms)
+[2026-10-09 06:01:45.592]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 386
+[2026-10-09 06:01:46.776]  cpu      accepted (528/2) diff 3599 (1015 ms)
+[2026-10-09 06:01:46.793]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 387
+[2026-10-09 06:01:52.414]  cpu      accepted (529/2) diff 3599 (1109 ms)
+[2026-10-09 06:01:52.437]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 388
+[2026-10-09 06:01:55.021]  miner    speed 10s/60s/15m 1146.7 1165.8 1150.4 H/s max 1202.0 H/s
+[2026-10-09 06:01:57.009]  cpu      accepted (530/2) diff 3599 (1043 ms)
+[2026-10-09 06:01:57.029]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 389
+[2026-10-09 06:01:58.080]  cpu      accepted (531/2) diff 3599 (1519 ms)
+[2026-10-09 06:01:59.274]  cpu      accepted (532/2) diff 3599 (1048 ms)
+[2026-10-09 06:01:59.284]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 390
+[2026-10-09 06:02:00.352]  cpu      accepted (533/2) diff 3599 (2028 ms)
+[2026-10-09 06:02:01.378]  cpu      accepted (534/2) diff 3599 (2037 ms)
+[2026-10-09 06:02:01.400]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 391
+[2026-10-09 06:02:13.316]  cpu      accepted (535/2) diff 3599 (1096 ms)
+[2026-10-09 06:02:13.336]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 392
+[2026-10-09 06:02:14.417]  cpu      accepted (536/2) diff 3599 (1426 ms)
+[2026-10-09 06:02:16.521]  cpu      accepted (537/2) diff 3599 (1028 ms)
+[2026-10-09 06:02:16.539]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 393
+[2026-10-09 06:02:19.100]  cpu      accepted (538/2) diff 3599 (1051 ms)
+[2026-10-09 06:02:19.101]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 394
+[2026-10-09 06:02:26.886]  cpu      accepted (539/2) diff 3599 (1030 ms)
+[2026-10-09 06:02:26.908]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 395
+[2026-10-09 06:02:27.919]  cpu      accepted (540/2) diff 3599 (1921 ms)
+[2026-10-09 06:02:30.115]  cpu      accepted (541/2) diff 3599 (1070 ms)
+[2026-10-09 06:02:30.116]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 396
+[2026-10-09 06:02:31.165]  cpu      accepted (542/2) diff 3599 (1544 ms)
+[2026-10-09 06:02:32.584]  cpu      accepted (543/2) diff 3599 (1060 ms)
+[2026-10-09 06:02:32.600]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 397
+[2026-10-09 06:02:39.321]  cpu      accepted (544/2) diff 3599 (1065 ms)
+[2026-10-09 06:02:39.343]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 398
+[2026-10-09 06:02:40.345]  cpu      accepted (545/2) diff 3599 (1344 ms)
+[2026-10-09 06:02:43.437]  cpu      accepted (546/2) diff 3599 (1002 ms)
+[2026-10-09 06:02:43.466]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 399
+[2026-10-09 06:02:44.452]  cpu      accepted (547/2) diff 3599 (1806 ms)
+[2026-10-09 06:02:50.261]  cpu      accepted (548/2) diff 3599 (1060 ms)
+[2026-10-09 06:02:50.277]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 400
+[2026-10-09 06:02:55.301]  miner    speed 10s/60s/15m 1188.5 1176.5 1152.4 H/s max 1207.0 H/s
+[2026-10-09 06:02:56.540]  cpu      accepted (549/2) diff 3599 (1026 ms)
+[2026-10-09 06:02:56.541]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 401
+[2026-10-09 06:03:00.987]  cpu      accepted (550/2) diff 3599 (992 ms)
+[2026-10-09 06:03:01.010]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 402
+[2026-10-09 06:03:05.119]  cpu      accepted (551/2) diff 3599 (1052 ms)
+[2026-10-09 06:03:05.150]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 403
+[2026-10-09 06:03:06.163]  cpu      accepted (552/2) diff 3599 (1718 ms)
+[2026-10-09 06:03:07.181]  cpu      accepted (553/2) diff 3599 (2170 ms)
+[2026-10-09 06:03:08.197]  cpu      accepted (554/2) diff 3599 (2028 ms)
+[2026-10-09 06:03:08.221]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 404
+[2026-10-09 06:03:09.291]  cpu      accepted (555/2) diff 3599 (2502 ms)
+[2026-10-09 06:03:10.350]  cpu      accepted (556/2) diff 3599 (3173 ms)
+[2026-10-09 06:03:11.331]  cpu      accepted (557/2) diff 3599 (4101 ms)
+[2026-10-09 06:03:12.331]  cpu      accepted (558/2) diff 3599 (5028 ms)
+[2026-10-09 06:03:13.384]  cpu      accepted (559/2) diff 3599 (4295 ms)
+[2026-10-09 06:03:13.412]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 405
+[2026-10-09 06:03:14.406]  cpu      accepted (560/2) diff 3599 (3070 ms)
+[2026-10-09 06:03:15.475]  cpu      accepted (561/2) diff 3599 (3005 ms)
+[2026-10-09 06:03:16.527]  cpu      accepted (562/2) diff 3599 (3415 ms)
+[2026-10-09 06:03:17.598]  cpu      accepted (563/2) diff 3599 (4234 ms)
+[2026-10-09 06:03:18.636]  cpu      accepted (564/2) diff 3599 (3180 ms)
+[2026-10-09 06:03:18.653]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 406
+[2026-10-09 06:03:19.686]  cpu      accepted (565/2) diff 3599 (3080 ms)
+[2026-10-09 06:03:22.627]  cpu      accepted (566/2) diff 3599 (1067 ms)
+[2026-10-09 06:03:22.644]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 407
+[2026-10-09 06:03:31.403]  cpu      accepted (567/2) diff 3599 (1020 ms)
+[2026-10-09 06:03:31.423]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 408
+[2026-10-09 06:03:36.339]  cpu      accepted (568/2) diff 3599 (1046 ms)
+[2026-10-09 06:03:36.365]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 409
+[2026-10-09 06:03:37.426]  cpu      accepted (569/2) diff 3599 (1537 ms)
+[2026-10-09 06:03:38.455]  cpu      accepted (570/2) diff 3599 (1069 ms)
+[2026-10-09 06:03:38.468]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 410
+[2026-10-09 06:03:44.227]  cpu      accepted (571/2) diff 3599 (1046 ms)
+[2026-10-09 06:03:44.244]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 411
+[2026-10-09 06:03:55.545]  miner    speed 10s/60s/15m 1186.5 1166.7 1151.1 H/s max 1207.0 H/s
+[2026-10-09 06:03:58.104]  cpu      accepted (572/2) diff 3599 (1066 ms)
+[2026-10-09 06:03:58.105]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 412
+[2026-10-09 06:04:00.199]  cpu      accepted (573/2) diff 3599 (1081 ms)
+[2026-10-09 06:04:00.219]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 413
+[2026-10-09 06:04:01.748]  cpu      accepted (574/2) diff 3599 (1063 ms)
+[2026-10-09 06:04:01.772]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 414
+[2026-10-09 06:04:06.661]  cpu      accepted (575/2) diff 3599 (993 ms)
+[2026-10-09 06:04:06.680]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 415
+[2026-10-09 06:04:09.938]  cpu      accepted (576/2) diff 3599 (1054 ms)
+[2026-10-09 06:04:09.964]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 416
+[2026-10-09 06:04:10.997]  cpu      accepted (577/2) diff 3599 (1337 ms)
+[2026-10-09 06:04:16.415]  cpu      accepted (578/2) diff 3599 (1056 ms)
+[2026-10-09 06:04:16.444]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 417
+[2026-10-09 06:04:18.028]  cpu      accepted (579/2) diff 3599 (1052 ms)
+[2026-10-09 06:04:18.047]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 418
+[2026-10-09 06:04:20.192]  cpu      accepted (580/2) diff 3599 (1066 ms)
+[2026-10-09 06:04:20.216]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 419
+[2026-10-09 06:04:21.480]  cpu      accepted (581/2) diff 3599 (1011 ms)
+[2026-10-09 06:04:21.501]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 420
+[2026-10-09 06:04:22.523]  cpu      accepted (582/2) diff 3599 (1875 ms)
+[2026-10-09 06:04:30.159]  cpu      accepted (583/2) diff 3599 (1036 ms)
+[2026-10-09 06:04:30.182]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 421
+[2026-10-09 06:04:34.359]  cpu      accepted (584/2) diff 3599 (1024 ms)
+[2026-10-09 06:04:34.390]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 422
+[2026-10-09 06:04:35.462]  cpu      accepted (585/2) diff 3599 (1172 ms)
+[2026-10-09 06:04:40.427]  cpu      accepted (586/2) diff 3599 (1010 ms)
+[2026-10-09 06:04:40.447]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 423
+[2026-10-09 06:04:41.467]  cpu      accepted (587/2) diff 3599 (1997 ms)
+[2026-10-09 06:04:42.510]  cpu      accepted (588/2) diff 3599 (2225 ms)
+[2026-10-09 06:04:43.830]  cpu      accepted (589/2) diff 3599 (1017 ms)
+[2026-10-09 06:04:43.852]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 424
+[2026-10-09 06:04:46.806]  cpu      accepted (590/2) diff 3599 (1043 ms)
+[2026-10-09 06:04:46.825]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 425
+[2026-10-09 06:04:49.707]  cpu      accepted (591/2) diff 3599 (1071 ms)
+[2026-10-09 06:04:49.730]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 426
+[2026-10-09 06:04:53.644]  cpu      accepted (592/2) diff 3599 (1114 ms)
+[2026-10-09 06:04:53.644]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 427
+[2026-10-09 06:04:55.839]  miner    speed 10s/60s/15m 1140.0 1166.1 1151.4 H/s max 1207.0 H/s
+[2026-10-09 06:05:07.487]  cpu      accepted (593/2) diff 3599 (1052 ms)
+[2026-10-09 06:05:07.503]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 428
+[2026-10-09 06:05:11.104]  cpu      accepted (594/2) diff 3599 (1045 ms)
+[2026-10-09 06:05:11.129]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 429
+[2026-10-09 06:05:12.185]  cpu      accepted (595/2) diff 3599 (1787 ms)
+[2026-10-09 06:05:13.261]  cpu      accepted (596/2) diff 3599 (1724 ms)
+[2026-10-09 06:05:13.280]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 430
+[2026-10-09 06:05:16.851]  cpu      accepted (597/2) diff 3599 (1103 ms)
+[2026-10-09 06:05:16.872]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 431
+[2026-10-09 06:05:17.901]  cpu      accepted (598/2) diff 3599 (1980 ms)
+[2026-10-09 06:05:18.989]  cpu      accepted (599/2) diff 3599 (1443 ms)
+[2026-10-09 06:05:19.009]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 432
+[2026-10-09 06:05:19.996]  cpu      accepted (600/2) diff 3599 (1895 ms)
+[2026-10-09 06:05:21.024]  cpu      accepted (601/2) diff 3599 (1323 ms)
+[2026-10-09 06:05:21.045]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 433
+[2026-10-09 06:05:24.393]  cpu      accepted (602/2) diff 3599 (1057 ms)
+[2026-10-09 06:05:24.414]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 434
+[2026-10-09 06:05:34.078]  cpu      accepted (603/2) diff 3599 (1052 ms)
+[2026-10-09 06:05:34.099]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 435
+[2026-10-09 06:05:39.693]  cpu      accepted (604/2) diff 3599 (1034 ms)
+[2026-10-09 06:05:39.706]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 436
+[2026-10-09 06:05:40.734]  cpu      accepted (605/2) diff 3599 (1376 ms)
+[2026-10-09 06:05:41.740]  cpu      accepted (606/2) diff 3599 (1149 ms)
+[2026-10-09 06:05:41.761]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 437
+[2026-10-09 06:05:47.815]  cpu      accepted (607/2) diff 3599 (1088 ms)
+[2026-10-09 06:05:47.838]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 438
+[2026-10-09 06:05:49.687]  cpu      accepted (608/2) diff 3599 (1035 ms)
+[2026-10-09 06:05:49.707]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 439
+[2026-10-09 06:05:50.717]  cpu      accepted (609/2) diff 3599 (1515 ms)
+[2026-10-09 06:05:56.082]  miner    speed 10s/60s/15m 1179.3 1175.4 1152.4 H/s max 1207.0 H/s
+[2026-10-09 06:05:59.060]  cpu      accepted (610/2) diff 3599 (1081 ms)
+[2026-10-09 06:05:59.060]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 440
+[2026-10-09 06:06:01.447]  cpu      accepted (611/2) diff 3599 (1011 ms)
+[2026-10-09 06:06:01.447]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 441
+[2026-10-09 06:06:05.758]  cpu      accepted (612/2) diff 3599 (1044 ms)
+[2026-10-09 06:06:05.780]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 442
+[2026-10-09 06:06:08.457]  cpu      accepted (613/2) diff 3599 (1047 ms)
+[2026-10-09 06:06:08.483]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 443
+[2026-10-09 06:06:14.106]  cpu      accepted (614/2) diff 3599 (1009 ms)
+[2026-10-09 06:06:14.125]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 444
+[2026-10-09 06:06:15.527]  cpu      accepted (615/2) diff 3599 (1034 ms)
+[2026-10-09 06:06:15.548]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 445
+[2026-10-09 06:06:18.440]  cpu      accepted (616/2) diff 3599 (1092 ms)
+[2026-10-09 06:06:18.440]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 446
+[2026-10-09 06:06:23.165]  cpu      accepted (617/2) diff 3599 (1033 ms)
+[2026-10-09 06:06:23.165]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 447
+[2026-10-09 06:06:24.203]  cpu      accepted (618/2) diff 3599 (1414 ms)
+[2026-10-09 06:06:25.244]  cpu      accepted (619/2) diff 3599 (1021 ms)
+[2026-10-09 06:06:25.261]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 448
+[2026-10-09 06:06:26.272]  cpu      accepted (620/2) diff 3599 (1199 ms)
+[2026-10-09 06:06:31.292]  cpu      accepted (621/2) diff 3599 (1071 ms)
+[2026-10-09 06:06:31.319]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 449
+[2026-10-09 06:06:33.611]  cpu      accepted (622/2) diff 3599 (1073 ms)
+[2026-10-09 06:06:33.641]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 450
+[2026-10-09 06:06:34.672]  cpu      accepted (623/2) diff 3599 (2042 ms)
+[2026-10-09 06:06:37.140]  cpu      accepted (624/2) diff 3599 (1027 ms)
+[2026-10-09 06:06:37.162]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 451
+[2026-10-09 06:06:42.878]  cpu      accepted (625/2) diff 3599 (1064 ms)
+[2026-10-09 06:06:42.878]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 452
+[2026-10-09 06:06:44.965]  cpu      accepted (626/2) diff 3599 (1067 ms)
+[2026-10-09 06:06:44.993]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 453
+[2026-10-09 06:06:47.677]  cpu      accepted (627/2) diff 3599 (995 ms)
+[2026-10-09 06:06:47.695]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 454
+[2026-10-09 06:06:48.966]  cpu      accepted (628/2) diff 3599 (1007 ms)
+[2026-10-09 06:06:48.997]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 455
+[2026-10-09 06:06:50.005]  cpu      accepted (629/2) diff 3599 (1097 ms)
+[2026-10-09 06:06:55.003]  cpu      accepted (630/2) diff 3599 (1052 ms)
+[2026-10-09 06:06:55.024]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 456
+[2026-10-09 06:06:56.342]  miner    speed 10s/60s/15m 1169.5 1170.4 1152.6 H/s max 1207.0 H/s
+[2026-10-09 06:06:57.050]  cpu      accepted (631/2) diff 3599 (1041 ms)
+[2026-10-09 06:06:57.078]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 457
+[2026-10-09 06:06:58.112]  cpu      accepted (632/2) diff 3599 (1254 ms)
+[2026-10-09 06:07:01.325]  cpu      accepted (633/2) diff 3599 (1052 ms)
+[2026-10-09 06:07:01.351]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 458
+[2026-10-09 06:07:02.388]  cpu      accepted (634/2) diff 3599 (1375 ms)
+[2026-10-09 06:07:03.402]  cpu      accepted (635/2) diff 3599 (2008 ms)
+[2026-10-09 06:07:03.422]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 459
+[2026-10-09 06:07:06.797]  cpu      accepted (636/2) diff 3599 (1087 ms)
+[2026-10-09 06:07:06.797]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 460
+[2026-10-09 06:07:12.740]  cpu      accepted (637/2) diff 3599 (1021 ms)
+[2026-10-09 06:07:12.769]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 461
+[2026-10-09 06:07:13.789]  cpu      accepted (638/2) diff 3599 (1630 ms)
+[2026-10-09 06:07:16.276]  cpu      accepted (639/2) diff 3599 (1044 ms)
+[2026-10-09 06:07:16.307]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 462
+[2026-10-09 06:07:19.053]  cpu      accepted (640/2) diff 3599 (1055 ms)
+[2026-10-09 06:07:19.054]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 463
+[2026-10-09 06:07:20.093]  cpu      accepted (641/2) diff 3599 (1511 ms)
+[2026-10-09 06:07:21.143]  cpu      accepted (642/2) diff 3599 (2245 ms)
+[2026-10-09 06:07:25.567]  cpu      accepted (643/2) diff 3599 (1026 ms)
+[2026-10-09 06:07:25.589]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 464
+[2026-10-09 06:07:30.247]  cpu      accepted (644/2) diff 3599 (1009 ms)
+[2026-10-09 06:07:30.263]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 465
+[2026-10-09 06:07:32.520]  cpu      accepted (645/2) diff 3599 (1031 ms)
+[2026-10-09 06:07:32.532]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 466
+[2026-10-09 06:07:36.267]  cpu      accepted (646/2) diff 3599 (1040 ms)
+[2026-10-09 06:07:36.288]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 467
+[2026-10-09 06:07:37.305]  cpu      accepted (647/2) diff 3599 (1997 ms)
+[2026-10-09 06:07:39.430]  cpu      accepted (648/2) diff 3599 (1059 ms)
+[2026-10-09 06:07:39.460]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 468
+[2026-10-09 06:07:49.152]  cpu      accepted (649/2) diff 3599 (1069 ms)
+[2026-10-09 06:07:49.176]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 469
+[2026-10-09 06:07:52.442]  cpu      accepted (650/2) diff 3599 (1024 ms)
+[2026-10-09 06:07:52.465]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 470
+[2026-10-09 06:07:55.478]  cpu      accepted (651/2) diff 3599 (1107 ms)
+[2026-10-09 06:07:55.502]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 471
+[2026-10-09 06:07:56.637]  miner    speed 10s/60s/15m 1160.3 1168.3 1153.4 H/s max 1207.0 H/s
+[2026-10-09 06:08:06.751]  cpu      accepted (652/2) diff 3599 (1026 ms)
+[2026-10-09 06:08:06.769]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 472
+[2026-10-09 06:08:15.304]  cpu      accepted (653/2) diff 3599 (1032 ms)
+[2026-10-09 06:08:15.315]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 473
+[2026-10-09 06:08:17.427]  cpu      accepted (654/2) diff 3599 (1104 ms)
+[2026-10-09 06:08:17.451]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 474
+[2026-10-09 06:08:19.138]  cpu      accepted (655/2) diff 3599 (1071 ms)
+[2026-10-09 06:08:19.155]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 475
+[2026-10-09 06:08:25.150]  cpu      accepted (656/2) diff 3599 (1021 ms)
+[2026-10-09 06:08:25.182]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 476
+[2026-10-09 06:08:30.193]  cpu      accepted (657/2) diff 3599 (1079 ms)
+[2026-10-09 06:08:30.207]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 477
+[2026-10-09 06:08:34.107]  cpu      accepted (658/2) diff 3599 (1028 ms)
+[2026-10-09 06:08:34.128]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 478
+[2026-10-09 06:08:37.667]  cpu      accepted (659/2) diff 3599 (1041 ms)
+[2026-10-09 06:08:37.685]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 479
+[2026-10-09 06:08:40.624]  cpu      accepted (660/2) diff 3599 (1027 ms)
+[2026-10-09 06:08:40.639]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 480
+[2026-10-09 06:08:42.655]  cpu      accepted (661/2) diff 3599 (1010 ms)
+[2026-10-09 06:08:42.659]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 481
+[2026-10-09 06:08:43.729]  cpu      accepted (662/2) diff 3599 (1807 ms)
+[2026-10-09 06:08:49.714]  cpu      accepted (663/2) diff 3599 (1009 ms)
+[2026-10-09 06:08:49.735]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 482
+[2026-10-09 06:08:53.254]  cpu      accepted (664/2) diff 3599 (1114 ms)
+[2026-10-09 06:08:53.275]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 483
+[2026-10-09 06:08:54.359]  cpu      accepted (665/2) diff 3599 (1586 ms)
+[2026-10-09 06:08:55.401]  cpu      accepted (666/2) diff 3599 (1890 ms)
+[2026-10-09 06:08:55.401]  net      new job from 127.0.0.1:3334 diff 3599 algo rx/blacksilk height 484
+[2026-10-09 06:08:56.413]  cpu      accepted (667/2) diff 3599 (1830 ms)
+[2026-10-09 06:08:56.931]  miner    speed 10s/60s/15m 1121.1 1170.4 1154.6 H/s max 1207.0 H/s
+[2026-10-09 06:08:57.461]  cpu      accepted (668/2) diff 3599 (2169 ms)
+[2026-10-09 06:09:04.958]  cpu      accepted (669/2) diff 3599 (1039 ms)
+[2026-10-09 06:09:04.978]  net      new job from 127.0.0.1:3334 diff 3604 algo rx/blacksilk height 485
+[2026-10-09 06:09:06.155]  cpu      accepted (670/2) diff 3604 (1056 ms)
+[2026-10-09 06:09:06.180]  net      new job from 127.0.0.1:3334 diff 3681 algo rx/blacksilk height 486
+[2026-10-09 06:09:09.782]  cpu      accepted (671/2) diff 3681 (1059 ms)
+[2026-10-09 06:09:09.801]  net      new job from 127.0.0.1:3334 diff 3761 algo rx/blacksilk height 487
+[2026-10-09 06:09:10.790]  cpu      accepted (672/2) diff 3681 (2027 ms)
+[2026-10-09 06:09:14.203]  cpu      accepted (673/2) diff 3761 (1024 ms)
+[2026-10-09 06:09:14.209]  net      new job from 127.0.0.1:3334 diff 3842 algo rx/blacksilk height 488
+[2026-10-09 06:09:19.593]  cpu      accepted (674/2) diff 3842 (1025 ms)
+[2026-10-09 06:09:19.617]  net      new job from 127.0.0.1:3334 diff 3923 algo rx/blacksilk height 489
+[2026-10-09 06:09:28.503]  cpu      accepted (675/2) diff 3923 (1034 ms)
+[2026-10-09 06:09:28.530]  net      new job from 127.0.0.1:3334 diff 4006 algo rx/blacksilk height 490
+[2026-10-09 06:09:29.810]  cpu      accepted (676/2) diff 4006 (1044 ms)
+[2026-10-09 06:09:29.831]  net      new job from 127.0.0.1:3334 diff 4090 algo rx/blacksilk height 491
+[2026-10-09 06:09:33.048]  cpu      accepted (677/2) diff 4090 (1110 ms)
+[2026-10-09 06:09:33.070]  net      new job from 127.0.0.1:3334 diff 4176 algo rx/blacksilk height 492
+[2026-10-09 06:09:34.366]  cpu      accepted (678/2) diff 4176 (1063 ms)
+[2026-10-09 06:09:34.388]  net      new job from 127.0.0.1:3334 diff 4264 algo rx/blacksilk height 493
+[2026-10-09 06:09:40.212]  cpu      accepted (679/2) diff 4264 (1039 ms)
+[2026-10-09 06:09:40.216]  net      new job from 127.0.0.1:3334 diff 4354 algo rx/blacksilk height 494
+[2026-10-09 06:09:41.338]  cpu      accepted (680/2) diff 4264 (2000 ms)
+[2026-10-09 06:09:43.234]  cpu      accepted (681/2) diff 4354 (1142 ms)
+[2026-10-09 06:09:43.255]  net      new job from 127.0.0.1:3334 diff 4446 algo rx/blacksilk height 495
+[2026-10-09 06:09:44.351]  cpu      accepted (682/2) diff 4354 (1417 ms)
+[2026-10-09 06:09:45.425]  cpu      accepted (683/2) diff 4446 (2077 ms)
+[2026-10-09 06:09:45.456]  net      new job from 127.0.0.1:3334 diff 4540 algo rx/blacksilk height 496
+[2026-10-09 06:09:57.207]  miner    speed 10s/60s/15m 1196.6 1166.9 1154.2 H/s max 1207.0 H/s
+[2026-10-09 06:10:03.094]  cpu      accepted (684/2) diff 4540 (1080 ms)
+[2026-10-09 06:10:03.117]  net      new job from 127.0.0.1:3334 diff 4636 algo rx/blacksilk height 497
+[2026-10-09 06:10:04.136]  cpu      accepted (685/2) diff 4540 (1252 ms)
+[2026-10-09 06:10:05.620]  cpu      accepted (686/2) diff 4636 (1024 ms)
+[2026-10-09 06:10:05.638]  net      new job from 127.0.0.1:3334 diff 4733 algo rx/blacksilk height 498
+[2026-10-09 06:10:10.790]  cpu      accepted (687/2) diff 4733 (1039 ms)
+[2026-10-09 06:10:10.812]  net      new job from 127.0.0.1:3334 diff 4833 algo rx/blacksilk height 499
+[2026-10-09 06:10:11.832]  cpu      accepted (688/2) diff 4733 (1484 ms)
+[2026-10-09 06:10:12.881]  cpu      accepted (689/2) diff 4733 (2436 ms)
+[2026-10-09 06:10:13.920]  cpu      accepted (690/2) diff 4833 (1618 ms)
+[2026-10-09 06:10:13.935]  net      new job from 127.0.0.1:3334 diff 4935 algo rx/blacksilk height 500
+[2026-10-09 06:10:17.599]  cpu      accepted (691/2) diff 4935 (1023 ms)
+[2026-10-09 06:10:17.622]  net      new job from 127.0.0.1:3334 diff 5039 algo rx/blacksilk height 501
+[2026-10-09 06:10:19.765]  cpu      accepted (692/2) diff 5039 (1061 ms)
+[2026-10-09 06:10:19.793]  net      new job from 127.0.0.1:3334 diff 5146 algo rx/blacksilk height 502
+[2026-10-09 06:10:22.430]  cpu      accepted (693/2) diff 5146 (1034 ms)
+[2026-10-09 06:10:22.435]  net      new job from 127.0.0.1:3334 diff 5254 algo rx/blacksilk height 503
+[2026-10-09 06:10:23.532]  cpu      accepted (694/2) diff 5146 (2001 ms)
+[2026-10-09 06:10:24.552]  cpu      accepted (695/2) diff 5146 (2872 ms)
+[2026-10-09 06:10:25.592]  cpu      accepted (696/2) diff 5254 (2165 ms)
+[2026-10-09 06:10:25.620]  net      new job from 127.0.0.1:3334 diff 5365 algo rx/blacksilk height 504
+[2026-10-09 06:10:26.677]  cpu      accepted (697/2) diff 5254 (2112 ms)
+[2026-10-09 06:10:30.804]  cpu      accepted (698/2) diff 5365 (1048 ms)
+[2026-10-09 06:10:30.828]  net      new job from 127.0.0.1:3334 diff 5478 algo rx/blacksilk height 505
+[2026-10-09 06:10:34.974]  cpu      accepted (699/2) diff 5478 (1040 ms)
+[2026-10-09 06:10:34.974]  net      new job from 127.0.0.1:3334 diff 5593 algo rx/blacksilk height 506
+[2026-10-09 06:10:37.849]  cpu      accepted (700/2) diff 5593 (1043 ms)
+[2026-10-09 06:10:37.871]  net      new job from 127.0.0.1:3334 diff 5711 algo rx/blacksilk height 507
+[2026-10-09 06:10:41.868]  cpu      accepted (701/2) diff 5711 (1045 ms)
+[2026-10-09 06:10:41.894]  net      new job from 127.0.0.1:3334 diff 5832 algo rx/blacksilk height 508
+[2026-10-09 06:10:44.028]  cpu      accepted (702/2) diff 5832 (1046 ms)
+[2026-10-09 06:10:44.047]  net      new job from 127.0.0.1:3334 diff 5955 algo rx/blacksilk height 509
+[2026-10-09 06:10:46.640]  cpu      accepted (703/2) diff 5955 (997 ms)
+[2026-10-09 06:10:46.669]  net      new job from 127.0.0.1:3334 diff 6080 algo rx/blacksilk height 510
+[2026-10-09 06:10:47.690]  cpu      accepted (704/2) diff 5955 (1195 ms)
+[2026-10-09 06:10:53.245]  cpu      accepted (705/2) diff 6080 (1092 ms)
+[2026-10-09 06:10:53.262]  net      new job from 127.0.0.1:3334 diff 6209 algo rx/blacksilk height 511
+[2026-10-09 06:10:57.501]  miner    speed 10s/60s/15m 1171.5 1155.2 1154.3 H/s max 1207.8 H/s
+[2026-10-09 06:11:10.954]  cpu      accepted (706/2) diff 6209 (1079 ms)
+[2026-10-09 06:11:10.973]  net      new job from 127.0.0.1:3334 diff 6340 algo rx/blacksilk height 512
+[2026-10-09 06:11:13.209]  cpu      accepted (707/2) diff 6340 (1064 ms)
+[2026-10-09 06:11:13.226]  net      new job from 127.0.0.1:3334 diff 6473 algo rx/blacksilk height 513
+[2026-10-09 06:11:22.182]  cpu      accepted (708/2) diff 6473 (1032 ms)
+[2026-10-09 06:11:22.207]  net      new job from 127.0.0.1:3334 diff 6610 algo rx/blacksilk height 514
+[2026-10-09 06:11:23.246]  cpu      accepted (709/2) diff 6473 (1306 ms)
+[2026-10-09 06:11:29.986]  cpu      accepted (710/2) diff 6610 (1035 ms)
+[2026-10-09 06:11:30.002]  net      new job from 127.0.0.1:3334 diff 6749 algo rx/blacksilk height 515
+[2026-10-09 06:11:36.547]  cpu      accepted (711/2) diff 6749 (1046 ms)
+[2026-10-09 06:11:36.563]  net      new job from 127.0.0.1:3334 diff 6891 algo rx/blacksilk height 516
+[2026-10-09 06:11:39.335]  cpu      accepted (712/2) diff 6891 (951 ms)
+[2026-10-09 06:11:39.350]  net      new job from 127.0.0.1:3334 diff 7037 algo rx/blacksilk height 517
+[2026-10-09 06:11:40.423]  cpu      accepted (713/2) diff 7037 (990 ms)
+[2026-10-09 06:11:40.453]  net      new job from 127.0.0.1:3334 diff 7185 algo rx/blacksilk height 518
+[2026-10-09 06:11:41.499]  cpu      accepted (714/2) diff 7037 (1105 ms)
+[2026-10-09 06:11:43.817]  cpu      accepted (715/2) diff 7185 (1041 ms)
+[2026-10-09 06:11:43.817]  net      new job from 127.0.0.1:3334 diff 7337 algo rx/blacksilk height 519
+[2026-10-09 06:11:47.424]  cpu      accepted (716/2) diff 7337 (1031 ms)
+[2026-10-09 06:11:47.447]  net      new job from 127.0.0.1:3334 diff 7491 algo rx/blacksilk height 520
+[2026-10-09 06:11:56.503]  cpu      accepted (717/2) diff 7491 (1001 ms)
+[2026-10-09 06:11:56.526]  net      new job from 127.0.0.1:3334 diff 7649 algo rx/blacksilk height 521
+[2026-10-09 06:11:57.746]  miner    speed 10s/60s/15m 1194.2 1181.2 1155.3 H/s max 1207.8 H/s
+[2026-10-09 06:12:00.348]  cpu      accepted (718/2) diff 7649 (1061 ms)
+[2026-10-09 06:12:00.368]  net      new job from 127.0.0.1:3334 diff 7811 algo rx/blacksilk height 522
+[2026-10-09 06:12:22.567]  cpu      accepted (719/2) diff 7811 (1059 ms)
+[2026-10-09 06:12:22.582]  net      new job from 127.0.0.1:3334 diff 7975 algo rx/blacksilk height 523
+[2026-10-09 06:12:47.212]  cpu      accepted (720/2) diff 7975 (1057 ms)
+[2026-10-09 06:12:47.240]  net      new job from 127.0.0.1:3334 diff 8144 algo rx/blacksilk height 524
+[2026-10-09 06:12:58.039]  miner    speed 10s/60s/15m 1169.4 1191.3 1157.3 H/s max 1208.1 H/s
+[2026-10-09 06:13:02.601]  cpu      accepted (721/2) diff 8144 (1017 ms)
+[2026-10-09 06:13:02.602]  net      new job from 127.0.0.1:3334 diff 8315 algo rx/blacksilk height 525
+[2026-10-09 06:13:07.639]  cpu      accepted (722/2) diff 8315 (1046 ms)
+[2026-10-09 06:13:07.639]  net      new job from 127.0.0.1:3334 diff 8491 algo rx/blacksilk height 526
+[2026-10-09 06:13:27.768]  cpu      accepted (723/2) diff 8491 (1048 ms)
+[2026-10-09 06:13:27.787]  net      new job from 127.0.0.1:3334 diff 8670 algo rx/blacksilk height 527
+[2026-10-09 06:13:37.636]  cpu      accepted (724/2) diff 8670 (1041 ms)
+[2026-10-09 06:13:37.668]  net      new job from 127.0.0.1:3334 diff 8166 algo rx/blacksilk height 528
+[2026-10-09 06:13:38.678]  cpu      accepted (725/2) diff 8670 (1603 ms)
+[2026-10-09 06:13:52.329]  cpu      accepted (726/2) diff 8166 (1059 ms)
+[2026-10-09 06:13:52.357]  net      new job from 127.0.0.1:3334 diff 8095 algo rx/blacksilk height 529
+[2026-10-09 06:13:58.300]  miner    speed 10s/60s/15m 1126.9 1179.8 1158.4 H/s max 1210.2 H/s
+[2026-10-09 06:14:15.222]  cpu      accepted (727/2) diff 8095 (1059 ms)
+[2026-10-09 06:14:15.243]  net      new job from 127.0.0.1:3334 diff 7849 algo rx/blacksilk height 530
+[2026-10-09 06:14:16.247]  cpu      accepted (728/2) diff 8095 (1200 ms)
+[2026-10-09 06:14:19.097]  cpu      accepted (729/2) diff 7849 (1041 ms)
+[2026-10-09 06:14:19.116]  net      new job from 127.0.0.1:3334 diff 7399 algo rx/blacksilk height 531
+[2026-10-09 06:14:25.024]  cpu      accepted (730/2) diff 7399 (1079 ms)
+[2026-10-09 06:14:25.042]  net      new job from 127.0.0.1:3334 diff 7421 algo rx/blacksilk height 532
+[2026-10-09 06:14:30.193]  cpu      accepted (731/2) diff 7421 (1094 ms)
+[2026-10-09 06:14:30.217]  net      new job from 127.0.0.1:3334 diff 7500 algo rx/blacksilk height 533
+[2026-10-09 06:14:34.070]  cpu      accepted (732/2) diff 7500 (1062 ms)
+[2026-10-09 06:14:34.089]  net      new job from 127.0.0.1:3334 diff 7637 algo rx/blacksilk height 534
+[2026-10-09 06:14:39.707]  cpu      accepted (733/2) diff 7637 (1024 ms)
+[2026-10-09 06:14:39.730]  net      new job from 127.0.0.1:3334 diff 7721 algo rx/blacksilk height 535
+[2026-10-09 06:14:44.217]  cpu      accepted (734/2) diff 7721 (1028 ms)
+[2026-10-09 06:14:44.239]  net      new job from 127.0.0.1:3334 diff 7862 algo rx/blacksilk height 536
+[2026-10-09 06:14:58.594]  miner    speed 10s/60s/15m 1205.6 1189.3 1170.0 H/s max 1210.2 H/s
+[2026-10-09 06:15:28.194]  cpu      accepted (735/2) diff 7862 (1120 ms)
+[2026-10-09 06:15:28.194]  net      new job from 127.0.0.1:3334 diff 7924 algo rx/blacksilk height 537
+[2026-10-09 06:15:31.208]  cpu      accepted (736/2) diff 7924 (1049 ms)
+[2026-10-09 06:15:31.225]  net      new job from 127.0.0.1:3334 diff 6962 algo rx/blacksilk height 538
+[2026-10-09 06:15:47.010]  cpu      accepted (737/2) diff 6962 (1026 ms)
+[2026-10-09 06:15:47.036]  net      new job from 127.0.0.1:3334 diff 7080 algo rx/blacksilk height 539
+[2026-10-09 06:15:48.642]  cpu      accepted (738/2) diff 7080 (1065 ms)
+[2026-10-09 06:15:48.672]  net      new job from 127.0.0.1:3334 diff 6918 algo rx/blacksilk height 540
+[2026-10-09 06:15:52.714]  cpu      accepted (739/2) diff 6918 (1082 ms)
+[2026-10-09 06:15:52.715]  net      new job from 127.0.0.1:3334 diff 6995 algo rx/blacksilk height 541
+[2026-10-09 06:15:57.560]  cpu      accepted (740/2) diff 6995 (1090 ms)
+[2026-10-09 06:15:57.560]  net      new job from 127.0.0.1:3334 diff 7074 algo rx/blacksilk height 542
+[2026-10-09 06:15:58.854]  miner    speed 10s/60s/15m 1180.6 1189.1 1174.1 H/s max 1211.8 H/s
+[2026-10-09 06:16:00.414]  cpu      accepted (741/2) diff 7074 (1076 ms)
+[2026-10-09 06:16:00.414]  net      new job from 127.0.0.1:3334 diff 7192 algo rx/blacksilk height 543

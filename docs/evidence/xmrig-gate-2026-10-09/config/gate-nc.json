@@ -1,0 +1,33 @@
+{
+    "autosave": false,
+    "background": false,
+    "colors": false,
+    "donate-level": 0,
+    "donate-over-proxy": 0,
+    "log-file": "C:/bsgate/logs/runNC-xmrig.log",
+    "http": {
+        "enabled": false
+    },
+    "randomx": {
+        "mode": "fast",
+        "1gb-pages": false
+    },
+    "cpu": {
+        "enabled": true,
+        "huge-pages": false,
+        "max-threads-hint": 50
+    },
+    "opencl": false,
+    "cuda": false,
+    "pools": [
+        {
+            "url": "127.0.0.1:3334",
+            "algo": "rx/0",
+            "user": "x",
+            "pass": "x",
+            "nicehash": false,
+            "keepalive": true,
+            "tls": false
+        }
+    ]
+}

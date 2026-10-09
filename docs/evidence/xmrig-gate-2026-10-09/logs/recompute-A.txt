@@ -1,0 +1,7 @@
+[2026-10-09T04:28:34Z INFO  blacksilk_stratum_bridge] blacksilk-stratum-bridge 0.1.0 commit unknown, build flags: none
+records 744 (skipped by agent 7), without inputs 0, hashed live 742, recomputed 744, matches 744, mismatches 0, inconsistent 0, negative control 0 (rx/0 0, blacksilk 0)
+outcome ok: 542
+outcome ok_off_best_chain: 200
+outcome stale_job: 2
+PASS
+rc=0

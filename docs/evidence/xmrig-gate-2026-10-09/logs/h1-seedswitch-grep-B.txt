@@ -1,0 +1,22 @@
+### run B: RandomX (re)initialisation lines in runB-xmrig.log
+$ grep -nE "init dataset|allocated|dataset ready|slow mode|failed to allocate|seed" runB-xmrig.log
+18:[2026-10-09 06:39:52.405]  randomx  init dataset algo rx/blacksilk (4 threads) seed 3dbdba2aca8842cd...
+19:[2026-10-09 06:39:52.405]  randomx  allocated 2336 MB (2080+256) huge pages 0% 0/1168 +JIT (0 ms)
+20:[2026-10-09 06:39:59.709]  randomx  dataset ready (7303 ms)
+3578:[2026-10-09 10:54:42.137]  randomx  init dataset algo rx/blacksilk (4 threads) seed b2835265be38b157...
+3579:[2026-10-09 10:54:49.239]  randomx  dataset ready (7102 ms)
+count slow mode/failed to allocate: 0
+
+### xmrig new-job lines around the switch (heights 2111-2115)
+3573:[2026-10-09 10:54:35.635]  net      new job from 127.0.0.1:3334 diff 11715 algo rx/blacksilk height 2111
+3575:[2026-10-09 10:54:37.152]  net      new job from 127.0.0.1:3334 diff 11874 algo rx/blacksilk height 2112
+3577:[2026-10-09 10:54:42.129]  net      new job from 127.0.0.1:3334 diff 12038 algo rx/blacksilk height 2113
+3581:[2026-10-09 10:54:55.299]  net      new job from 127.0.0.1:3334 diff 12206 algo rx/blacksilk height 2114
+3583:[2026-10-09 10:54:58.136]  net      new job from 127.0.0.1:3334 diff 12206 algo rx/blacksilk height 2115
+
+### job notifications to xmrig around the switch: height and seed_hash (runB-stratum.log)
+"height":2111,"job_id":"1558","seed_hash":"3dbdba2aca8842cd
+"height":2112,"job_id":"1559","seed_hash":"3dbdba2aca8842cd
+"height":2113,"job_id":"1560","seed_hash":"b2835265be38b157
+"height":2114,"job_id":"1561","seed_hash":"b2835265be38b157
+"height":2115,"job_id":"1562","seed_hash":"b2835265be38b157

@@ -1,0 +1,9 @@
+blacksilk-stratum-probe 0.1.0, build flags: none
+probe session 3d6153eb job 11
+probe case=c expect="Invalid nonce" got="Invalid nonce" tip_unchanged=true result=PASS
+probe case=a expect="Invalid result" got="Invalid result" tip_unchanged=true result=PASS
+probe case=b expect="Invalid result" got="Invalid result" tip_unchanged=true result=PASS
+probe case=e expect="Duplicate share" got="Duplicate share" tip_unchanged=true result=PASS
+probe case=d expect="OK" got="OK" tip_unchanged=not-checked result=PASS
+probe case=e2 expect="Stale job" got="Stale job" tip_unchanged=true result=PASS
+probe: all 6 cases PASS

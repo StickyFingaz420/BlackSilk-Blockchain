@@ -1,0 +1,5 @@
+check-build-flags: /c/bsgate/target/release/blacksilk-node.exe: blacksilk-node, 0.1.0, no test-only code
+check-build-flags: /c/bsgate/target/release/blacksilk-stratum-bridge.exe: blacksilk-stratum-bridge, 0.1.0 (commit unknown), no test-only code
+check-build-flags: /c/bsgate/target/release/blacksilk-stratum-probe.exe: blacksilk-stratum-probe, 0.1.0 (commit unknown), no test-only code
+check-build-flags: /c/bsgate/target/release/blacksilk-rx-verify.exe: blacksilk-rx-verify, 0.1.0 (commit unknown), no test-only code
+check-build-flags: /c/bsgate/target/release/blacksilk-wallet.exe: blacksilk-wallet, 0.1.0 (commit unknown), no test-only code

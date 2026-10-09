@@ -1,0 +1,5 @@
+64e343cd6b73b484f30f657b9b4b4e4c258375660229d045ae9d9a7c1b5f74af */c/bsgate/target/release/blacksilk-node.exe
+5fc9aa50a834d57363e5ad7778db050a7cb4bd616edecd5e30bf68ab6da5dc1b */c/bsgate/target/release/blacksilk-stratum-bridge.exe
+41fe38194ee637e2926eaf4e1958fdb98ce1fd4a06978e027cd226dc6e37e840 */c/bsgate/target/release/blacksilk-stratum-probe.exe
+3b8ed559f508cbfb1eb800fac16118dacc514673da012fdbeb0e28b3360aa6d4 */c/bsgate/target/release/blacksilk-rx-verify.exe
+785f9dc19d12475c40693c6856506790987d1474b00871dd71a44e0a66d935c4 */c/bsgate/target/release/blacksilk-wallet.exe

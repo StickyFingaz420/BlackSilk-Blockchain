@@ -1,0 +1,17 @@
+### H1 fast-mode dataset grep, run A (runA-xmrig.log)
+$ grep -nE "dataset|allocated|slow mode|failed to allocate|fast RandomX" runA-xmrig.log
+18:[2026-10-09 05:34:39.952]  randomx  init dataset algo rx/blacksilk (4 threads) seed 3dbdba2aca8842cd...
+19:[2026-10-09 05:34:39.953]  randomx  allocated 2336 MB (2080+256) huge pages 0% 0/1168 +JIT (0 ms)
+20:[2026-10-09 05:34:47.477]  randomx  dataset ready (7525 ms)
+count slow mode/failed to allocate: 0
+
+### run L (light, expected slow mode)
+18:[2026-10-09 06:16:26.580]  randomx  init dataset algo rx/blacksilk (4 threads) seed 3dbdba2aca8842cd...
+19:[2026-10-09 06:16:26.583]  randomx  fast RandomX mode disabled by config
+20:[2026-10-09 06:16:26.583]  randomx  failed to allocate RandomX dataset, switching to slow mode (1 ms)
+21:[2026-10-09 06:16:26.957]  randomx  dataset ready (374 ms)
+
+### run NC
+18:[2026-10-09 06:24:28.500]  randomx  init dataset algo rx/0 (4 threads) seed 3dbdba2aca8842cd...
+19:[2026-10-09 06:24:28.501]  randomx  allocated 2336 MB (2080+256) huge pages 0% 0/1168 +JIT (0 ms)
+20:[2026-10-09 06:24:35.802]  randomx  dataset ready (7302 ms)
