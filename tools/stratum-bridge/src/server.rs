@@ -2,6 +2,7 @@
 //!
 //! Threads:
 //! - the accept thread (one thread per connection, at most
+//!   [`Config::max_connections`] open connections and
 //!   [`Config::max_sessions`] logged-in sessions);
 //! - the work thread: long-polls the node's `/tip`, and on a new tip or every
 //!   [`Config::refresh`] builds a block from `/template` with
@@ -37,7 +38,7 @@ use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -79,6 +80,9 @@ pub struct Config {
     /// New jobs at least this often (a fresh timestamp and extranonce).
     pub refresh: Duration,
     pub max_sessions: usize,
+    /// Open connections, logged in or not (each has a thread); one more is
+    /// closed at once.
+    pub max_connections: usize,
     /// Capacity of the share queue; a full queue answers `Busy`.
     pub queue_capacity: usize,
     /// A session that sends nothing for this long is closed.
@@ -99,6 +103,7 @@ impl Config {
             submit_log: None,
             refresh: Duration::from_secs(60),
             max_sessions: 8,
+            max_connections: 64,
             queue_capacity: 4,
             read_timeout: Duration::from_secs(120),
         }
@@ -354,6 +359,9 @@ struct Shared {
     /// Extranonces given out for the current work (no two sessions share one).
     used_extranonces: Mutex<HashSet<u32>>,
     next_job: AtomicU64,
+    /// Open connections ([`Config::max_connections`]).
+    connections: AtomicUsize,
+    max_connections: usize,
     queue: SyncSender<Task>,
     stratum_log: Option<LineLog>,
     submit_log: Option<LineLog>,
@@ -390,7 +398,7 @@ impl Bridge {
                 "--min-share-diff must be at least 1".into(),
             ));
         }
-        if config.max_sessions == 0 || config.queue_capacity == 0 {
+        if config.max_sessions == 0 || config.queue_capacity == 0 || config.max_connections == 0 {
             return Err(StartError::Config(
                 "the session limit and the queue capacity must be at least 1".into(),
             ));
@@ -471,6 +479,8 @@ impl Bridge {
             sessions: Mutex::new(BTreeMap::new()),
             used_extranonces: Mutex::new(HashSet::new()),
             next_job: AtomicU64::new(1),
+            connections: AtomicUsize::new(0),
+            max_connections: config.max_connections,
             queue,
             stratum_log,
             submit_log,
@@ -747,13 +757,36 @@ fn accept(shared: Arc<Shared>, listener: TcpListener) {
             break;
         }
         let Ok(stream) = conn else { continue };
+        // A connection cap before any login: each connection has a thread.
+        if shared.connections.fetch_add(1, Ordering::SeqCst) >= shared.max_connections {
+            shared.connections.fetch_sub(1, Ordering::SeqCst);
+            count(&shared, "connections_refused");
+            log::warn!("connection refused: {} open", shared.max_connections);
+            drop(stream);
+            continue;
+        }
         let s = shared.clone();
         if let Err(e) = std::thread::Builder::new()
             .name("session".into())
-            .spawn(move || connection(s, stream))
+            .spawn(move || {
+                let open = OpenConnection(s.clone());
+                connection(s, stream);
+                drop(open);
+            })
         {
+            shared.connections.fetch_sub(1, Ordering::SeqCst);
             log::warn!("no session thread: {e}");
         }
+    }
+}
+
+/// Counts one open connection; released when its thread ends (a panic
+/// included).
+struct OpenConnection(Arc<Shared>);
+
+impl Drop for OpenConnection {
+    fn drop(&mut self) {
+        self.0.connections.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

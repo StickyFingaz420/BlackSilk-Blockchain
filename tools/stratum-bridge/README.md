@@ -40,6 +40,18 @@ Test knobs, refused unless the node reports regtest: `--allow-session-diff`
 `--negative-control-algo rx/0` (jobs labelled `rx/0`, no block ever
 submitted, results identified as Monero `rx/0` hashes).
 
+Limits, all on loopback only (the bridge refuses any other address):
+
+- At most 64 connections are open at once, logged in or not (one thread
+  each), and at most 8 logged-in sessions; a connection that sends nothing
+  is closed after 120 s.
+- Job notifications are written to every session while the session list is
+  locked, each write with a 10 s timeout: a session that stops reading delays
+  the others' new jobs by up to that much per job.
+- There is one verifier thread, and it writes each reply itself: a client
+  that stops reading stalls verification (up to the 10 s write timeout per
+  reply) for every session.
+
 Tests: `tests/bridge.rs` (fake proof of work, the same instance in the node and
 the bridge) and `tests/real_pow.rs` (the node's real `RandomXPow`, shared by
 the node and the bridge, about 1 GiB at the peak; run it with

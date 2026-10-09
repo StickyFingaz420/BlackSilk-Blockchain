@@ -960,6 +960,40 @@ fn version_and_build_guard() {
     }
 }
 
+/// At most `max_connections` connections are open, logged in or not; one
+/// more is closed at once, and a closed connection frees its slot.
+#[test]
+fn connections_are_capped_before_login() {
+    let node = Node::start(ChainParams::regtest());
+    let mut c = config(&node);
+    c.max_connections = 2;
+    let b = bridge(&node, c);
+    let mut a = Fake::connect(b.local_addr());
+    let _second = Fake::connect(b.local_addr());
+    let mut third = Fake::connect(b.local_addr());
+    assert!(third.closed(), "the third connection is closed at once");
+    wait_until("the refusal to be counted", || {
+        b.stats().get("connections_refused") == Some(&1)
+    });
+    assert!(a.login()["error"].is_null());
+    a.w.shutdown(std::net::Shutdown::Both).unwrap();
+    // The slot is free once the first connection's thread has ended.
+    wait_until("a free slot", || {
+        let mut d = Fake::connect(b.local_addr());
+        let id = d.send(
+            "login",
+            json!({"login": "x", "pass": "x", "agent": XMRIG_AGENT, "algo": ["rx/blacksilk"]}),
+        );
+        loop {
+            match d.read() {
+                None => return false,
+                Some(v) if v["id"] == json!(id) => return v["error"].is_null(),
+                Some(_) => {}
+            }
+        }
+    });
+}
+
 /// A share whose block the node accepts but not onto its best chain (a
 /// second block on the same parent) gets its own status, apart from both
 /// `OK` and a rejection.
