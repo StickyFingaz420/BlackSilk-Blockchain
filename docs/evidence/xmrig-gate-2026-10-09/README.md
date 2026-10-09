@@ -13,9 +13,13 @@ with Monero's `rx/0` salt) shows that the comparison does catch a wrong salt.
 `GATE-MISMATCH` on a BlackSilk job, no `GATE-INTERNAL`, no job rejected by xmrig,
 no node rejection of a bridge-verified block, and no invalid share accepted. The
 negative control identified every result as Monero `rx/0`, and the offline
-recompute found 0 mismatches. Run B (the seed switch at height 2113) was
-started after this evidence was written; its result is **not** part of this
-record (see "Run B" below).
+recompute found 0 mismatches.
+
+**Run B (seed switch): PASS.** xmrig mined on from height 557 to 2134 across the
+first RandomX key switch at height 2113, re-keying from `seed_hash` alone, with
+the same criteria met (see "Run B" below). In all, 2,133 xmrig blocks are on the
+best chain at height 2134 (A 542, L 13, B 1,578; the remaining block is the
+probe's).
 
 ## Scope and limits
 
@@ -29,15 +33,16 @@ record (see "Run B" below).
   Byte-equal results from xmrig's dataset and JIT agree with BlackSilk's light
   mode, and `rx-verify --full` adds BlackSilk's own full dataset for 77 heights.
   Neither is the comparison against the RandomX reference implementation.
-- **The seed switch is not covered here.** Every block in runs A and L uses the
-  genesis key (key height 0). The first key switch on regtest is at height 2113;
-  that is run B, which is not part of this record.
+- **One key switch.** Runs A and L use the genesis key (key height 0). Run B
+  crossed the first key switch on regtest (height 2113, key height 2048) once, on
+  this one machine; 22 best-chain blocks (2113 to 2134) use the new key. Later
+  switches and a switch during a reorganization are not covered.
 - **RandomX v1 versus v2.** xmrig 6.26.0 also ships RandomX v2 (`rx/2`).
   BlackSilk is v1; the patch derives `rx/blacksilk` from the v1 base
   configuration. A future xmrig refactor of that base could break the patch.
 - **xmrig low-nonce fingerprint (privacy).** xmrig writes only the low 32 bits of
   the 64-bit header nonce and counts them up from a small per-thread start. In
-  run A the largest low-32 value submitted was 105,345. The bridge randomizes
+  run A the largest low-32 value submitted was 105,345, in run B 113,939. The bridge randomizes
   the high 32 bits per job, but blocks mined with xmrig remain distinguishable
   from `blacksilk-miner` blocks, which start at a random 64-bit nonce.
 - **Hashes filtered out locally are lost by design.** While the block difficulty
@@ -241,9 +246,10 @@ control 33 (rx/0 33, blacksilk 0)`: PASS.
 |---|---|---|---|---|---|---|---|---|
 | run A | 744 | 7 | 742 | 744 | 744 | 0 | 0 | PASS |
 | run L | 13 | 0 | 13 | 13 | 13 | 0 | 0 | PASS |
+| run B | 1,767 | 0 | 1,766 | 1,767 | 1,767 | 0 | 0 | PASS |
 
-Every xmrig submission of runs A and L is covered, including the 2 stale ones that
-were not hashed live.
+Every xmrig submission of runs A, L and B is covered, including the 3 stale ones
+that were not hashed live (`logs/recompute-B.txt` for run B).
 
 ### Counter cross-check
 
@@ -254,6 +260,7 @@ were not hashed live.
 | A | 741 / 2 | 742 | 2 |
 | L | 13 / 0 | 13 | 0 |
 | NC | 0 / 33 | 0 | 33 |
+| B | 1,765 / 1 | 1,766 | 1 |
 
 Run A's one-share difference: submit id 745 (job 546, block height 543) reached
 the bridge at 04:16:06.820 UTC; the node accepted the block, and the bridge wrote
@@ -275,6 +282,7 @@ and with the bridge's share difficulty minus one, `max(block_diff, 3600) - 1`.
 | A | 543 | 543 | 0 |
 | L | 18 | 18 | 0 |
 | NC | 3 | 3 | 0 |
+| B | 1,581 | 1,581 | 0 |
 
 The logged value is exactly `d - 1` (3599 in the floor regime, `block_diff - 1`
 above it), as the ceiling target predicts, and height and algorithm agree on
@@ -316,23 +324,67 @@ Firewall:
 
 ## Run B (seed switch)
 
-Run B was started after steps 1 to 6, on the same node (from height 556) with a
-new bridge (`runB-*` logs) and xmrig in fast mode with `gate.json`, to mine past
-the first key switch at height 2113 (target 2125, about 4 to 5 hours). Its result
-is not in this record. Until run B has its own evidence, the seed switch counts as
-**not covered** by xmrig.
+Run B continued on the same node from height 556 with a new bridge (same flags,
+`runB-*` logs) and xmrig in fast mode with the unchanged `gate.json`:
+`xmrig-notls.exe -c C:\bsxmrig\gate.json --donate-level 0 --log-file C:/bsgate/logs/runB-xmrig.log`.
+It ran from 06:39 to 10:58 local time (04:39 to 08:58 UTC) and was stopped with
+Ctrl-C by PID: xmrig, then the bridge, then the node.
+
+| Criterion | Result |
+|---|---|
+| Blocks | 1,767 xmrig submissions: 1,578 best-chain blocks (heights 557 to 2134), 188 off the best chain, 1 stale share (job 1250); block difficulty 3,720 to 14,663, all above the 3600 floor |
+| Per key | key `3dbdba2aca8842cd` (genesis): 1,556 best-chain and 186 off-chain blocks, 1 stale; key `b2835265be38b157` (height 2048): 22 best-chain blocks (2113 to 2134) and 2 off-chain |
+| `GATE-MISMATCH`, `GATE-INTERNAL`, other errors | 0 (`runB-bridge.log` has no `GATE-` or `ERROR` line) |
+| Node rejections | 0 (`logs/node-runB.log` has no `rejected` line) |
+| Offline recompute | 1,767 recomputed, 1,767 match, 0 mismatches: PASS (`logs/recompute-B.txt`) |
+| Counters | xmrig 1,765 accepted / 1 rejected (the stale share); bridge 1,766 OK / 1 error. The one-share difference is submit id 1771 (block 2134): the bridge logged `session b2baee9a closed` at 08:58:17 before its `BLOCK height 2134` line (`runB-bridge.log` line 3350), the same shutdown race as in run A |
+| Job difficulty (d - 1) | 1,581 jobs, 1,581 xmrig `new job` lines, 0 mismatches (`logs/analysis-B.txt`) |
+| Fast mode | `dataset ready` at start; 0 `slow mode` or `failed to allocate` lines |
+| Restart | the node reloaded `height 2134, tip a1f9517742fa4d5b`, the tip it had at shutdown (`logs/node-restart-after-runB.log`) |
+| Network posture | the only donate line is `* DONATE 0%`; the only address is `127.0.0.1:3334` (`logs/donate-pool-grep-B.txt`) |
+
+**xmrig re-keyed by itself from `seed_hash`** (`logs/h1-seedswitch-grep-B.txt`).
+The bridge's job for height 2113 (job 1560) carried the new key in `seed_hash`;
+jobs 1558 and 1559 for heights 2111 and 2112 carried the genesis key. Nothing else
+told xmrig to switch. xmrig logged:
+
+```
+3577: new job from 127.0.0.1:3334 diff 12038 algo rx/blacksilk height 2113
+3578: randomx  init dataset algo rx/blacksilk (4 threads) seed b2835265be38b157...
+3579: randomx  dataset ready (7102 ms)
+```
+
+It found block 2113 thirteen seconds after that job (`BLOCK height 2113` at
+08:54:55 UTC), and the node accepted it on the best chain.
+
+**Recheck with rx-verify (run B).** A fresh-process recheck with the same crate,
+over the whole chain, with full mode across the switch (`rx-verify-B.txt`,
+`rx-verify-B.json`):
+
+```
+blacksilk-rx-verify --node 127.0.0.1:39333 --cookie C:\bsgate\node\rpc.cookie --network regtest --full 2100-2134 --threads 4 --out rx-verify-B.json
+127.0.0.1:39333: 2134 headers
+key height 0: 2112 light hashes in 271.3 s (cache 0.6 s)
+key height 2048: 22 light hashes in 3.1 s (cache 0.6 s)
+key height 0: dataset built in 226.4 s
+key height 2048: dataset built in 226.7 s
+nodes agree true (1..=2134), light 2134 checked / 0 failed, consensus accepted 2134, full 35 compared / 0 mismatched: PASS
+```
+
+The node was restarted for this recheck (rx-verify reads `/headers`) and stopped
+again afterwards. In run B xmrig's 10 s hash-rate readings were 885 to 1,221 H/s.
 
 ## Files
 
 | File | Content |
 |---|---|
-| `blocks.tsv` | every block the node accepted from the bridge in runs A and L (on and off the best chain), with block id, difficulties, job, header nonce, xmrig result, bridge hash, equality and reply |
-| `logs/runA-*`, `logs/runL-*`, `logs/runNC-*` | xmrig log, bridge log, stratum log (every line in and out) and submit log (one JSON line per submit) for each run |
-| `logs/node.log`, `logs/node-restart.log` | node log (whole run) and the first lines after the restart |
+| `blocks.tsv` | every block the node accepted from the bridge in runs A, L and B (on and off the best chain), with block id, difficulties, job, header nonce, xmrig result, bridge hash, equality and reply |
+| `logs/runA-*`, `logs/runL-*`, `logs/runNC-*`, `logs/runB-*` | xmrig log, bridge log, stratum log (every line in and out) and submit log (one JSON line per submit) for each run |
+| `logs/node.log`, `logs/node-restart.log`, `logs/node-runB.log`, `logs/node-restart-after-runB.log` | node log of runs A, L and NC; the first lines after the first restart; the node log of run B (it starts with that restart); the restart after run B |
 | `logs/probe-*.txt` | probe output |
-| `logs/recompute-*.txt`, `logs/analysis.txt` | offline recompute, counts, counter and job-difficulty checks |
-| `logs/h1-dataset-grep.txt`, `logs/donate-pool-grep.txt` | the H1 and network-posture greps |
-| `rx-verify.txt`, `rx-verify.json` | the chain recheck |
+| `logs/recompute-*.txt`, `logs/analysis.txt`, `logs/analysis-B.txt` | offline recompute, counts, counter and job-difficulty checks |
+| `logs/h1-dataset-grep.txt`, `logs/h1-seedswitch-grep-B.txt`, `logs/donate-pool-grep*.txt` | the H1, re-keying and network-posture greps |
+| `rx-verify.txt`, `rx-verify.json`, `rx-verify-B.*` | the chain rechecks after runs A/L/NC and after run B |
 | `build/` | build log, `--version` output, build-flag check, binary SHA-256 |
 | `config/` | `gate.json` and the two copies used for runs L and NC |
 | `xmrig-build/` | the two xmrig bench result lines and the RX_SFX grep summary (program output) |
@@ -343,12 +395,15 @@ is not in this record. Until run B has its own evidence, the seed switch counts 
 `grep -iE 'c:[\/]users|home 01|home01|/c/users'`), and none contains the RPC
 cookie value. The cookie used during runs A, L and NC was overwritten when the
 node restarted, so it could not be grepped for directly; the restart's cookie was
-grepped for and is absent, and every 64-hex value in these files was accounted
+grepped for and is absent. The node removes its cookie at a clean shutdown, so
+the cookies of run B and of the last restart could not be grepped for either, and every 64-hex value in these files was accounted
 for: block ids, xmrig results and bridge hashes, the RandomX seed, SHA-256 values
 of files and binaries, and the digests the node prints in `--version` (plus three
 SHA-256 values from the xmrig build record in this README). The paths that remain are `C:\bsgate\...` (runtime data),
 `C:\bsxmrig\...` (the xmrig build) and the build worktree `C:\bszkeval\...`. The
 wallet's seed words, password and the regtest payout address are not recorded.
 The submit logs record the block ids and the session ids only.
-xmrig's hash-rate lines were kept: the logs are small (run A's xmrig log is
-114 KiB).
+xmrig's hash-rate lines were kept (run A's xmrig log is 114 KiB, run B's 320 KiB).
+With run B the folder is about 6 MB, most of it run B's stratum, submit and bridge
+logs; they are kept whole because the offline recompute and the job-difficulty
+check read them.

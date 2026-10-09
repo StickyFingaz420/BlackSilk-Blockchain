@@ -1,0 +1,11 @@
+127.0.0.1:39333: 2134 headers
+key height 0: 2112 light hashes in 271.3 s (cache 0.6 s)
+key height 2048: 22 light hashes in 3.1 s (cache 0.6 s)
+key height 0: dataset built in 226.4 s
+key height 2048: dataset built in 226.7 s
+nodes agree true (1..=2134), light 2134 checked / 0 failed, consensus accepted 2134, full 35 compared / 0 mismatched: PASS
+
+real	12m11.095s
+user	0m0.000s
+sys	0m0.000s
+rc=0

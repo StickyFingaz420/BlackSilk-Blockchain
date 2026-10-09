@@ -1,0 +1,11 @@
+[2026-10-09T08:58:54.916Z INFO  blacksilk_node] RandomX self-test passed: 9 known answers (reference and BlackSilk, light mode) in 4.4s
+[2026-10-09T08:58:54.919Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 65d5a70d0b86668ff8662163d3bfe59809e81d1d, build flags: none
+[2026-10-09T08:58:54.921Z INFO  blacksilk_node] regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141, consensus fingerprint a8669525661569ca5345ed0b6af610712d85e7c84802c01e40c563c4c95d7238
+[2026-10-09T08:58:54.923Z INFO  blacksilk_node] regtest: loading C:\bsgate\node
+[2026-10-09T08:59:03.407Z INFO  blacksilk_chain::manager::replay] block store: 64 of 2522 stored proof-of-work hashes re-verified (the 16 highest connected blocks and up to 48 sampled heights) in 8.1s on 4 thread(s)
+[2026-10-09T08:59:03.409Z INFO  blacksilk_node] chain loaded in 8.5s: height 2134, tip a1f9517742fa4d5b
+[2026-10-09T08:59:03.409Z WARN  blacksilk_node] P2P disabled
+[2026-10-09T08:59:03.411Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:39333
+[2026-10-09T08:59:03.422Z WARN  blacksilk_node::cookie] the data directory C:\bsgate\node is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-10-09T08:59:03.422Z INFO  blacksilk_node::serve] RPC credential written to C:\bsgate\node\rpc.cookie (clients read it: --rpc-cookie)
+[2026-10-09T09:13:43.709Z INFO  blacksilk_node] Ctrl-C: shutting down

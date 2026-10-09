@@ -1,0 +1,12 @@
+== B: xmrig submissions 1767 (sessions ['b2baee9a']); other agents 0
+  outcome ok: 1578
+  outcome ok_off_best_chain: 188
+  outcome stale_job: 1
+  gate_mismatch flags: 0
+  hashed live: 1766
+  blocks on best chain (ok): 1578; at block_diff > floor 3600: 1578
+  heights 557..2134; block_diff range 3720..14663
+  hashed xmrig records with result != bridge_hash: 0
+  xmrig final counters accepted/rejected: 1765/1; bridge OK-status replies 1766, error replies 1
+  job notifications to xmrig: 1581; xmrig 'new job' lines: 1581
+  job-diff check: 1581 pairs, 0 mismatches
