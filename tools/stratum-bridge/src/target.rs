@@ -19,7 +19,7 @@
 pub fn target64(d: u64) -> u64 {
     assert!(d >= 1, "difficulty 0 has no target");
     let d = d as u128;
-    let t = ((1u128 << 64) + d - 1) / d;
+    let t = (1u128 << 64).div_ceil(d);
     t.min(u64::MAX as u128) as u64
 }
 
@@ -55,11 +55,7 @@ pub fn xmrig_decode_target(target: &str) -> u64 {
 /// With the ceiling target this is `d − 1` for `2 ≤ d < 2^32` and 1 for
 /// `d = 1`.
 pub fn xmrig_to_diff(target64: u64) -> u64 {
-    if target64 == 0 {
-        0
-    } else {
-        u64::MAX / target64
-    }
+    u64::MAX.checked_div(target64).unwrap_or(0)
 }
 
 /// xmrig's local filter: whether it would submit `hash` against `target64`.
@@ -117,7 +113,7 @@ mod tests {
     fn boundaries_against_check_hash() {
         for d in DS {
             let t = target64(d);
-            let boundary = (((1u128 << 64) + d as u128 - 1) / d as u128 - 1) as u64;
+            let boundary = ((1u128 << 64).div_ceil(d as u128) - 1) as u64;
             // The boundary limb with the smallest low limbs passes.
             let low = hash_with([0, 0, 0, boundary]);
             assert!(check_hash(&low, d), "d={d}");
