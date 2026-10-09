@@ -2,28 +2,55 @@ name: PX widest-proof measurement
 
 # Freeze gate B2 (docs/evidence/freeze-b2-b3-2026-10-04/README.md): proves and
 # verifies two-function PX proofs of a chosen shape with
-# px/examples/freeze_b2_b3.rs, records peak memory, and runs the size model.
-# Manual only: one shape per run, never part of the push pipeline.
+# px/examples/freeze_b2_b3.rs, records peak memory, proof size, proving time
+# and the verification result. Manual only: one shape per run, never part of
+# the push pipeline.
 #
-# Memory: the base shape and coarse18 peaked at about 10.3 GB on the 16 GB
-# development machine; dense18 passed 11.2 GB before it was stopped. A
-# standard ubuntu-24.04 runner (16 GB) can run `base` and probably `coarse18`;
-# `dense18` may not fit. The widest registrable shape (tables at 2^18..2^22)
-# needs on the order of 100 GB and cannot be proven on any standard runner;
-# its size comes from the validated model (`model`).
+# Shapes:
+# - base: the vault pair (measured: 6,446 MB peak on the development machine).
+# - coarse18, dense18: pre-V12 shapes with tables above 2^16 rows. They still
+#   prove (coarse18 peaked at about 10.3 GB; dense18 passed 11.2 GB before it
+#   was stopped), but since the V12 caps (record px-deploy-row-caps) `verify`
+#   refuses their shape, so the run fails after proving.
+# - v12mem: the memory-widest pair the V12 deploy rules allow (every table at
+#   its cap; docs/evidence/budget-cap-2026-10-04: 68.5 million weighted
+#   cells, modelled 10.4 GB (fit L) to 13.1 GB (marginal M)).
+#   No vault-based V12 pair has a longer FRI schedule (checked by the
+#   example), so its proof size is the longest-schedule size for vault-based
+#   functions (the study's model: 3.67 MB expected for vault programs at a
+#   2^16 cap). Its 3.70 / 3.78 MB figure is for any programs, which can also
+#   put function tables at 2^9 and 2^10 rows; that shape is not measured here.
+#
+# Memory: a standard ubuntu-24.04 runner of a public repository has 4 vCPUs
+# and 16 GB of RAM (a private repository's has 2 vCPUs and 8 GB, too little
+# for v12mem). At the 13.1 GB end of the model v12mem may not fit next to the
+# runner's own processes. Either outcome is recorded:
+# - `swap: on` (default): the runner's swap file stays on; a run past the RAM
+#   swaps and completes slowly; the peak RSS then understates the footprint,
+#   and the sampler's VmSwap column gives the swapped part.
+# - `swap: off`: no swap, so a run past the RAM is killed by the OOM killer.
+#   The report step shows "Command terminated by signal 9", the kernel's
+#   oom-kill line, the peak RSS reached before the kill and the last memory
+#   samples.
 on:
   workflow_dispatch:
     inputs:
       config:
-        description: "Shape: base, coarse18 or dense18"
+        description: "Shape: base, coarse18, dense18 or v12mem"
         required: true
         default: base
         type: choice
-        options: [base, coarse18, dense18]
+        options: [base, coarse18, dense18, v12mem]
       count:
         description: "Proofs to make"
         required: true
         default: "2"
+      swap:
+        description: "Runner swap: on (a run past the RAM swaps) or off (it is OOM-killed)"
+        required: true
+        default: "on"
+        type: choice
+        options: ["on", "off"]
 
 permissions:
   contents: read
@@ -50,17 +77,71 @@ jobs:
           toolchain: "1.98.1"
       - name: Build
         run: cargo build --locked --release -p blacksilk-px --example freeze_b2_b3
-      - name: Memory before
-        run: free -m
+      - name: Shape and admission (no proving)
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: |
+          mkdir -p out
+          target/release/examples/freeze_b2_b3 b2 "$CONFIG" 0 out --check-only | tee out/shape.txt
+      - name: Runner memory
+        env:
+          SWAP: ${{ inputs.swap }}
+        run: |
+          nproc
+          if [ "$SWAP" = off ]; then sudo swapoff -a; fi
+          free -m
+          swapon --show || true
       - name: Prove and verify (one process, one proof at a time)
         env:
           CONFIG: ${{ inputs.config }}
           COUNT: ${{ inputs.count }}
         run: |
-          mkdir -p out
-          /usr/bin/time -v target/release/examples/freeze_b2_b3 b2 "$CONFIG" "$COUNT" out 2>&1 | tee out/run.txt
-      - name: Size model
-        run: target/release/examples/freeze_b2_b3 model out | tee out/model.txt
-      - name: Results (in the log; no artifact action is pinned in this repository)
+          # Every 5 s: system memory and the prover's VmRSS, VmHWM (peak RSS)
+          # and VmSwap, so a killed run still leaves its trajectory.
+          (
+            while true; do
+              pid=$(pgrep -n -f 'examples/freeze_b2_b3 b2' || true)
+              proc=""
+              if [ -n "$pid" ] && [ -r "/proc/$pid/status" ]; then
+                proc=$(awk '/^(VmRSS|VmHWM|VmSwap):/ {sub(":", "", $1); printf "%s=%dMB ", $1, $2/1024}' "/proc/$pid/status")
+              fi
+              mem=$(free -m | awk '/^Mem:/ {u=$3; a=$7} /^Swap:/ {s=$3} END {printf "used=%dMB available=%dMB swap_used=%dMB", u, a, s}')
+              echo "$(date +%T) $mem $proc"
+              sleep 5
+            done
+          ) > out/mem.log 2>&1 &
+          sampler=$!
+          set +e
+          /usr/bin/time -v -o out/time.txt \
+            target/release/examples/freeze_b2_b3 b2 "$CONFIG" "$COUNT" out 2>&1 | tee out/run.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          kill "$sampler" || true
+          echo "prover exit status: $status"
+          exit "$status"
+      - name: Report
         if: always()
-        run: cat out/b2.csv out/model.txt || true
+        env:
+          CONFIG: ${{ inputs.config }}
+          SWAP: ${{ inputs.swap }}
+        run: |
+          {
+            echo "## PX widest proof: $CONFIG (swap $SWAP)"
+            echo '```'
+            grep -h -E 'weighted cells|FRI schedule|^function|^b2 ' out/shape.txt out/run.txt 2>/dev/null || true
+            grep -E 'Maximum resident set size|Elapsed \(wall clock\)|Exit status|Command terminated by signal' out/time.txt || true
+            awk '/Maximum resident set size/ {printf "peak RSS %.2f GB\n", $NF / 1048576}' out/time.txt || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "--- shape"; cat out/shape.txt || true
+          echo "--- /usr/bin/time -v"; cat out/time.txt || true
+          echo "--- b2.csv"; cat out/b2.csv || true
+          echo "--- kernel OOM messages"; sudo dmesg | grep -i -E 'out of memory|oom-kill|killed process' || echo none
+          echo "--- memory samples (last 40 of $(wc -l < out/mem.log 2>/dev/null || echo 0))"; tail -n 40 out/mem.log || true
+          echo "--- largest sampled VmHWM (MB)"
+          grep -o 'VmHWM=[0-9]*' out/mem.log | cut -d= -f2 | sort -n | tail -n 1 || true
+          echo "--- largest sampled VmSwap (MB)"
+          grep -o 'VmSwap=[0-9]*' out/mem.log | cut -d= -f2 | sort -n | tail -n 1 || true
+      - name: Size model (pre-V12 shapes only)
+        if: ${{ !startsWith(inputs.config, 'v12') }}
+        run: target/release/examples/freeze_b2_b3 model out | tee out/model.txt
