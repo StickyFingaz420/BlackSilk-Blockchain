@@ -678,8 +678,11 @@ const FIELD_NAMES: [&str; 8] = [
 ];
 /// Memory keys a padded vault program leaves for the keys its run touches
 /// outside the image (the stack): the keys budget counts every image word
-/// too (`trace::usage`), so a program whose image fills the keys cap could
-/// never run within it. `check_fit` asserts that the room suffices.
+/// too (`trace::usage`), so a program whose image fills the keys cap can
+/// run within it only if it touches no key outside its image. Registering
+/// such a program is harmless: its calls fail client-side with
+/// `OverBudget`, and the deployer has paid the deploy fee. `check_fit`
+/// asserts that the room suffices.
 const KEY_ROOM: usize = 1024;
 /// `addi x0, x0, 0`.
 const NOP: u32 = 0x0000_0013;
@@ -772,8 +775,11 @@ fn image_extra() -> usize {
 /// LOCK under `C2`), padded where a program table must be taller; the two
 /// programs differ.
 ///
-/// `v12mem`, the memory-widest pair: every table at its largest V12
-///   height. Both budgets are `v12_largest()` (the V12 table: add and lt at
+/// `v12mem`, the memory-widest pair: every budget and program table at its
+///   V12 cap; the function output tables at the vault's 2^8 rows (22 output
+///   words; up to 2^9 are allowed with `MAX_FN_OUTPUT_WORDS` = 256 plus the
+///   prefix, a negligible difference of about 0.04 M weighted cells). Both
+///   budgets are `v12_largest()` (the V12 table: add and lt at
 ///   2^16, bit, shift and mul at 2^14, Poseidon2 at 2^11 shared rows; cycles
 ///   2^15 and keys 2^14 per function), and both programs have their program
 ///   and image tables at 2^14 rows (`2^14 - extra - KEY_ROOM` code words).
@@ -1005,6 +1011,18 @@ fn v12_admit(name: &str, shape: &Shape) {
         assert!(!v12_budget_ok(&from_fields(f)), "{field} one above its cap");
     }
     assert!(v12_program_ok(&vault::program()));
+    // The program rule at its boundary: an image of exactly 2^14 words is
+    // allowed, one word more is refused.
+    let at_cap = (1 << V12_FN_LOG_IMAGE) - image_extra();
+    assert_eq!(
+        trace::image(&padded_vault(at_cap)).len(),
+        1 << V12_FN_LOG_IMAGE
+    );
+    assert!(v12_program_ok(&padded_vault(at_cap)), "image at the cap");
+    assert!(
+        !v12_program_ok(&padded_vault(at_cap + 1)),
+        "image one word above the cap"
+    );
     for e in 0..2 {
         assert!(
             v12_budget_ok(&shape.budgets[e]),
@@ -1126,9 +1144,9 @@ fn report(name: &str, kernel_out: usize, shape: &Shape) {
         blacksilk_zk::honest_fri_schedule(&db)
     );
     println!(
-        "{name}: {cells:.1} M weighted cells (base {base:.1}); modelled peak memory L {:.2} GB, M {:.2} GB (docs/evidence/budget-cap-2026-10-04)",
-        (755.0 + 141.1 * cells) / 1e3,
-        (6446.0 + 235.0 * (cells - base)) / 1e3
+        "{name}: {cells:.1} M weighted cells (base {base:.1}); modelled peak memory L {:.0} MB, M {:.0} MB (docs/evidence/budget-cap-2026-10-04)",
+        755.0 + 141.1 * cells,
+        6446.0 + 235.0 * (cells - base)
     );
     if shape.v12 {
         assert!(
@@ -1213,20 +1231,20 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
     check_fit(&first, &reg);
     report(name, kernel_out, &shape);
     if name == "v12mem" {
-        // No vault-based V12 pair folds more finely: the proof of the
-        // memory-widest pair also has the longest FRI schedule.
+        // No vault-based V12 pair has more FRI rounds, and the search's
+        // pick (most rounds, then distinct heights, then rows) folds exactly
+        // as v12mem does.
         let s = v12_schedule_search();
-        let rounds = |sh: &Shape| {
-            blacksilk_zk::honest_fri_schedule(&degree_bits(kernel_out, &sh.parts())).len()
-        };
+        let schedule =
+            |sh: &Shape| blacksilk_zk::honest_fri_schedule(&degree_bits(kernel_out, &sh.parts()));
         assert_eq!(
-            rounds(&s),
-            rounds(&shape),
-            "v12mem has the longest schedule"
+            schedule(&s),
+            schedule(&shape),
+            "v12mem has the search's schedule"
         );
         println!(
-            "{name}: no vault-based V12 pair has a longer FRI schedule ({} rounds)",
-            rounds(&shape)
+            "{name}: no vault-based V12 pair has more FRI rounds; schedule {:?}",
+            schedule(&shape)
         );
     }
     if check_only {

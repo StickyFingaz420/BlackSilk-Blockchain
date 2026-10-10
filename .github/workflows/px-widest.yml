@@ -12,18 +12,20 @@ name: PX widest-proof measurement
 #   prove (coarse18 peaked at about 10.3 GB; dense18 passed 11.2 GB before it
 #   was stopped), but since the V12 caps (record px-deploy-row-caps) `verify`
 #   refuses their shape, so the run fails after proving.
-# - v12mem: the memory-widest pair the V12 deploy rules allow (every table at
-#   its cap; docs/evidence/budget-cap-2026-10-04: 68.5 million weighted
-#   cells, modelled 10.4 GB (fit L) to 13.1 GB (marginal M)).
-#   No vault-based V12 pair has a longer FRI schedule (checked by the
-#   example), so its proof size is the longest-schedule size for vault-based
-#   functions (the study's model: 3.67 MB expected for vault programs at a
-#   2^16 cap). Its 3.70 / 3.78 MB figure is for any programs, which can also
-#   put function tables at 2^9 and 2^10 rows; that shape is not measured here.
+# - v12mem: the memory-widest pair the V12 deploy rules allow: every budget
+#   and program table at its cap; output tables at the vault's 2^8 (2^9
+#   allowed; negligible, about +0.04 M weighted cells).
+#   docs/evidence/budget-cap-2026-10-04: 68.5 million weighted cells,
+#   modelled 10,410 MiB (fit L) to 13,060 MiB (marginal M).
+#   No vault-based V12 pair has more FRI rounds (checked by the example).
+#   Its proof is not the size-widest V12 proof: the study's size-widest shape
+#   needs function tables at 2^9 and 2^10 rows, which only programs much
+#   smaller than the vault reach; that shape is not measured here.
 #
+# Memory figures in the report are MiB (the base peak: 6,446 MB measured).
 # Memory: a standard ubuntu-24.04 runner of a public repository has 4 vCPUs
 # and 16 GB of RAM (a private repository's has 2 vCPUs and 8 GB, too little
-# for v12mem). At the 13.1 GB end of the model v12mem may not fit next to the
+# for v12mem). At the 13,060 MiB end of the model v12mem may not fit next to the
 # runner's own processes. Either outcome is recorded:
 # - `swap: on` (default): the runner's swap file stays on; a run past the RAM
 #   swaps and completes slowly; the peak RSS then understates the footprint,
@@ -32,6 +34,11 @@ name: PX widest-proof measurement
 #   The report step shows "Command terminated by signal 9", the kernel's
 #   oom-kill line, the peak RSS reached before the kill and the last memory
 #   samples.
+# An OOM that kills the runner agent itself may leave no Report output and no
+# oom line: "no OOM lines" is conclusive only when the prove step's exit
+# status was recorded ("prover exit status: ..."). The Guard step fails a
+# runner with less than 15 GB (15,360 MiB) of MemTotal before proving, and a
+# v12mem run with count 0, which would measure nothing.
 on:
   workflow_dispatch:
     inputs:
@@ -83,6 +90,21 @@ jobs:
         run: |
           mkdir -p out
           target/release/examples/freeze_b2_b3 b2 "$CONFIG" 0 out --check-only | tee out/shape.txt
+      - name: Guard (runner RAM, proof count)
+        env:
+          CONFIG: ${{ inputs.config }}
+          COUNT: ${{ inputs.count }}
+        run: |
+          total=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
+          echo "MemTotal: $total MiB"
+          if [ "$total" -lt 15360 ]; then
+            echo "::error::runner has $total MiB of RAM, below 15,360 MiB: an OOM here would not measure v12mem; use a 16 GB runner"
+            exit 1
+          fi
+          if [ "$COUNT" = 0 ] && [ "$CONFIG" = v12mem ]; then
+            echo "::error::count 0 is check only, no measurement: set count to 1 or more"
+            exit 1
+          fi
       - name: Runner memory
         env:
           SWAP: ${{ inputs.swap }}
@@ -92,6 +114,9 @@ jobs:
           free -m
           swapon --show || true
       - name: Prove and verify (one process, one proof at a time)
+        # Below the job's 180 minutes, so the always() Report step still runs
+        # when heavy swapping makes the prover slow.
+        timeout-minutes: 150
         env:
           CONFIG: ${{ inputs.config }}
           COUNT: ${{ inputs.count }}
@@ -103,9 +128,9 @@ jobs:
               pid=$(pgrep -n -f 'examples/freeze_b2_b3 b2' || true)
               proc=""
               if [ -n "$pid" ] && [ -r "/proc/$pid/status" ]; then
-                proc=$(awk '/^(VmRSS|VmHWM|VmSwap):/ {sub(":", "", $1); printf "%s=%dMB ", $1, $2/1024}' "/proc/$pid/status")
+                proc=$(awk '/^(VmRSS|VmHWM|VmSwap):/ {sub(":", "", $1); printf "%s=%dMiB ", $1, $2/1024}' "/proc/$pid/status")
               fi
-              mem=$(free -m | awk '/^Mem:/ {u=$3; a=$7} /^Swap:/ {s=$3} END {printf "used=%dMB available=%dMB swap_used=%dMB", u, a, s}')
+              mem=$(free -m | awk '/^Mem:/ {u=$3; a=$7} /^Swap:/ {s=$3} END {printf "used=%dMiB available=%dMiB swap_used=%dMiB", u, a, s}')
               echo "$(date +%T) $mem $proc"
               sleep 5
             done
@@ -117,7 +142,7 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           kill "$sampler" || true
-          echo "prover exit status: $status"
+          echo "prover exit status: $status" | tee out/status.txt
           exit "$status"
       - name: Report
         if: always()
@@ -130,17 +155,21 @@ jobs:
             echo '```'
             grep -h -E 'weighted cells|FRI schedule|^function|^b2 ' out/shape.txt out/run.txt 2>/dev/null || true
             grep -E 'Maximum resident set size|Elapsed \(wall clock\)|Exit status|Command terminated by signal' out/time.txt || true
-            awk '/Maximum resident set size/ {printf "peak RSS %.2f GB\n", $NF / 1048576}' out/time.txt || true
+            awk '/Maximum resident set size/ {printf "peak RSS %d MiB\n", $NF / 1024}' out/time.txt || true
+            cat out/status.txt 2>/dev/null || echo "prover exit status: not recorded (the step was cut off or the runner died)"
             echo '```'
+            echo "Notes: memory in MiB (base peak 6,446 MB; v12mem model 10,410 to 13,060 MiB)."
+            echo "An OOM that kills the runner agent may leave no report and no oom line, so"
+            echo "\"no OOM lines\" is conclusive only when the prover exit status above was recorded."
           } | tee -a "$GITHUB_STEP_SUMMARY"
           echo "--- shape"; cat out/shape.txt || true
           echo "--- /usr/bin/time -v"; cat out/time.txt || true
           echo "--- b2.csv"; cat out/b2.csv || true
           echo "--- kernel OOM messages"; sudo dmesg | grep -i -E 'out of memory|oom-kill|killed process' || echo none
           echo "--- memory samples (last 40 of $(wc -l < out/mem.log 2>/dev/null || echo 0))"; tail -n 40 out/mem.log || true
-          echo "--- largest sampled VmHWM (MB)"
+          echo "--- largest sampled VmHWM (MiB)"
           grep -o 'VmHWM=[0-9]*' out/mem.log | cut -d= -f2 | sort -n | tail -n 1 || true
-          echo "--- largest sampled VmSwap (MB)"
+          echo "--- largest sampled VmSwap (MiB)"
           grep -o 'VmSwap=[0-9]*' out/mem.log | cut -d= -f2 | sort -n | tail -n 1 || true
       - name: Size model (pre-V12 shapes only)
         if: ${{ !startsWith(inputs.config, 'v12') }}
