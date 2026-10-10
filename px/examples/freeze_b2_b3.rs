@@ -8,10 +8,21 @@
 //! - `check`: no proving. Builds every witness class natively (kernel and
 //!   function guests run, exit codes checked), prints the fixed table heights
 //!   and FRI schedules of every configuration.
-//! - `b2 <config> <count> <dir>`: proves and verifies `count` two-function
-//!   proofs of configuration `base`, `coarse18` or `dense18`; appends one row
-//!   per proof to `<dir>/b2.csv` and saves the first proof as
-//!   `<dir>/<config>.bin`.
+//! - `b2 <config> <count> <dir> [--check-only]`: proves and verifies `count`
+//!   two-function proofs of configuration `base`, `coarse18`, `dense18`,
+//!   or `v12mem`; appends one row per proof to `<dir>/b2.csv` and
+//!   saves the first proof as `<dir>/<config>.bin`. First prints the
+//!   configuration's table heights, weighted cells and modelled memory. With
+//!   `--check-only` it stops there, after the admission checks and a native
+//!   run of the case: no proving.
+//!
+//!   `coarse18` and `dense18` predate the V12 deploy caps (record
+//!   `px-deploy-row-caps`): they still prove, but `verify` now refuses their
+//!   shape (a table above 2^16 rows), so their runs fail after proving.
+//!   `v12mem` is the memory-widest V12 shape (see `v12_shape`): every
+//!   budget and program passes the V12 deploy rules, asserted at run time.
+//!   `v12_schedule_search` shows that no vault-based V12 pair has a longer
+//!   FRI schedule, so the same proof is also the longest-schedule one.
 //! - `p5 <n_fn> <per class> <dir>`: the P-5 campaign for one function count;
 //!   appends to `<dir>/p5.csv` (resumable: rows already present are skipped).
 //!   Asserts, exactly, that every proof of the shape has the same
@@ -31,23 +42,29 @@
 //! with the real encoder.
 
 use blacksilk_px::perm::HostPerm;
-use blacksilk_px::prove::{self, kernel_budget, kernel_program, prove_transfer, public_words};
+use blacksilk_px::prove::{
+    self, kernel_budget, kernel_program, prove_transfer, public_words, FN_RUN_LOG_CYCLES,
+    PX_MAX_LOG_HEIGHT,
+};
 use blacksilk_px::state::State;
 use blacksilk_px::tree::Tree;
 use blacksilk_px::vault;
 use blacksilk_px::wallet::{self, Account};
-use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION, PREFIX_WORDS};
+use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION, MAX_FN, PREFIX_WORDS};
 use blacksilk_px_core::kernel::{self as pxkernel, FunctionWitness, Witness};
 use blacksilk_px_core::record::Record;
 use blacksilk_px_core::{Digest, ZERO_DIGEST};
 use blacksilk_zk::params::{LOG_BLOWUP, MAX_LOG_HEIGHT, MAX_PROOF_BYTES, NUM_QUERIES};
 use blacksilk_zk::Proof;
-use blacksilk_zkvm::air::trace::{Budget, Part, Statement};
+use blacksilk_zkvm::air::trace::{self, Budget, Part, Statement};
+use blacksilk_zkvm::air::{program as program_table, MIN_HEIGHT};
+use blacksilk_zkvm::Program;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 const C: Digest = [0x100, 1, 2, 3, 4, 5, 6, 7];
@@ -512,10 +529,44 @@ fn case(
 
 // ----------------------------------------------------------------- budgets
 
-/// The B2 configurations: `(budget of C's function, budget of C2's
-/// function)`; the kernel's is `kernel_budget(2)`. Shared tables have the
-/// height `pow2(kernel + f0 + f1)`.
-fn config(name: &str) -> (Budget, Budget) {
+/// Every `b2` configuration.
+const CONFIGS: [&str; 4] = ["base", "coarse18", "dense18", "v12mem"];
+
+/// A B2 configuration: the program and budget of `C`'s function (the CLAIM)
+/// and of `C2`'s (the LOCK); the kernel's budget is `kernel_budget(2)`.
+/// Shared tables have the height `pow2(kernel + f0 + f1)`.
+struct Shape {
+    programs: [Arc<Program>; 2],
+    budgets: [Budget; 2],
+    /// Built under the V12 deploy caps (and checked against them).
+    v12: bool,
+}
+
+impl Shape {
+    fn parts(&self) -> [(Arc<Program>, Budget); 2] {
+        [0, 1].map(|k| (self.programs[k].clone(), self.budgets[k]))
+    }
+
+    fn registry(&self) -> Registry {
+        let [p0, p1] = self.parts();
+        [(C, p0), (C2, p1)].into()
+    }
+}
+
+fn config(name: &str) -> Shape {
+    if name.starts_with("v12") {
+        return v12_shape(name);
+    }
+    let (b0, b1) = pre_v12_config(name);
+    Shape {
+        programs: [vault::program(), vault::program()],
+        budgets: [b0, b1],
+        v12: false,
+    }
+}
+
+/// The configurations measured before the V12 caps, with vault programs.
+fn pre_v12_config(name: &str) -> (Budget, Budget) {
     let k = kernel_budget(2);
     let v = vault::BUDGET;
     let shared = |target: usize, kx: usize, vx: usize| target - kx - vx;
@@ -566,28 +617,545 @@ fn registrable(b: &Budget) -> bool {
         .all(|&(x, kx)| x.checked_add(kx).is_some_and(|s| s <= max))
 }
 
-/// The degree bits of the kernel plus vault calls with `budgets`, built as
-/// `prove::statement` builds it.
-fn vault_degree_bits(kernel_out: usize, budgets: &[Budget]) -> Vec<usize> {
+/// The statement of the kernel plus function calls `(program, budget)`
+/// with the vault's output length, built as `prove::statement` builds it.
+fn statement(kernel_out: usize, parts: &[(Arc<Program>, Budget)]) -> Statement {
     let mut st = Statement::single(kernel_program(), 0, vec![0; kernel_out], [0; 32]);
-    st.budget = Some(kernel_budget(budgets.len()));
-    for b in budgets {
+    st.budget = Some(kernel_budget(parts.len()));
+    for (program, b) in parts {
         st.others.push(Part {
-            program: vault::program(),
+            program: program.clone(),
             exit_code: 0,
             output: vec![0; PREFIX_WORDS + vault::OUT_WORDS as usize],
             budget: Some(*b),
         });
     }
-    st.shape()
+    st
+}
+
+fn degree_bits(kernel_out: usize, parts: &[(Arc<Program>, Budget)]) -> Vec<usize> {
+    statement(kernel_out, parts)
+        .shape()
         .unwrap()
         .iter()
         .map(|h| h.trailing_zeros() as usize + 1)
         .collect()
 }
 
+/// The degree bits of the kernel plus vault calls with `budgets`.
+fn vault_degree_bits(kernel_out: usize, budgets: &[Budget]) -> Vec<usize> {
+    let parts: Vec<_> = budgets.iter().map(|b| (vault::program(), *b)).collect();
+    degree_bits(kernel_out, &parts)
+}
+
 fn lde_heights(db: &[usize]) -> BTreeSet<usize> {
     db.iter().map(|d| d + LOG_BLOWUP).collect()
+}
+
+// -------------------------------------------------------------- V12 shapes
+
+/// The V12 deploy caps (record `px-deploy-row-caps`; `blacksilk-tx` params
+/// `PX_FN_LOG_*` and `PX_LOG_*`), restated: `blacksilk-tx` depends on this
+/// crate, so its `budget_is_provable` and `program_is_provable` cannot be
+/// called here. `v12_admit` checks the restatement against a copy of the
+/// V12 table that tx/tests/deploy_rules.rs pins against the real caps
+/// (`the_largest_allowed_budget_is_the_v12_table`); the copy is not linked
+/// to tx mechanically, and the program and image caps are not in that table
+/// (a cross-crate pin is open).
+const V12_FN_LOG_CYCLES: u32 = 15;
+const V12_FN_LOG_KEYS: u32 = 14;
+const V12_FN_LOG_PROGRAM: u32 = 14;
+const V12_FN_LOG_IMAGE: u32 = 14;
+const V12_LOG_ADD: u32 = 16;
+const V12_LOG_BIT: u32 = 14;
+const V12_LOG_LT: u32 = 16;
+const V12_LOG_SHIFT: u32 = 14;
+const V12_LOG_MUL: u32 = 14;
+const V12_LOG_POSEIDON: u32 = 11;
+/// The per-function maxima `[cycles, keys, add, bit, lt, shift, mul,
+/// poseidon]` that tx/tests/deploy_rules.rs pins.
+const V12_TABLE: [usize; 8] = [32_768, 16_384, 20_168, 7_192, 22_493, 7_367, 7_367, 948];
+const FIELD_NAMES: [&str; 8] = [
+    "cycles", "keys", "add", "bit", "lt", "shift", "mul", "poseidon",
+];
+/// Memory keys a padded vault program leaves for the keys its run touches
+/// outside the image (the stack): the keys budget counts every image word
+/// too (`trace::usage`), so a program whose image fills the keys cap can
+/// run within it only if it touches no key outside its image. Registering
+/// such a program is harmless: its calls fail client-side with
+/// `OverBudget`, and the deployer has paid the deploy fee. `check_fit`
+/// asserts that the room suffices.
+const KEY_ROOM: usize = 1024;
+/// `addi x0, x0, 0`.
+const NOP: u32 = 0x0000_0013;
+
+fn fields(b: &Budget) -> [usize; 8] {
+    [
+        b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+    ]
+}
+
+fn from_fields(f: [usize; 8]) -> Budget {
+    let [cycles, keys, add, bit, lt, shift, mul, poseidon] = f;
+    Budget {
+        cycles,
+        keys,
+        add,
+        bit,
+        lt,
+        shift,
+        mul,
+        poseidon,
+    }
+}
+
+/// `blacksilk_tx::px::budget_is_provable`, restated.
+fn v12_budget_ok(b: &Budget) -> bool {
+    let k = kernel_budget(MAX_FN);
+    let within = |x: usize, kx: usize, log: u32| {
+        x.checked_mul(MAX_FN)
+            .and_then(|s| s.checked_add(kx))
+            .is_some_and(|s| s <= 1usize << log)
+    };
+    b.cycles <= 1usize << V12_FN_LOG_CYCLES
+        && b.keys <= 1usize << V12_FN_LOG_KEYS
+        && within(b.add, k.add, V12_LOG_ADD)
+        && within(b.bit, k.bit, V12_LOG_BIT)
+        && within(b.lt, k.lt, V12_LOG_LT)
+        && within(b.shift, k.shift, V12_LOG_SHIFT)
+        && within(b.mul, k.mul, V12_LOG_MUL)
+        && within(b.poseidon, k.poseidon, V12_LOG_POSEIDON)
+}
+
+/// `blacksilk_tx::px::program_is_provable`, restated.
+fn v12_program_ok(p: &Program) -> bool {
+    let image = trace::image(p).len().max(MIN_HEIGHT).next_power_of_two();
+    program_table::height(p, MIN_HEIGHT) <= 1usize << V12_FN_LOG_PROGRAM
+        && image <= 1usize << V12_FN_LOG_IMAGE
+}
+
+/// Every budget field at its largest V12 value (`largest_allowed` in
+/// tx/tests/deploy_rules.rs): `K.x + MAX_FN·b.x ≤ 2^cap` for the shared
+/// tables.
+fn v12_largest() -> Budget {
+    let k = kernel_budget(MAX_FN);
+    let shared = |kx: usize, log: u32| ((1usize << log) - kx) / MAX_FN;
+    Budget {
+        cycles: 1 << V12_FN_LOG_CYCLES,
+        keys: 1 << V12_FN_LOG_KEYS,
+        add: shared(k.add, V12_LOG_ADD),
+        bit: shared(k.bit, V12_LOG_BIT),
+        lt: shared(k.lt, V12_LOG_LT),
+        shift: shared(k.shift, V12_LOG_SHIFT),
+        mul: shared(k.mul, V12_LOG_MUL),
+        poseidon: shared(k.poseidon, V12_LOG_POSEIDON),
+    }
+}
+
+/// The vault program with its code padded by `NOP`s to `code_len` words.
+/// The padding follows the vault's last instruction and is never executed;
+/// the vault has no segment above its code, so the layout stays valid.
+/// Different lengths give different program ids.
+fn padded_vault(code_len: usize) -> Arc<Program> {
+    let v = vault::program();
+    assert!(code_len >= v.code.len(), "padding cannot shorten the vault");
+    let mut code = v.code.clone();
+    code.resize(code_len, NOP);
+    Arc::new(
+        Program::new(v.entry, v.code_base, code, v.data.clone())
+            .expect("the padded vault is a valid program"),
+    )
+}
+
+/// Image words besides the code: data and the 32 registers.
+fn image_extra() -> usize {
+    let v = vault::program();
+    trace::image(&v).len() - v.code.len()
+}
+
+/// The V12 shape. Both functions run the vault (the CLAIM under `C`, the
+/// LOCK under `C2`), padded where a program table must be taller; the two
+/// programs differ.
+///
+/// `v12mem`, the memory-widest pair: every budget and program table at its
+///   V12 cap; the function output tables at the vault's 2^8 rows (22 output
+///   words; up to 2^9 are allowed with `MAX_FN_OUTPUT_WORDS` = 256 plus the
+///   prefix, a negligible difference of about 0.04 M weighted cells). Both
+///   budgets are `v12_largest()` (the V12 table: add and lt at
+///   2^16, bit, shift and mul at 2^14, Poseidon2 at 2^11 shared rows; cycles
+///   2^15 and keys 2^14 per function), and both programs have their program
+///   and image tables at 2^14 rows (`2^14 - extra - KEY_ROOM` code words).
+///   It is the budget-cap study's "every field at its cap" statement.
+fn v12_shape(name: &str) -> Shape {
+    match name {
+        "v12mem" => {
+            let top = v12_largest();
+            let len = (1 << V12_FN_LOG_IMAGE) - image_extra() - KEY_ROOM;
+            Shape {
+                programs: [padded_vault(len), padded_vault(len - 1)],
+                budgets: [top, top],
+                v12: true,
+            }
+        }
+        _ => panic!("unknown configuration {name}"),
+    }
+}
+
+/// A function's own tables in `v12_schedule_search` (log2 heights).
+#[derive(Clone, Copy, Debug)]
+struct Own {
+    code_len: usize,
+    program_log: usize,
+    image_log: usize,
+    keys_log: usize,
+    cycles_log: usize,
+}
+
+fn log2_ceil(n: usize) -> usize {
+    n.max(MIN_HEIGHT).next_power_of_two().trailing_zeros() as usize
+}
+
+/// Every tuple of indices below `sizes`, last index fastest.
+fn odometer(sizes: &[usize]) -> Vec<Vec<usize>> {
+    let mut out = vec![vec![]];
+    for &n in sizes {
+        out = out
+            .into_iter()
+            .flat_map(|p: Vec<usize>| {
+                (0..n).map(move |i| {
+                    let mut q = p.clone();
+                    q.push(i);
+                    q
+                })
+            })
+            .collect();
+    }
+    out
+}
+
+/// The longest-schedule V12 pair of vault-based functions. A proof's length grows
+/// with its FRI rounds, and the folding schedule (`honest_fri_schedule`)
+/// stops at every distinct table height, while the tallest table of every
+/// PX statement is the 2^16-row byte table. The search enumerates every
+/// allowed realization: each shared table at any height from the vault
+/// pair's to its cap; per function, keys and cycles at any height from the
+/// vault's to the cap, and a padded vault whose program and image tables are
+/// at (h, h) or (h, h + 1) rows. It keeps the longest schedule, then the
+/// most distinct heights, then the most rows, and realizes it with budgets
+/// and programs whose real `Statement::shape` is asserted to match.
+fn v12_schedule_search() -> Shape {
+    let k = kernel_budget(MAX_FN);
+    let v = vault::BUDGET;
+    let top = v12_largest();
+    let vault_len = vault::program().code.len();
+    let extra = image_extra();
+    // Shared tables: (index in `fields`, index in the shape).
+    let shared: [(usize, usize); 6] = [(2, 5), (3, 6), (4, 7), (5, 8), (6, 9), (7, 11)];
+    let (kf, vf, tf) = (fields(&k), fields(&v), fields(&top));
+    let shared_opts: Vec<Vec<usize>> = shared
+        .iter()
+        .map(|&(f, _)| {
+            let cap = log2_ceil(kf[f] + MAX_FN * tf[f]);
+            (log2_ceil(kf[f] + MAX_FN * vf[f])..=cap).collect()
+        })
+        .collect();
+    // Program variants: (code length, program log, image log, least keys log).
+    let mut lens = vec![vault_len];
+    for h in 12..=V12_FN_LOG_IMAGE as usize {
+        lens.push((1 << h) - extra - KEY_ROOM);
+        if h < V12_FN_LOG_IMAGE as usize {
+            lens.push(1 << h);
+        }
+    }
+    let mut variants: Vec<(usize, usize, usize, usize)> = Vec::new();
+    for len in lens.into_iter().filter(|&l| l >= vault_len) {
+        let p = padded_vault(len);
+        let image_len = trace::image(&p).len();
+        let pl = program_table::height(&p, MIN_HEIGHT).trailing_zeros() as usize;
+        let il = log2_ceil(image_len);
+        let kl = log2_ceil(v.keys.max(image_len + KEY_ROOM));
+        if v12_program_ok(&p)
+            && kl <= V12_FN_LOG_KEYS as usize
+            && !variants.iter().any(|x| (x.1, x.2) == (pl, il))
+        {
+            variants.push((len, pl, il, kl));
+        }
+    }
+    let mut owns: Vec<Own> = Vec::new();
+    for &(code_len, program_log, image_log, kl) in &variants {
+        for keys_log in kl..=V12_FN_LOG_KEYS as usize {
+            for cycles_log in log2_ceil(v.cycles)..=V12_FN_LOG_CYCLES as usize {
+                owns.push(Own {
+                    code_len,
+                    program_log,
+                    image_log,
+                    keys_log,
+                    cycles_log,
+                });
+            }
+        }
+    }
+    // The fixed heights: those of the vault pair.
+    let f = fixture();
+    let mut rng = ChaCha20Rng::seed_from_u64(0);
+    let kernel_out = run_case(
+        &function_case(&f, "claim_lock", 0, &mut rng, C2),
+        &vault_registry(v, v),
+    )
+    .expect("the vault pair runs");
+    let base: Vec<usize> = vault_degree_bits(kernel_out, &[v, v])
+        .iter()
+        .map(|d| d - 1)
+        .collect();
+    let heights = |sh: &[usize], o: [&Own; 2]| -> Vec<usize> {
+        let mut h = base.clone();
+        for (j, &(_, t)) in shared.iter().enumerate() {
+            h[t] = shared_opts[j][sh[j]];
+        }
+        for (e, o) in o.iter().enumerate() {
+            let b = 12 + 5 * e;
+            h[b] = o.program_log;
+            h[b + 1] = o.image_log;
+            h[b + 2] = o.keys_log;
+            h[b + 3] = o.cycles_log;
+        }
+        h
+    };
+    let shared_sizes: Vec<usize> = shared_opts.iter().map(Vec::len).collect();
+    let tuples = odometer(&shared_sizes);
+    type Best = ((usize, usize, usize), Vec<usize>, [usize; 2]);
+    let mut best: Option<Best> = None;
+    for sh in &tuples {
+        for i in 0..owns.len() {
+            // Symmetric in the two functions: i <= j covers every height set.
+            for j in i..owns.len() {
+                let h = heights(sh, [&owns[i], &owns[j]]);
+                let distinct: BTreeSet<usize> = h.iter().cloned().collect();
+                let rows: usize = h.iter().map(|&x| 1usize << x).sum();
+                let db: Vec<usize> = h.iter().map(|x| x + 1).collect();
+                let score = (
+                    blacksilk_zk::honest_fri_schedule(&db).len(),
+                    distinct.len(),
+                    rows,
+                );
+                if best.as_ref().is_none_or(|b| score > b.0) {
+                    best = Some((score, sh.clone(), [i, j]));
+                }
+            }
+        }
+    }
+    let (score, sh, [i, j]) = best.expect("the vault pair itself is a realization");
+    // Realize: shared sums `S` with `pow2(K + S) = 2^h`, split over the two
+    // functions with each part at least the vault's and at most the cap.
+    let mut b = [fields(&v), fields(&v)];
+    for (n, &(fi, _)) in shared.iter().enumerate() {
+        let h = shared_opts[n][sh[n]];
+        let sum = (1usize << h).min(kf[fi] + MAX_FN * tf[fi]) - kf[fi];
+        let b0 = tf[fi].min(sum - vf[fi]);
+        let b1 = sum - b0;
+        assert!(vf[fi] <= b0 && vf[fi] <= b1 && b1 <= tf[fi]);
+        b[0][fi] = b0;
+        b[1][fi] = b1;
+    }
+    let o = [owns[i], owns[j]];
+    for e in 0..2 {
+        b[e][0] = 1 << o[e].cycles_log;
+        b[e][1] = 1 << o[e].keys_log;
+    }
+    // Distinct programs: one word more or less where both use one variant.
+    let len1 = match (o[0].code_len == o[1].code_len, o[1].code_len == vault_len) {
+        (false, _) => o[1].code_len,
+        (true, true) => vault_len + 1,
+        (true, false) => o[1].code_len - 1,
+    };
+    let shape = Shape {
+        programs: [padded_vault(o[0].code_len), padded_vault(len1)],
+        budgets: b.map(from_fields),
+        v12: true,
+    };
+    let real: Vec<usize> = degree_bits(kernel_out, &shape.parts())
+        .iter()
+        .map(|d| d - 1)
+        .collect();
+    assert_eq!(
+        real,
+        heights(&sh, [&o[0], &o[1]]),
+        "schedule search: the realization has the searched heights"
+    );
+    println!(
+        "schedule search: {} shared-table choices x {} per function; best: {} FRI rounds, {} distinct heights, {} rows",
+        tuples.len(),
+        owns.len(),
+        score.0,
+        score.1,
+        score.2
+    );
+    shape
+}
+
+/// The V12 deploy rules on a shape, after self-checks of the restatement.
+fn v12_admit(name: &str, shape: &Shape) {
+    assert_eq!(
+        FN_RUN_LOG_CYCLES, V12_FN_LOG_CYCLES,
+        "the prover's cycle stop is the cycles cap"
+    );
+    assert_eq!(MAX_FN, 2);
+    let top = v12_largest();
+    assert_eq!(
+        fields(&top),
+        V12_TABLE,
+        "the restated caps give the pinned V12 table"
+    );
+    assert!(v12_budget_ok(&top));
+    for (i, field) in FIELD_NAMES.iter().enumerate() {
+        let mut f = fields(&top);
+        f[i] += 1;
+        assert!(!v12_budget_ok(&from_fields(f)), "{field} one above its cap");
+    }
+    assert!(v12_program_ok(&vault::program()));
+    // The program rule at its boundary: an image of exactly 2^14 words is
+    // allowed, one word more is refused.
+    let at_cap = (1 << V12_FN_LOG_IMAGE) - image_extra();
+    assert_eq!(
+        trace::image(&padded_vault(at_cap)).len(),
+        1 << V12_FN_LOG_IMAGE
+    );
+    assert!(v12_program_ok(&padded_vault(at_cap)), "image at the cap");
+    assert!(
+        !v12_program_ok(&padded_vault(at_cap + 1)),
+        "image one word above the cap"
+    );
+    for e in 0..2 {
+        assert!(
+            v12_budget_ok(&shape.budgets[e]),
+            "{name}: budget {e} {:?} is not allowed",
+            shape.budgets[e]
+        );
+        assert!(
+            v12_program_ok(&shape.programs[e]),
+            "{name}: program {e} is not allowed"
+        );
+    }
+    assert_ne!(
+        shape.programs[0].id(),
+        shape.programs[1].id(),
+        "{name}: two distinct programs"
+    );
+    println!("{name}: both budgets and both programs pass the V12 deploy rules (restated)");
+}
+
+/// The native run of every function call against its budget, as the prover
+/// checks it (`trace::usage`).
+fn check_fit(c: &Case, reg: &Registry) {
+    for (e, (contract, input)) in c.1.iter().enumerate() {
+        let (p, b) = &reg[contract];
+        let exec = blacksilk_zkvm::run(p, input, blacksilk_zkvm::MAX_CYCLES)
+            .unwrap_or_else(|t| panic!("function {e}: {t:?}"));
+        let used = trace::usage(p, &exec);
+        for ((name, u), cap) in FIELD_NAMES.iter().zip(fields(&used)).zip(fields(b)) {
+            assert!(u <= cap, "function {e}: {name} uses {u}, budget {cap}");
+        }
+        let image = trace::image(p).len();
+        println!(
+            "function {e}: {} code words, image {image}, used {:?} ({} keys outside the image), budget {:?}",
+            p.code.len(),
+            fields(&used),
+            used.keys - image,
+            fields(b)
+        );
+    }
+}
+
+/// The tables in proof order (`trace::tables`, kernel and two functions).
+const TABLE_NAMES: [&str; 23] = [
+    "byte",
+    "k.program",
+    "k.image",
+    "k.mem_init",
+    "k.cpu",
+    "alu.add",
+    "alu.bit",
+    "alu.lt",
+    "alu.shift",
+    "alu.mul",
+    "k.output",
+    "poseidon2",
+    "f0.program",
+    "f0.image",
+    "f0.mem_init",
+    "f0.cpu",
+    "f0.output",
+    "f1.program",
+    "f1.image",
+    "f1.mem_init",
+    "f1.cpu",
+    "f1.output",
+    "blind",
+];
+
+/// Million weighted cells of a statement: rows x (main width + 8 x quotient
+/// chunks + 24), the budget-cap study's measure (lookup columns omitted).
+fn weighted_cells(st: &Statement, verbose: bool) -> f64 {
+    let heights = st.shape().unwrap();
+    let db: Vec<usize> = heights
+        .iter()
+        .map(|h| h.trailing_zeros() as usize + 1)
+        .collect();
+    let airs = trace::tables(st);
+    let widths = blacksilk_zk::analysis::trace_widths(&airs);
+    let chunks = blacksilk_zk::analysis::quotient_chunks(&airs, &db);
+    let mut cells = 0f64;
+    for (t, &h) in heights.iter().enumerate() {
+        let c = h * (widths[t] + 8 * chunks[t] + 24);
+        cells += c as f64;
+        if verbose {
+            println!(
+                "    {:<12} 2^{:<2} = {h:>6} rows, width {:>3}, quotient chunks {:>2}, {:>6.2} M cells",
+                TABLE_NAMES[t],
+                h.trailing_zeros(),
+                widths[t],
+                chunks[t],
+                c as f64 / 1e6
+            );
+        }
+    }
+    cells / 1e6
+}
+
+/// Table heights, weighted cells and the budget-cap study's memory model.
+fn report(name: &str, kernel_out: usize, shape: &Shape) {
+    let st = statement(kernel_out, &shape.parts());
+    let heights = st.shape().unwrap();
+    assert_eq!(heights.len(), TABLE_NAMES.len());
+    let db: Vec<usize> = heights
+        .iter()
+        .map(|h| h.trailing_zeros() as usize + 1)
+        .collect();
+    println!("{name}: budget C  {:?}", shape.budgets[0]);
+    println!("{name}: budget C2 {:?}", shape.budgets[1]);
+    println!("{name}: table heights");
+    let cells = weighted_cells(&st, true);
+    let v = vault::BUDGET;
+    let vault_pair = [(vault::program(), v), (vault::program(), v)];
+    let base = weighted_cells(&statement(kernel_out, &vault_pair), false);
+    let distinct: BTreeSet<u32> = heights.iter().map(|h| h.trailing_zeros()).collect();
+    println!(
+        "{name}: tallest 2^{}, {} distinct heights {distinct:?}, FRI schedule {:?}",
+        heights.iter().max().unwrap().trailing_zeros(),
+        distinct.len(),
+        blacksilk_zk::honest_fri_schedule(&db)
+    );
+    println!(
+        "{name}: {cells:.1} M weighted cells (base {base:.1}); modelled peak memory L {:.0} MB, M {:.0} MB (docs/evidence/budget-cap-2026-10-04)",
+        755.0 + 141.1 * cells,
+        6446.0 + 235.0 * (cells - base)
+    );
+    if shape.v12 {
+        assert!(
+            heights.iter().all(|&h| h <= 1 << PX_MAX_LOG_HEIGHT),
+            "{name}: every table within the PX shape check"
+        );
+    }
 }
 
 // ----------------------------------------------------------------- proving
@@ -599,13 +1167,21 @@ struct Proved {
     verify_ms: Vec<f64>,
 }
 
-fn prove_case(c: &Case, budgets: &HashMap<Digest, Budget>, rng: &mut ChaCha20Rng) -> Proved {
+/// The registered function of each contract: its program and budget.
+type Registry = HashMap<Digest, (Arc<Program>, Budget)>;
+
+/// `C` and `C2` with the vault program and the given budgets.
+fn vault_registry(b0: Budget, b1: Budget) -> Registry {
+    [(C, (vault::program(), b0)), (C2, (vault::program(), b1))].into()
+}
+
+fn prove_case(c: &Case, reg: &Registry, rng: &mut ChaCha20Rng) -> Proved {
     let (w, calls) = c;
     let mut h = [0u8; 32];
     rng.fill_bytes(&mut h);
     let functions: Vec<_> = calls
         .iter()
-        .map(|(c, input)| (vault::program(), input.clone(), budgets[c]))
+        .map(|(c, input)| (reg[c].0.clone(), input.clone(), reg[c].1))
         .collect();
     let t = Instant::now();
     let (public, fcalls, proof) = if functions.is_empty() {
@@ -619,9 +1195,10 @@ fn prove_case(c: &Case, budgets: &HashMap<Digest, Budget>, rng: &mut ChaCha20Rng
     assert!(bytes.len() <= MAX_PROOF_BYTES, "{} bytes", bytes.len());
     // As a node receives it: strict decoding under the PX limits.
     let decoded = blacksilk_zk::decode_proof_with(&bytes, &prove::PROOF_LIMITS).expect("decodes");
-    let vault_id = vault::program().id();
+    let ids: HashMap<Digest, ([u8; 32], Budget)> =
+        reg.iter().map(|(c, (p, b))| (*c, (p.id(), *b))).collect();
     let registry =
-        |c: &Digest, p: &[u8; 32]| (*p == vault_id).then(|| budgets.get(c).copied()).flatten();
+        |c: &Digest, p: &[u8; 32]| ids.get(c).and_then(|(id, b)| (id == p).then_some(*b));
     let mut verify_ms = Vec::new();
     for _ in 0..3 {
         let t = Instant::now();
@@ -639,11 +1216,44 @@ fn prove_case(c: &Case, budgets: &HashMap<Digest, Budget>, rng: &mut ChaCha20Rng
     }
 }
 
-fn cmd_b2(name: &str, count: usize, dir: &Path) {
+fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
     let f = fixture();
-    let (b0, b1) = config(name);
-    assert!(registrable(&b0) && registrable(&b1));
-    let budgets: HashMap<Digest, Budget> = [(C, b0), (C2, b1)].into();
+    let shape = config(name);
+    if shape.v12 {
+        v12_admit(name, &shape);
+    } else {
+        assert!(registrable(&shape.budgets[0]) && registrable(&shape.budgets[1]));
+    }
+    let reg = shape.registry();
+    // The first case natively: kernel and function exits, prefixes, and every
+    // function's use against its budget, as the prover checks them.
+    let mut rng = ChaCha20Rng::seed_from_u64(30_000);
+    let first = function_case(&f, "claim_lock", 0, &mut rng, C2);
+    let kernel_out = run_case(&first, &reg).unwrap_or_else(|e| panic!("{name}: {e}"));
+    check_fit(&first, &reg);
+    report(name, kernel_out, &shape);
+    if name == "v12mem" {
+        // No vault-based V12 pair with budgets at least `vault::BUDGET` (the
+        // search's lower bound) has more FRI rounds, and the search's pick
+        // (most rounds, then distinct heights, then rows) folds exactly as
+        // v12mem does. Smaller budgets that still fit are not searched.
+        let s = v12_schedule_search();
+        let schedule =
+            |sh: &Shape| blacksilk_zk::honest_fri_schedule(&degree_bits(kernel_out, &sh.parts()));
+        assert_eq!(
+            schedule(&s),
+            schedule(&shape),
+            "v12mem has the search's schedule"
+        );
+        println!(
+            "{name}: no vault-based V12 pair with budgets >= the vault's has more FRI rounds; schedule {:?}",
+            schedule(&shape)
+        );
+    }
+    if check_only {
+        println!("{name}: check only, no proof");
+        return;
+    }
     let csv = dir.join("b2.csv");
     let done: BTreeSet<usize> = read_rows(&csv)
         .into_iter()
@@ -656,7 +1266,7 @@ fn cmd_b2(name: &str, count: usize, dir: &Path) {
         }
         let mut rng = ChaCha20Rng::seed_from_u64(30_000 + k as u64);
         let c = function_case(&f, "claim_lock", k, &mut rng, C2);
-        let r = prove_case(&c, &budgets, &mut rng);
+        let r = prove_case(&c, &reg, &mut rng);
         println!(
             "b2 {name} #{k}: {} bytes (nondigest {}), prove {:.1} s, verify {:?} ms, schedule {:?}",
             r.p.total, r.p.nondigest, r.prove_s, r.verify_ms, r.p.step_arity
@@ -681,7 +1291,7 @@ fn cmd_b2(name: &str, count: usize, dir: &Path) {
 
 fn cmd_p5(n_fn: usize, per_class: usize, dir: &Path) {
     let f = fixture();
-    let budgets: HashMap<Digest, Budget> = [(C, vault::BUDGET)].into();
+    let reg = vault_registry(vault::BUDGET, vault::BUDGET);
     let csv = dir.join("p5.csv");
     let rows = read_rows(&csv);
     let done: BTreeSet<usize> = rows
@@ -698,7 +1308,7 @@ fn cmd_p5(n_fn: usize, per_class: usize, dir: &Path) {
         let class = names[k % names.len()];
         let mut rng = ChaCha20Rng::seed_from_u64(((n_fn as u64 + 1) << 32) + k as u64);
         let c = case(&f, n_fn, class, k / names.len(), &mut rng, C);
-        let r = prove_case(&c, &budgets, &mut rng);
+        let r = prove_case(&c, &reg, &mut rng);
         // Exact assertion (ZP-2): everything but the pruned digests has one
         // length per shape.
         assert_eq!(
@@ -730,7 +1340,7 @@ fn cmd_p5(n_fn: usize, per_class: usize, dir: &Path) {
 
 // --------------------------------------------------------------- the check
 
-fn run_case(c: &Case) -> Result<usize, String> {
+fn run_case(c: &Case, reg: &Registry) -> Result<usize, String> {
     let (w, calls) = c;
     let public = pxkernel::transfer(
         &mut HostPerm::new(),
@@ -746,8 +1356,8 @@ fn run_case(c: &Case) -> Result<usize, String> {
     if k.exit_code != 0 || k.output != public_words(&public) {
         return Err("kernel guest diverged".into());
     }
-    for (i, (_, input)) in calls.iter().enumerate() {
-        let e = blacksilk_zkvm::run(&vault::program(), input, blacksilk_zkvm::MAX_CYCLES)
+    for (i, (c, input)) in calls.iter().enumerate() {
+        let e = blacksilk_zkvm::run(&reg[c].0, input, blacksilk_zkvm::MAX_CYCLES)
             .map_err(|t| format!("function {i}: {t:?}"))?;
         let (contract, io_hash) = &public.functions[i];
         let prefix = function_prefix(ABI_VERSION, io_hash, contract, &W);
@@ -763,19 +1373,21 @@ fn run_case(c: &Case) -> Result<usize, String> {
 
 fn cmd_check() {
     let f = fixture();
+    let vaults = vault_registry(vault::BUDGET, vault::BUDGET);
     let mut kernel_out = 0;
     for n_fn in 0..=2 {
         for class in classes(n_fn) {
             for k in 0..3 {
                 let mut rng = ChaCha20Rng::seed_from_u64(k as u64);
                 let c = case(&f, n_fn, class, k, &mut rng, C);
-                kernel_out = run_case(&c).unwrap_or_else(|e| panic!("{class} #{k}: {e}"));
+                kernel_out = run_case(&c, &vaults).unwrap_or_else(|e| panic!("{class} #{k}: {e}"));
             }
             println!("n_fn {n_fn} {class}: native kernel, guest and functions OK");
         }
     }
     let mut rng = ChaCha20Rng::seed_from_u64(1);
-    run_case(&function_case(&f, "claim_lock", 0, &mut rng, C2)).expect("claim_lock with C2");
+    run_case(&function_case(&f, "claim_lock", 0, &mut rng, C2), &vaults)
+        .expect("claim_lock with C2");
     for n_fn in 0..=2usize {
         let db = vault_degree_bits(kernel_out, &vec![vault::BUDGET; n_fn]);
         println!(
@@ -784,12 +1396,14 @@ fn cmd_check() {
             blacksilk_zk::honest_fri_schedule(&db)
         );
     }
-    for name in ["base", "coarse18", "dense18"] {
-        let (a, b) = config(name);
-        let db = vault_degree_bits(kernel_out, &[a, b]);
+    for name in CONFIGS {
+        let shape = config(name);
+        let [a, b] = shape.budgets;
+        let db = degree_bits(kernel_out, &shape.parts());
         println!(
-            "{name}: registrable {}, degree bits {db:?}, LDE heights {:?}, schedule {:?}",
+            "{name}: registrable (R7-5) {}, V12 {}, degree bits {db:?}, LDE heights {:?}, schedule {:?}",
             registrable(&a) && registrable(&b),
+            shape.v12,
             lde_heights(&db),
             blacksilk_zk::honest_fri_schedule(&db)
         );
@@ -1171,7 +1785,11 @@ fn cmd_model(dir: &Path) {
     let kernel_out = {
         let f = fixture();
         let mut rng = ChaCha20Rng::seed_from_u64(0);
-        run_case(&function_case(&f, "claim_lock", 0, &mut rng, C)).unwrap()
+        run_case(
+            &function_case(&f, "claim_lock", 0, &mut rng, C),
+            &vault_registry(vault::BUDGET, vault::BUDGET),
+        )
+        .unwrap()
     };
     let base_db = vault_degree_bits(kernel_out, &[vault::BUDGET, vault::BUDGET]);
     assert_eq!(base_db, base_parts.degree_bits);
@@ -1526,9 +2144,18 @@ fn main() {
     };
     match args.get(1).map(String::as_str) {
         Some("check") => cmd_check(),
-        Some("b2") => cmd_b2(&args[2], args[3].parse().unwrap(), &dir(4)),
+        Some("b2") => cmd_b2(
+            &args[2],
+            args[3].parse().unwrap(),
+            &dir(4),
+            match args.get(5).map(String::as_str) {
+                None => false,
+                Some("--check-only") => true,
+                Some(x) => panic!("unknown flag {x}"),
+            },
+        ),
         Some("p5") => cmd_p5(args[2].parse().unwrap(), args[3].parse().unwrap(), &dir(4)),
         Some("model") => cmd_model(&dir(2)),
-        _ => eprintln!("usage: freeze_b2_b3 check | b2 <config> <count> <dir> | p5 <n_fn> <per class> <dir> | model <dir>"),
+        _ => eprintln!("usage: freeze_b2_b3 check | b2 <config> <count> <dir> [--check-only] | p5 <n_fn> <per class> <dir> | model <dir>"),
     }
 }
