@@ -751,6 +751,43 @@ mod tests {
         assert_eq!(b.header.output_count, 4);
     }
 
+    /// The coinbase pays `reward + fees`, the amount block rule B3
+    /// (`tx::validate`, `BlockError::CoinbaseAmount`) requires exactly: the
+    /// reward plus the fees of the block's other transactions, which the
+    /// node reports as the template's `fees`.
+    #[test]
+    fn the_coinbase_pays_the_reward_plus_the_fees() {
+        use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(4);
+        let (keys, _) = WalletKeys::generate(&mut rng);
+        let payout = keys.address(SubaddressIndex::PRIMARY);
+        let template = |reward: u64, fees: u64| rpc::Template {
+            height: 1,
+            prev_id: "00".repeat(32),
+            difficulty: 1,
+            seed_id: "00".repeat(32),
+            min_timestamp: 0,
+            version: 1,
+            reward,
+            fees,
+            txs: vec![],
+            output_count: 0,
+            output_peaks: vec![],
+            px_root: "00".repeat(32),
+        };
+        for (reward, fees) in [(10, 7), (5_000_000_000, 123_456), (1, 0)] {
+            let b = build_block(&template(reward, fees), &payout, &[1; 32], 0, &mut rng).unwrap();
+            let Some(Transaction::Coinbase(cb)) = b.txs.first() else {
+                panic!("the first transaction is the coinbase");
+            };
+            // B3's `allowed`: the reward plus the fees, in u128.
+            let allowed = reward as u128 + fees as u128;
+            assert_eq!(cb.total(), allowed, "reward {reward}, fees {fees}");
+            assert_eq!(b.txs.len(), 1);
+        }
+    }
+
     #[test]
     fn found_nonce_verifies_with_consensus() {
         let params = ChainParams::regtest();

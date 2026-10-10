@@ -139,3 +139,60 @@ const _: () = assert!(
         + FREQ_ISTORE as u32
         == 256
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::hint::black_box;
+
+    /// [`salt_is_valid`] at run time (the compile-time asserts above only see
+    /// the two valid salts, so a validator that accepted everything, or that
+    /// compared the length the wrong way, survived mutation testing: G1.1
+    /// pilot). The input goes through `black_box` so the call is not folded.
+    fn valid(salt: &[u8]) -> bool {
+        salt_is_valid(black_box(salt))
+    }
+
+    #[test]
+    fn salt_validator_accepts_the_deployed_salts() {
+        assert!(valid(ARGON_SALT));
+        // The reference salt is valid too: it differs from BlackSilk's (the
+        // assert above), but the validator itself does not require that.
+        assert!(valid(ARGON_SALT_MONERO));
+        assert_eq!(
+            ARGON_SALT_MONERO.len(),
+            8,
+            "the reference salt is at the minimum"
+        );
+        // Longer salts without a NUL are fine.
+        assert!(valid(&[0xFF; 64]));
+        assert!(valid(b"123456789"));
+    }
+
+    #[test]
+    fn salt_validator_refuses_a_short_salt() {
+        for len in 0..8 {
+            let salt = &b"BlackSil"[..len];
+            assert!(!valid(salt), "a {len}-byte salt is below the minimum of 8");
+        }
+        // The boundary: 7 bytes refused, 8 accepted.
+        assert!(!valid(b"1234567"));
+        assert!(valid(b"12345678"));
+    }
+
+    #[test]
+    fn salt_validator_refuses_a_nul_byte_anywhere() {
+        for len in [8, 9, ARGON_SALT.len()] {
+            for pos in [0, 1, len / 2, len - 2, len - 1] {
+                let mut salt = vec![b'x'; len];
+                assert!(valid(&salt));
+                salt[pos] = 0;
+                assert!(!valid(&salt), "NUL at {pos} of {len}");
+            }
+        }
+        let mut salt = ARGON_SALT.to_vec();
+        salt.push(0);
+        assert!(!valid(&salt), "a trailing NUL (C-string style) is refused");
+        assert!(!valid(&[0; 8]));
+    }
+}
