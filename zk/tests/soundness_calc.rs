@@ -424,3 +424,69 @@ fn collision_bits_is_the_floor_of_the_merkle_extractability_bound() {
     assert!((122.5..122.7).contains(&log_q), "{log_q}");
     assert_eq!(params::COLLISION_BITS, log_q.floor() as usize);
 }
+
+/// `params::security` and `params::security_report` evaluate the shape on the
+/// **committed** domain, `log_trace_length = log_height + 1` (zero knowledge
+/// doubles the trace). Inside the envelope the headline figures do not move
+/// with the domain (the unique-decoding query term changes by < 0.1 bit, the
+/// Johnson figure is the commitment cap), so the input is pinned on terms
+/// that do, recomputed here from p3-security 0.7.0's formulas:
+///
+/// - `security_report`, DEEP-ALI term of the unique-decoding regime
+///   (p3-security `deep::deep_ali_error`, list size 1): with k = 2^(h+1),
+///   D = 3, max_combo = 2 (BlackSilk's `local`/`next` rows), the factor is
+///   max(D·(k + 1) + (k − 1), (c + 1)·k + 1) with c = 2 quotient chunks;
+///   at h = 8, k = 512: max(3·513 + 511, 3·512 + 1) = 2050, so the term is
+///   247 − log2(2050) bits (247 = `CHALLENGE_FIELD_BITS`). A domain of 2^8
+///   (h·1) or 2^7 (h − 1) gives 247 − log2(1026) or 247 − log2(514).
+/// - `security`, unique-decoding bits at a 2-row trace (h = 1), where the
+///   query term binds and depends visibly on the domain: α = (1 + ρ⁺)/2 with
+///   ρ⁺ = (k + 2)/(k·2^3) (p3-security `proximity::alpha_udr`); k = 4 gives
+///   α = 0.59375 and 20 − 108·log2(α) ≈ 101.22, floored to 101. The other
+///   terms do not bind there: no FRI commit round (the domain 2^5 is below
+///   the final polynomial 2^6), one batched function (no batching term),
+///   ALI and DEEP near 247, the commitment cap 122. k = 2 (h·1) gives
+///   α = 0.625, 93 bits; k = 1 (h − 1) gives a zero-length trace, 0 bits.
+#[test]
+fn the_security_figures_are_computed_on_the_committed_domain() {
+    // p3-security 0.7.0 `report::DEEP_LABEL`, spelled out (this file shares
+    // no code with p3-security).
+    const DEEP_LABEL: &str = "deep-ali";
+    let shape = ProofShape {
+        constraints: 1,
+        max_degree: 3,
+        committed_columns: 1,
+        log_height: params::MIN_LOG_HEIGHT,
+    };
+    let report = params::security_report(&shape);
+    let deep = report
+        .udr
+        .terms()
+        .iter()
+        .find(|t| t.label == DEEP_LABEL)
+        .expect("a DEEP-ALI term")
+        .bits
+        .bits();
+    let k = (1u64 << (params::MIN_LOG_HEIGHT + 1)) as f64;
+    let factor = (3.0 * (k + 1.0) + (k - 1.0)).max(3.0 * k + 1.0);
+    assert_eq!(factor, 2050.0);
+    let expected = params::CHALLENGE_FIELD_BITS as f64 - factor.log2();
+    assert!((deep - expected).abs() < 1e-9, "{deep} vs {expected}");
+
+    let tiny = ProofShape {
+        constraints: 1,
+        max_degree: 1,
+        committed_columns: 1,
+        log_height: 1,
+    };
+    let k = 4.0f64;
+    let alpha = (1.0 + (k + 2.0) / (k * (1u64 << params::LOG_BLOWUP) as f64)) / 2.0;
+    assert_eq!(alpha, 0.59375);
+    let query = params::QUERY_POW_BITS as f64 - params::NUM_QUERIES as f64 * alpha.log2();
+    assert_eq!(query.floor(), 101.0);
+    assert_eq!(params::security(&tiny).unique_decoding_bits, 101);
+    assert_eq!(
+        params::security_report(&tiny).udr.security_bits().floor(),
+        101.0
+    );
+}
