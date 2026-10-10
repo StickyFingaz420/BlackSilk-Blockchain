@@ -4223,3 +4223,20 @@ networks except the build-commit header line).
   with the new list: no earlier commit touched them without a trailer.
 - **Nit:** the revision counts are clarified (item 11: 16 → 18 combined from
   `5c283a4`; item 13: 17 → 18 for this record alone).
+
+### Follow-up (B2 measurement, 2026-10-10)
+
+Item 12 (i) is resolved for the memory-widest pair; evidence and documentation only, no
+rule or pin changes. GitHub Actions run 38007856183 (`px-widest.yml`, branch
+`gate/b2-v12-shape` at `1c2aed7`, `config=v12mem`, `count=1`, `swap=on`; ubuntu-24.04,
+4 vCPU, 15,988 MiB) proved and verified the kernel plus two padded vault functions with
+every budget and program table at its V12 cap (68.5 M weighted cells, FRI schedule
+[1, 1, 1, 1, 1, 3, 3]); evidence docs/evidence/b2-v12mem-2026-10-10/README.md.
+- Peak RSS 10,585 MiB (`/usr/bin/time -v`), no swap used, lowest available memory
+  4,466 MiB, prover exit 0, no OOM: within the model's 10,413 (L) to 13,064 (M) range.
+- Proof 3,673,891 bytes (non-digest 3,316,109), below 3.8 MB and `MAX_PROOF_BYTES`;
+  verification passed (about 344 ms); proving 278.6 s.
+- Still open: the size-widest V12 shape (non-vault programs, output tables at 2^9,
+  about 3.70 / 3.78 MB by model) is not measured, so the proof-size bound remains a
+  model; the example restates the V12 caps (px cannot depend on tx) and the
+  restatement is not yet pinned against tx; one run on one runner class.
