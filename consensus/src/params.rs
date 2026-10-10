@@ -447,6 +447,39 @@ mod tests {
         assert_eq!(p.check(), Err(ParamsError::Genesis));
     }
 
+    /// Each field of the genesis well-formedness check, corrupted alone on
+    /// every network, is refused: no clause of the `||` chain may be masked by
+    /// another (G1.1 pilot: `||` → `&&` at the output count, output root and
+    /// PX root survived because no test corrupted them one at a time).
+    #[test]
+    fn check_refuses_each_genesis_field_alone() {
+        type Edit = fn(&mut BlockHeader);
+        let cases: [(&str, Edit); 12] = [
+            ("height", |g| g.height = 1),
+            ("prev_id", |g| g.prev_id = [1; 32]),
+            ("tx_root", |g| g.tx_root = [1; 32]),
+            ("output_count", |g| g.output_count = 1),
+            ("output_count max", |g| g.output_count = u64::MAX),
+            ("output_root", |g| g.output_root = [1; 32]),
+            ("output_root last byte", |g| g.output_root[31] = 1),
+            // The all-zero root is not the empty PX tree's root.
+            ("px_root zero", |g| g.px_root = [0; 32]),
+            ("px_root one bit", |g| g.px_root[0] ^= 1),
+            ("difficulty", |g| g.difficulty += 1),
+            ("version", |g| g.version += 1),
+            ("nonce", |g| g.nonce ^= 1),
+        ];
+        assert_ne!(crate::genesis::EMPTY_PX_ROOT, [0; 32]);
+        for n in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+            for (field, edit) in cases {
+                let mut p = ChainParams::for_network(n);
+                assert_eq!(p.check(), Ok(()), "{n:?} before {field}");
+                edit(&mut p.genesis);
+                assert_eq!(p.check(), Err(ParamsError::Genesis), "{n:?}: {field}");
+            }
+        }
+    }
+
     /// The genesis blocks are consensus constants. Any change to the header format,
     /// id hashing or genesis parameters changes these ids and must be deliberate.
     #[test]
