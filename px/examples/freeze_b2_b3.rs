@@ -657,9 +657,11 @@ fn lde_heights(db: &[usize]) -> BTreeSet<usize> {
 /// The V12 deploy caps (record `px-deploy-row-caps`; `blacksilk-tx` params
 /// `PX_FN_LOG_*` and `PX_LOG_*`), restated: `blacksilk-tx` depends on this
 /// crate, so its `budget_is_provable` and `program_is_provable` cannot be
-/// called here. `v12_admit` checks the restatement against the V12 table
-/// that tx/tests/deploy_rules.rs pins against the real caps
-/// (`the_largest_allowed_budget_is_the_v12_table`).
+/// called here. `v12_admit` checks the restatement against a copy of the
+/// V12 table that tx/tests/deploy_rules.rs pins against the real caps
+/// (`the_largest_allowed_budget_is_the_v12_table`); the copy is not linked
+/// to tx mechanically, and the program and image caps are not in that table
+/// (a cross-crate pin is open).
 const V12_FN_LOG_CYCLES: u32 = 15;
 const V12_FN_LOG_KEYS: u32 = 14;
 const V12_FN_LOG_PROGRAM: u32 = 14;
@@ -1231,9 +1233,10 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
     check_fit(&first, &reg);
     report(name, kernel_out, &shape);
     if name == "v12mem" {
-        // No vault-based V12 pair has more FRI rounds, and the search's
-        // pick (most rounds, then distinct heights, then rows) folds exactly
-        // as v12mem does.
+        // No vault-based V12 pair with budgets at least `vault::BUDGET` (the
+        // search's lower bound) has more FRI rounds, and the search's pick
+        // (most rounds, then distinct heights, then rows) folds exactly as
+        // v12mem does. Smaller budgets that still fit are not searched.
         let s = v12_schedule_search();
         let schedule =
             |sh: &Shape| blacksilk_zk::honest_fri_schedule(&degree_bits(kernel_out, &sh.parts()));
@@ -1243,7 +1246,7 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
             "v12mem has the search's schedule"
         );
         println!(
-            "{name}: no vault-based V12 pair has more FRI rounds; schedule {:?}",
+            "{name}: no vault-based V12 pair with budgets >= the vault's has more FRI rounds; schedule {:?}",
             schedule(&shape)
         );
     }

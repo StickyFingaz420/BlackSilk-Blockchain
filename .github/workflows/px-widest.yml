@@ -17,7 +17,8 @@ name: PX widest-proof measurement
 #   allowed; negligible, about +0.04 M weighted cells).
 #   docs/evidence/budget-cap-2026-10-04: 68.5 million weighted cells,
 #   modelled 10,410 MiB (fit L) to 13,060 MiB (marginal M).
-#   No vault-based V12 pair has more FRI rounds (checked by the example).
+#   No vault-based V12 pair with budgets at least the vault's has more FRI
+#   rounds (checked by the example; smaller budgets are not searched).
 #   Its proof is not the size-widest V12 proof: the study's size-widest shape
 #   needs function tables at 2^9 and 2^10 rows, which only programs much
 #   smaller than the vault reach; that shape is not measured here.
