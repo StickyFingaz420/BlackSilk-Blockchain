@@ -1027,8 +1027,10 @@ frozen kernel) or 2 one-function or two-function vault calls (about 3.0 MB and
 the former deploy rule the widest registrable shape was modelled at about 4.09–4.13 MB,
 above the 3.8 MB budget (freeze gate B2 failed). The deploy-time row caps (V12,
 px-deploy-row-caps, merged in f2b7fbd) bring the widest shape to about 3.70 MB by model
-(3.78 MB worst over the query positions); 2 such proofs fit in a block. Its prover
-memory is modelled at 10.4–13.1 GB, not measured (docs/evidence/budget-cap-2026-10-04/).
+(3.78 MB worst over the query positions); 2 such proofs fit in a block. Prover
+memory is modelled at 10.4–13.1 GB (docs/evidence/budget-cap-2026-10-04/) and measured
+at 10,585 MiB for the memory-widest pair, one run on one 16 GB runner
+(docs/evidence/b2-v12mem-2026-10-10/); the size-widest shape is not measured.
 
 ## 11. Security notes for operators
 

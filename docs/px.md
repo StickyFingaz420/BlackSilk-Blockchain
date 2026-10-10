@@ -536,7 +536,7 @@ private. Tests (`px/tests/unified.rs`):
 | Transfer proof | **about 2.40 MB** (60 proofs: 2,393,010–2,413,554 bytes), proving 49.6–60.0 s, **verifying 0.20–0.33 s**, peak prover memory 3,622 MB |
 | Kernel + one function (vault LOCK or CLAIM) | **about 3.00 MB** (30 proofs: 2,995,472–3,008,208 bytes), proving 60.3–67.1 s, verifying 0.26–0.36 s, 4,339 MB |
 | Kernel + two functions (the vault pair) | **about 3.63 MB** (30 proofs: 3,619,591–3,637,159 bytes), proving 94.9–115.3 s, verifying 0.31–0.39 s, 6,446 MB |
-| Widest PX proof (V12 deploy caps) | **3.70 MB expected, 3.78 MB worst over the query positions, by model** (not measured; the model is exact on all 34 measured two-function proofs). Under the earlier R7-5 rule it was 4.09–4.13 MB by model, above the 3.8 MB bound: freeze gate B2 failed, and V12 is the fix |
+| Widest PX proof (V12 deploy caps) | **3.70 MB expected, 3.78 MB worst over the query positions, by model** (the size-widest shape is not measured; the model is exact on all 34 measured two-function proofs). The memory-widest V12 pair (vault programs at every cap) measured **3.67 MB** (3,673,891 bytes), proving 278.6 s, verifying 0.34 s, **10,585 MiB** peak (one GitHub runner, 2026-10-10). Under the earlier R7-5 rule it was 4.09–4.13 MB by model, above the 3.8 MB bound: freeze gate B2 failed, and V12 is the fix |
 | PX transaction (encoded) | ~2.05 MB (bridge-in with one v1 input; BS-ZK-2, historical: proof 2.04 MB) |
 | Record ciphertext | 1,241 bytes per output |
 
@@ -552,9 +552,11 @@ bound every statement: the widest PX proof is about 3.70 MB (3.78 MB worst over 
 query positions) and a call of any two registered functions is modelled at
 10.4–13.1 GB of prover memory, so the proving class for arbitrary contracts is a
 **16 GB** device. **8 GB** devices can prove transfers, single calls and the vault pair
-(6.45 GB measured for the vault pair). The 16 GB figure is a model fitted to measured
-peaks, not a measurement of the memory-widest pair (reviews/v3-consensus-changes.md,
-`px-deploy-row-caps`, items 8 and 12).
+(6.45 GB measured for the vault pair). The memory figure is **measured for the
+memory-widest pair**: 10,585 MiB peak RSS, no swap, within the model range, on one
+16 GB GitHub runner in one run (evidence/b2-v12mem-2026-10-10/README.md); the
+size-widest shape is modelled only (reviews/v3-consensus-changes.md,
+`px-deploy-row-caps`, items 8 and 12 and the B2 measurement follow-up).
 
 **Verification cost** was 1.3–1.5 s, 76% of it spent recommitting the public tables
 on every verification. They are now periodic columns the verifier evaluates itself

@@ -935,7 +935,7 @@ The supply-chain gate (`.github/scripts/third-party-gate.sh`, CI job `gates`) ch
 | Kernel + one function (vault LOCK or CLAIM) | about 3.0 MB | about 60–67 s | about 0.26–0.36 s | about 4.3 GB |
 | Kernel + two functions (the vault pair) | about 3.63 MB | about 95–115 s | about 0.31–0.39 s | about 6.4 GB |
 
-**By model, not measured** (deploy-time row caps V12, freeze gate B2): the widest PX proof a deploy can lead to is about **3.70 MB** (3.78 MB worst over the query positions), below the 3.8 MB bound. Prover memory for the memory-widest pair is **modelled** at 10.4 to 13.1 GB, so proving arbitrary two-function calls needs a 16 GB device; 8 GB devices prove transfers, single calls and the vault pair. **Why the caps:** under the earlier deploy rule the widest registrable proof was about 4.09 to 4.13 MB by model and gate B2 **failed**; V12 caps every function's budget so that any two fit with the kernel (decisions "px-deploy-row-caps (V12)").
+**Size by model, memory measured** (deploy-time row caps V12, freeze gate B2): the widest PX proof a deploy can lead to is about **3.70 MB** (3.78 MB worst over the query positions) by model, below the 3.8 MB bound; that size-widest shape is not measured. Prover memory for the memory-widest pair is **measured** at 10,585 MiB peak, no swap, within the 10.4 to 13.1 GB model (one 16 GB GitHub runner, one run; its proof, 3.67 MB, verified; [evidence](docs/evidence/b2-v12mem-2026-10-10/README.md)), so proving arbitrary two-function calls needs a 16 GB device; 8 GB devices prove transfers, single calls and the vault pair. **Why the caps:** under the earlier deploy rule the widest registrable proof was about 4.09 to 4.13 MB by model and gate B2 **failed**; V12 caps every function's budget so that any two fit with the kernel (decisions "px-deploy-row-caps (V12)").
 
 **Block budget.** PX and deploy bytes share a separate **8 MiB** budget per block: at the measured sizes, **3 transfers or 2 calls** per 2-minute block. Proof size is the main open problem; aggregation (recursion) is a design study only ([aggregation-study.md](docs/reviews/aggregation-study.md)).
 
@@ -967,7 +967,7 @@ It is a **demonstration, not a finished contract**:
 
 - No external review of Poseidon2 and the `Hk` constructions, the kernel statement, the zkVM circuits, the hybrid delivery combiner or the PX consensus rules ([px.md §10](docs/px.md)).
 - The BVM-1 AIR has internal mutation evidence only, which is not a proof of soundness; no mutation run covers the consensus code added after run E ([STATUS.md §5](docs/STATUS.md)).
-- Prover memory for the widest V12 pair is modelled, not measured; proof sizes were not re-measured under BS-ZK-4.
+- Prover memory for the memory-widest V12 pair is measured once, on one 16 GB runner; the size-widest V12 proof is modelled, not measured; the other proof sizes were not re-measured under BS-ZK-4.
 - Verifier selection by (epoch, ABI) for a second kernel generation is designed, not implemented ([contracts.md §4.2](docs/contracts.md)).
 - Proof identity across operating systems and CPU architectures is not tested ([third_party/README.md](third_party/README.md)).
 
@@ -1302,7 +1302,7 @@ The full lists are STATUS §6 (accepted limitations) and §3.1 (decided but not 
 |---|---|
 | **Not audited, not launched, not frozen.** See the status banner and [Current status](#current-status) | [STATUS.md](docs/STATUS.md) |
 | **PoW honest majority is nominal (K1).** The salt stops only zero-effort `rx/0` redirection; a salted JIT miner or rented CPUs can out-mine a small testnet and reorganize it. No reorganization-depth limit or checkpoint (K4); park-on-deep-reorg is **planned** | STATUS §6; [testnet.md §12.6](docs/testnet.md) |
-| **PX resource needs.** Proofs about 2.4 to 3.6 MB (**measured**), widest about 3.70 MB (**modelled**); proving peaks about 3.6 to 6.4 GB (**measured**); the memory-widest pair 10.4 to 13.1 GB (**modelled, not measured**). Arbitrary contracts need a 16 GB device (**modelled**). 3 transfers or 2 calls fit a block | [Proof sizes](#proof-sizes-proving-cost-and-the-block-budget) |
+| **PX resource needs.** Proofs about 2.4 to 3.6 MB (**measured**), widest about 3.70 MB (**modelled**); proving peaks about 3.6 to 6.4 GB (**measured**); the memory-widest pair 10,585 MiB (**measured**, one run, within the 10.4 to 13.1 GB model). Arbitrary contracts need a 16 GB device (**measured** for the memory-widest pair; the size-widest shape is modelled). 3 transfers or 2 calls fit a block | [Proof sizes](#proof-sizes-proving-cost-and-the-block-budget) |
 | **Memory growth.** Block bodies and undo data stay in memory; every restart re-validates every block and PX proof (PX-F1 to PX-F3) | STATUS §6 |
 | **Network privacy.** Unpadded frames reveal which transactions a node originates (a PX transaction is unmistakable even over Tor); the handshake is recognizable; block origin is not protected; no onion-only outbound mode; no I2P; eclipse mitigations not tested against a real Sybil attack | [Networking](#networking); [p2p.md §1, §11](docs/p2p.md) |
 | **Wallet.** No Tor or SOCKS support; plaintext HTTP to its node; no view-only mode in the CLI; only regtest wallets can be created today | [Wallets](#wallets) |
@@ -1324,7 +1324,7 @@ The main open gates; the full list is in [STATUS.md §5](docs/STATUS.md).
 | Gate | What remains | Source |
 |---|---|---|
 | Mutation testing | Finish run F (`replay.rs`, the zk verify, config and params path, `randomx/`, both fingerprint modules, the supply audit) and re-run the invalidated chain mutants; run a census of the consensus code added after run E (PX-R, RX-SALT, the output root and mining blob, the RandomX interpreter rewrite) with zero unexplained survivors | STATUS §5, mutation-testing row |
-| B2 memory measurement | Measure prover memory for the memory-widest PX pair, so far only modelled at 10.4 to 13.1 GB; a CI measurement is pending | STATUS §5, B2 row |
+| B2 size-widest measurement | Prover memory for the memory-widest PX pair is measured (10,585 MiB, within the model); still open: prove the size-widest V12 shape (non-vault programs, about 3.70 to 3.78 MB by model) and pin the V12 caps restated in the measuring example against tx | STATUS §5, B2 row |
 | Freeze-commit verification | The full test suite on the freeze commit, including the PX-proving tests; every CI job green on GitHub; the fingerprint-mutation script re-run | STATUS §5; decisions "RT-FREEZE-V" |
 | Full-mode RandomX against the reference | B4 reproduced the known answers in **light mode only**; full-mode hashing has not been run against the reference | STATUS §5, B4 row |
 | Labnet reruns | The quiet-window reruns (ring topology, address relay, late joiner) | STATUS §5, labnet row |
