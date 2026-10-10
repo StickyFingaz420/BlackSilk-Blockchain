@@ -69,7 +69,12 @@ at its V12 cap:
 - Size: **68.5 M weighted cells** (the vault pair, the earlier measured base: 40.3 M);
   7 distinct heights, FRI schedule [1, 1, 1, 1, 1, 3, 3]. The example's schedule search
   (216 shared-table choices × 27 per function) finds no vault-based V12 pair with more
-  FRI rounds.
+  FRI rounds among pairs whose budgets are at least the vault's own budget (each
+  search range starts at `vault::BUDGET`, about 6 % above the vault's measured use).
+  A deployable pair with smaller budgets that still fit the run could reach lower
+  table heights and so possibly one more distinct height and FRI round; that case is
+  not searched (open). The log line "no vault-based V12 pair has more FRI rounds"
+  in the excerpt carries the same limit.
 
 The table heights, widths and cells per table are in the excerpt (the "Shape and
 admission" lines).
