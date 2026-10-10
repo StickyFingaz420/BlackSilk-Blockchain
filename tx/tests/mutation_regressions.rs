@@ -374,23 +374,7 @@ fn validate_cached_body(
     view: &PoolView,
     body: Vec<Transaction>,
 ) -> Result<(), BlockError> {
-    let mut net_rng = rng(2);
-    let fees: u64 = body.iter().map(Transaction::fee).sum();
-    let secret = net.miner.keys.hedge_secret();
-    let coinbase = blacksilk_tx::builder::build_coinbase(
-        net.height(),
-        &[Payment {
-            address: net.miner.primary(),
-            amount: REWARD + fees,
-        }],
-        &secret,
-        &mut net_rng,
-    )
-    .unwrap();
-    let mut txs = vec![Transaction::Coinbase(coinbase)];
-    txs.extend(body);
-    let ctx = net.context(&txs);
-    validate_block_transactions_cached(&txs, &ctx, view, &net.rules, &mut net_rng, &|_| true)
+    validate_cached_body_with(net, view, body, |_| {})
 }
 
 /// [`validate_cached_body`] for a body of PX transactions.
@@ -1005,4 +989,85 @@ fn px_digest_words_must_be_canonical_field_elements() {
             );
         }
     }
+}
+
+/// B-PXR: the header's `px_root` must be the PX tree's root after the
+/// block's commitments, exactly. A coinbase-only block (no commitments: the
+/// parent's root) and a block of two PX withdrawals (their commitments
+/// appended), both valid as committed, are refused with `PxRootMismatch`
+/// when one bit of the header's root is flipped, although the tree has room
+/// (`px_root_after` is `Some`).
+#[test]
+fn b_pxr_a_header_px_root_one_bit_off_is_refused() {
+    let mut net = TestNet::new(87, 1);
+    // Coinbase only.
+    let txs = vec![net.coinbase(0)];
+    let ctx = net.context(&txs);
+    assert!(net.chain.px_root_after(&[]).is_some());
+    let check = |ctx: &blacksilk_tx::BlockContext| {
+        validate_block_transactions_cached(&txs, ctx, &net.chain, &net.rules, &mut rng(3), &|_| {
+            false
+        })
+    };
+    assert_eq!(check(&ctx), Ok(()));
+    for bit in [0usize, 7, 255] {
+        let mut bad = ctx;
+        bad.px_root[bit / 8] ^= 1 << (bit % 8);
+        assert_eq!(check(&bad), Err(BlockError::PxRootMismatch), "bit {bit}");
+    }
+    // Two withdrawals (their proofs vouched for by the cache, as in
+    // `px4_the_pool_evolves_in_block_order`), committing four leaves.
+    let view = PoolView {
+        inner: &net.chain,
+        pool: (2 * PX_STANDARD_FEE + 1_200) as u128,
+        registered: None,
+    };
+    let pxs = [withdrawal(10, 500), withdrawal(20, 700)];
+    let commitments: Vec<Digest> = pxs.iter().flat_map(|t| t.commitments).collect();
+    assert!(!commitments.is_empty());
+    assert!(view.px_root_after(&commitments).is_some());
+    let body: Vec<Transaction> = pxs
+        .iter()
+        .map(|t| Transaction::Px(Box::new(t.clone())))
+        .collect();
+    assert_eq!(
+        validate_cached_body_with(&net, &view, body.clone(), |_| {}),
+        Ok(())
+    );
+    for bit in [0usize, 128, 255] {
+        assert_eq!(
+            validate_cached_body_with(&net, &view, body.clone(), |c| c.px_root[bit / 8] ^=
+                1 << (bit % 8)),
+            Err(BlockError::PxRootMismatch),
+            "bit {bit}"
+        );
+    }
+}
+
+/// [`validate_cached_body`] with the header context altered by `tamper`
+/// after it was computed honestly.
+fn validate_cached_body_with(
+    net: &TestNet,
+    view: &PoolView,
+    body: Vec<Transaction>,
+    tamper: impl Fn(&mut blacksilk_tx::BlockContext),
+) -> Result<(), BlockError> {
+    let mut net_rng = rng(2);
+    let fees: u64 = body.iter().map(Transaction::fee).sum();
+    let secret = net.miner.keys.hedge_secret();
+    let coinbase = blacksilk_tx::builder::build_coinbase(
+        net.height(),
+        &[Payment {
+            address: net.miner.primary(),
+            amount: REWARD + fees,
+        }],
+        &secret,
+        &mut net_rng,
+    )
+    .unwrap();
+    let mut txs = vec![Transaction::Coinbase(coinbase)];
+    txs.extend(body);
+    let mut ctx = net.context(&txs);
+    tamper(&mut ctx);
+    validate_block_transactions_cached(&txs, &ctx, view, &net.rules, &mut net_rng, &|_| true)
 }
