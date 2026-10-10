@@ -436,6 +436,26 @@ mod tests {
         assert!(e.to_string().contains("expected"), "{e}");
     }
 
+    /// The start-up self-test really hashes its vectors: the time it reports
+    /// covers building four 256 MiB Argon2 caches and nine light-mode hashes,
+    /// which cannot take under a millisecond. Its only output is that
+    /// duration, so this is the observable that rules out a hollow
+    /// `Ok(Duration::ZERO)` (G1.1 pilot: `self_test_light -> Ok(Default)`
+    /// survived). That it uses the full start-up set (1a..1f, bs-1a..bs-1c) is
+    /// pinned by `the_vectors_are_the_reference_ones`; that a wrong answer
+    /// fails, by `the_self_test_passes_and_detects_a_wrong_answer`.
+    #[test]
+    fn the_start_up_self_test_does_the_work() {
+        let took = self_test_light().expect("this build hashes the reference vectors");
+        assert!(took > Duration::ZERO, "{took:?}");
+        assert!(took >= Duration::from_millis(1), "{took:?}");
+        let names: Vec<&str> = START_UP_VECTORS.iter().map(|v| v.name).collect();
+        assert_eq!(
+            names,
+            ["1a", "1b", "1c", "1d", "1e", "1f", "bs-1a", "bs-1b", "bs-1c"]
+        );
+    }
+
     /// The dataset check compares the items it is given with the cache's
     /// (a dataset of 2 GiB is too big for a unit test: the item source is
     /// the cache itself here, then one corrupted item).
