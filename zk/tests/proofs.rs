@@ -822,3 +822,167 @@ fn every_merkle_cap_root_count_mutation_is_refused() {
 fn cap_with_roots<T: serde::de::DeserializeOwned>(roots: &[[Val; 8]]) -> T {
     postcard::from_bytes(&postcard::to_allocvec(roots).unwrap()).unwrap()
 }
+
+/// Liveness at the height limit: a table exactly at its `max_log_heights`
+/// entry is allowed, in `prove` and in `verify` (every PX proof has such
+/// tables: the byte table at 16, the blinding table at `MIN_LOG_HEIGHT`).
+/// The honest witness has a 2^8-row counter and a 2^9-row range table; the
+/// limits `[8, 9]` are exactly its degree bits minus the zero-knowledge
+/// doubling. Lowering either entry by one is refused, on the table it bounds.
+#[test]
+fn tables_exactly_at_their_height_limit_prove_and_verify() {
+    let (traces, pv) = witness(3, 256, 512);
+    let exact = [8usize, 9];
+    let proof = prove(&prover(40), &AIRS, &traces, &pv, &exact).expect("at the limit");
+    // Under zero knowledge `degree_bits = log2(height) + 1`.
+    assert_eq!(proof.degree_bits, [9, 10]);
+    let v = VerifierConfig::new();
+    assert_eq!(verify(&v, &AIRS, &proof, &pv, &exact), Ok(()));
+    for (table, lowered) in [(0usize, [7usize, 9]), (1, [8, 8])] {
+        let log_height = exact[table];
+        assert_eq!(
+            prove(&prover(41), &AIRS, &traces, &pv, &lowered).err(),
+            Some(ZkError::Height { table, log_height }),
+            "prove under {lowered:?}"
+        );
+        assert_eq!(
+            verify(&v, &AIRS, &proof, &pv, &lowered),
+            Err(ZkError::Height { table, log_height }),
+            "verify under {lowered:?}"
+        );
+    }
+}
+
+/// `prove` refuses inputs that do not line up, each mismatch on its own (the
+/// others right), with `Shape`, before anything is proven.
+#[test]
+fn prove_refuses_each_count_mismatch_alone() {
+    let (traces, pv) = witness(3, 256, 512);
+    let shape = |r: Result<Proof, ZkError>| matches!(r, Err(ZkError::Shape(_)));
+    let run = |airs: &[Toy], traces: &[RowMajorMatrix<Val>], pv: &[Vec<Val>], lim: &[usize]| {
+        catch_unwind(AssertUnwindSafe(|| {
+            prove(&prover(42), airs, traces, pv, lim)
+        }))
+        .expect("prove does not panic on a count mismatch")
+    };
+    // No table at all.
+    assert!(shape(run(&[], &[], &[], &[])));
+    // One trace too few, and one too many.
+    assert!(shape(run(&AIRS, &traces[..1], &pv, &LIMITS)));
+    let three = [traces[0].clone(), traces[1].clone(), traces[1].clone()];
+    assert!(shape(run(&AIRS, &three, &pv, &LIMITS)));
+    // Public values for one table too few, and one too many.
+    assert!(shape(run(&AIRS, &traces, &pv[..1], &LIMITS)));
+    let pv3 = vec![pv[0].clone(), vec![], vec![]];
+    assert!(shape(run(&AIRS, &traces, &pv3, &LIMITS)));
+    // One height limit too few, and one too many.
+    assert!(shape(run(&AIRS, &traces, &pv, &LIMITS[..1])));
+    assert!(shape(run(&AIRS, &traces, &pv, &[16, 16, 16])));
+}
+
+/// `prove` refuses a trace height outside `[2^MIN_LOG_HEIGHT, 2^limit]`, or
+/// not a power of two, naming the table: each bound on its own.
+#[test]
+fn prove_refuses_each_height_violation_alone() {
+    let run = |traces: &[RowMajorMatrix<Val>], pv: &[Vec<Val>], lim: &[usize]| {
+        catch_unwind(AssertUnwindSafe(|| {
+            prove(&prover(43), &AIRS, traces, pv, lim)
+        }))
+        .expect("prove does not panic on a height violation")
+        .err()
+    };
+    // Below the global minimum: a 2^7-row range table (the counter is
+    // valid), whatever the per-table limit.
+    let below = params::MIN_LOG_HEIGHT - 1;
+    let (t, pv) = witness(0, 1 << params::MIN_LOG_HEIGHT, 1 << below);
+    assert_eq!(
+        run(&t, &pv, &LIMITS),
+        Some(ZkError::Height {
+            table: 1,
+            log_height: below
+        })
+    );
+    // Above the per-table limit only (inside the global range).
+    let (t, pv) = witness(3, 256, 512);
+    assert_eq!(
+        run(&t, &pv, &[16, 8]),
+        Some(ZkError::Height {
+            table: 1,
+            log_height: 9
+        })
+    );
+    // Not a power of two: reported with `log_height = usize::MAX`.
+    let (mut t, pv) = witness(3, 256, 512);
+    t[0] = RowMajorMatrix::new(t[0].values[..2 * 255].to_vec(), 2);
+    assert_eq!(
+        run(&t, &pv, &LIMITS),
+        Some(ZkError::Height {
+            table: 0,
+            log_height: usize::MAX
+        })
+    );
+}
+
+/// `verify` refuses argument counts and proof table counts that do not line
+/// up, each on its own, with `Shape`, and never panics on them. (A proof
+/// with one extra `degree_bits` entry would index past the height limits
+/// were the counts not checked first.)
+#[test]
+fn verify_refuses_each_count_mismatch_alone() {
+    let (proof, pv) = honest_proof(44);
+    let v = VerifierConfig::new();
+    let run = |p: &Proof, pv: &[Vec<Val>], lim: &[usize]| {
+        catch_unwind(AssertUnwindSafe(|| verify(&v, &AIRS, p, pv, lim)))
+            .expect("verify does not panic on a count mismatch")
+    };
+    let shape = |r: Result<(), ZkError>| matches!(r, Err(ZkError::Shape(_)));
+    assert_eq!(run(&proof, &pv, &LIMITS), Ok(()));
+    // No table at all.
+    assert!(shape(verify(&v, &[] as &[Toy], &proof, &[], &[])));
+    // Public values: one table too few, one too many.
+    assert!(shape(run(&proof, &pv[..1], &LIMITS)));
+    let pv3 = vec![pv[0].clone(), vec![], vec![]];
+    assert!(shape(run(&proof, &pv3, &LIMITS)));
+    // Height limits: one too few, one too many.
+    assert!(shape(run(&proof, &pv, &LIMITS[..1])));
+    assert!(shape(run(&proof, &pv, &[16, 16, 16])));
+    // The proof: one `degree_bits` entry too many or too few, one opened
+    // instance too few, one lookup terminal too few; every other count right.
+    let mut p = reencode(&proof).unwrap();
+    p.degree_bits.push(p.degree_bits[0]);
+    assert!(shape(run(&p, &pv, &LIMITS)), "extra degree bits");
+    let mut p = reencode(&proof).unwrap();
+    p.degree_bits.pop();
+    assert!(shape(run(&p, &pv, &LIMITS)), "missing degree bits");
+    let mut p = reencode(&proof).unwrap();
+    p.opened_values.instances.pop();
+    assert!(shape(run(&p, &pv, &LIMITS)), "missing opened instance");
+    let mut p = reencode(&proof).unwrap();
+    p.lookup_terminals.pop();
+    assert!(shape(run(&p, &pv, &LIMITS)), "missing lookup terminals");
+}
+
+/// `analysis::quotient_chunks` (which the decoder limits are checked
+/// against) predicts the quotient chunk count of every table of real proofs:
+/// the toy system, and the system with a preprocessed table, whose layout
+/// (and so symbolic constraint degree) includes the preprocessed width.
+#[test]
+fn quotient_chunk_analysis_matches_real_proofs() {
+    fn chunks(p: &Proof) -> Vec<usize> {
+        p.opened_values
+            .instances
+            .iter()
+            .map(|i| i.base_opened_values.quotient_chunks.len())
+            .collect()
+    }
+    let (proof, _) = honest_proof(45);
+    assert_eq!(
+        blacksilk_zk::analysis::quotient_chunks(&AIRS, &proof.degree_bits),
+        chunks(&proof)
+    );
+    let (pre, airs) = preprocessed::proof(46);
+    assert_eq!(
+        blacksilk_zk::analysis::quotient_chunks(&airs, &pre.degree_bits),
+        chunks(&pre)
+    );
+}
