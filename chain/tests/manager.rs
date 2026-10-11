@@ -7,7 +7,9 @@ use blacksilk_chain::manager::{
     ChainManager, StorePowCheck, StorePowMismatch, SubmitError, Template,
 };
 use blacksilk_chain::mempool::MempoolError;
-use blacksilk_chain::store::{BlockStore, FileStore, MemoryStore};
+use blacksilk_chain::store::{
+    BlockStore, FileStore, InvalidMarker, InvalidOrigin, Marker, MemoryStore,
+};
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{
     BlockHeader, ChainParams, Hash, HeaderError, PowFunction, HEADER_VERSION,
@@ -1946,6 +1948,105 @@ fn rt_a_forged_tip_stored_first_is_refused_at_every_seed() {
         .downcast_ref::<StorePowMismatch>()
         .unwrap();
     assert_eq!((m.height, m.index), (10, Some(10)));
+}
+
+/// A source chain of `n` blocks mined with [`ZeroPow`] (stored hash `[0; 32]`,
+/// which [`Recheck::new(None)`] reproduces).
+fn zero_pow_blocks(n: usize, seed: u64) -> Vec<Block> {
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    let mut miner = Miner::new(seed);
+    (0..n).map(|_| miner.mine_tip(&mut m)).collect()
+}
+
+/// An orphan dropped at restart (its parent's write had failed) is
+/// downloaded and stored again after its parent: the store then holds two
+/// identical records of one block, the first stored before its parent. A
+/// restart under the default sample and under `--verify-store-pow` reaches
+/// the tip: an identical later copy is a duplicate, not a forgery (mutation
+/// run G6: `replay_one`'s guard `first != pow_hash && check != Trust`).
+/// Under `Trust` a later copy with ANOTHER hash is not looked at either: the
+/// first record's hash is the one validation used (the sample and the full
+/// check refuse it: `rt_a_forged_tip_stored_first_is_refused_at_every_seed`).
+#[test]
+fn a_block_stored_twice_around_its_parent_restarts_under_every_check() {
+    let blocks = zero_pow_blocks(10, 41);
+    let p = params();
+    let tip = blocks[9].id(p.network_id);
+    let store = |copy_hash: Hash| {
+        let mut s = MemoryStore::default();
+        s.append(&[0; 32], &blocks[9].encode()).unwrap(); // the orphan
+        for b in &blocks {
+            s.append(&[0; 32], &b.encode()).unwrap();
+        }
+        s.append(&copy_hash, &blocks[9].encode()).unwrap();
+        Box::new(s)
+    };
+    for check in [StorePowCheck::NODE_DEFAULT, StorePowCheck::All] {
+        let pow = Recheck::new(None);
+        let m = ChainManager::open_checked(
+            p.clone(),
+            TxRules::for_chain(&p),
+            pow.clone(),
+            store([0; 32]),
+            [4; 32],
+            check,
+        )
+        .unwrap_or_else(|e| panic!("{check:?}: an identical copy refused: {e}"));
+        assert_eq!((m.height(), m.tip_id()), (10, tip), "{check:?}");
+        let checked: std::collections::BTreeSet<u64> = pow.heights().into_iter().collect();
+        assert_eq!(
+            checked,
+            (1..=10).collect(),
+            "{check:?}: every block checked"
+        );
+    }
+    let pow = Recheck::new(None);
+    let m = ChainManager::open_checked(
+        p.clone(),
+        TxRules::for_chain(&p),
+        pow.clone(),
+        store([1; 32]),
+        [4; 32],
+        StorePowCheck::Trust,
+    )
+    .expect("Trust does not compare stored copies");
+    assert_eq!((m.height(), m.tip_id()), (10, tip));
+    assert!(pow.heights().is_empty(), "nothing recomputed");
+}
+
+/// A store holding more of the node's own invalid-block verdicts than
+/// checkpoints (here verdicts only) opens: the verdicts are re-checked by
+/// validating every block again, so a verdict naming a valid stored block
+/// does not keep it out (mutation run G6: `checkpoints + verdicts`, which
+/// as a subtraction overflows here).
+#[test]
+fn a_store_with_verdict_markers_and_no_checkpoint_opens() {
+    let blocks = zero_pow_blocks(5, 43);
+    let p = params();
+    let verdict = |id: Hash| {
+        Marker::Invalid(InvalidMarker {
+            id,
+            origin: InvalidOrigin::Verdict,
+            reason: "an earlier verdict".into(),
+        })
+    };
+    let mut s = MemoryStore::default();
+    for b in &blocks {
+        s.append(&[0; 32], &b.encode()).unwrap();
+    }
+    s.append_marker(&verdict(blocks[2].id(p.network_id)))
+        .unwrap();
+    s.append_marker(&verdict([0xab; 32])).unwrap();
+    let m = ChainManager::open_checked(
+        p.clone(),
+        TxRules::for_chain(&p),
+        Recheck::new(None),
+        Box::new(s),
+        [4; 32],
+        StorePowCheck::NODE_DEFAULT,
+    )
+    .expect("verdict markers without a checkpoint");
+    assert_eq!((m.height(), m.tip_id()), (5, blocks[4].id(p.network_id)));
 }
 
 /// RT-NODEOPS (false refusal, real RandomX): a store holding a reorged-out
