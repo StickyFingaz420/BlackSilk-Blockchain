@@ -1793,6 +1793,103 @@ mod tests {
         assert_eq!(FileStore::repair(&path, 8).unwrap(), 0, "nothing more");
     }
 
+    /// RTW3-7, mutation run G6 (`operator_records`' `end == region.len()`):
+    /// the walk past a damaged record follows the end its length field names
+    /// only when a valid record starts exactly there. Block 1's length field
+    /// is damaged (its body is intact, the checksum covers the length) so
+    /// that the named end lies (i) past the end of the region, or (ii) inside
+    /// the following operator record's header. Either way the walk searches
+    /// for the next valid record instead: every operator record of the moved
+    /// region is kept, in order. Following the named end would drop every
+    /// later record (i) or skip `invalid(5)` (ii), so a restart would
+    /// connect a block the operator invalidated.
+    #[test]
+    fn repair_keeps_the_operator_records_past_a_damaged_length_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let records = [
+            block(0),
+            block(1),
+            Record::Marker(invalid(5, InvalidOrigin::Operator)),
+            block(2),
+            Record::Marker(invalid(6, InvalidOrigin::Verdict)),
+            Record::Marker(Marker::Reconsider([5; 32])),
+            Record::Marker(invalid(8, InvalidOrigin::Operator)),
+        ];
+        let kept = vec![
+            block(0),
+            Record::Marker(invalid(5, InvalidOrigin::Operator)),
+            Record::Marker(Marker::Reconsider([5; 32])),
+            Record::Marker(invalid(8, InvalidOrigin::Operator)),
+        ];
+        let (good, ends) = file_of(&path, &records);
+        let (b1, inv5) = (ends[0], ends[1]); // starts of block 1 and invalid(5)
+        assert_eq!(&good[inv5..inv5 + 4], Codec::Typed.magic());
+        // (ii): block 1's record would end 6 bytes into invalid(5)'s header
+        // (its length field), where no record starts.
+        let into_next = (inv5 + 6 - b1 - RECORD_HEADER) as u32;
+        for (case, len) in [
+            ("past the region", u32::MAX),
+            ("into the next record", into_next),
+        ] {
+            let mut bytes = good.clone();
+            bytes[b1 + 4..b1 + 8].copy_from_slice(&len.to_le_bytes());
+            assert!(Codec::Typed.parse_frame(&bytes[b1..]).is_err(), "{case}");
+            std::fs::write(&path, &bytes).unwrap();
+            assert!(load(&path).is_err(), "{case}");
+            let moved = FileStore::repair(&path, 7).unwrap();
+            assert_eq!(moved as usize, bytes.len() - b1, "{case}");
+            assert_eq!(load(&path).unwrap(), kept, "{case}");
+            assert_eq!(
+                FileStore::repair(&path, 8).unwrap(),
+                0,
+                "{case}: nothing more"
+            );
+            std::fs::remove_file(path.with_extension("dat.damaged-7")).unwrap();
+        }
+    }
+
+    /// RTW3-7, mutation run G6: a damaged LAST record whose header is intact
+    /// names the end of the region exactly, and the walk stops there. Its
+    /// data embeds an operator-record frame (block data is partly
+    /// user-chosen) after the damage; that frame is not taken for a record,
+    /// so no forged reconsider record is written back by the repair.
+    #[test]
+    fn repair_ignores_a_frame_inside_a_damaged_last_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let fake = Codec::Typed.frame(&encode_marker(&Marker::Reconsider([0xee; 32])).unwrap());
+        let mut data = vec![0x11; 40];
+        data.extend_from_slice(&fake);
+        data.extend_from_slice(&[0x22; 40]);
+        let records = [
+            block(0),
+            block(1),
+            Record::Marker(invalid(5, InvalidOrigin::Operator)),
+            Record::Marker(invalid(8, InvalidOrigin::Operator)),
+            Record::Block(([7; 32], data)),
+        ];
+        let (mut bytes, ends) = file_of(&path, &records);
+        // Damage block 1's body and the last record's data before its
+        // embedded frame (its record header stays intact).
+        bytes[ends[0] + RECORD_HEADER + 5] ^= 0xff;
+        bytes[ends[3] + RECORD_HEADER + 40] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(load(&path).is_err());
+        assert_eq!(
+            FileStore::repair(&path, 7).unwrap() as usize,
+            bytes.len() - ends[0]
+        );
+        assert_eq!(
+            load(&path).unwrap(),
+            vec![
+                block(0),
+                Record::Marker(invalid(5, InvalidOrigin::Operator)),
+                Record::Marker(invalid(8, InvalidOrigin::Operator)),
+            ]
+        );
+    }
+
     /// A store is used only after `bind`.
     #[test]
     fn an_unbound_store_refuses_reads_and_writes() {
@@ -2129,5 +2226,34 @@ mod tests {
             let err = Codec::Typed.decode_body(&body).unwrap_err();
             assert_eq!(err, what);
         }
+    }
+
+    /// A block record's payload is the 32-byte PoW hash and then the block
+    /// bytes: a payload of exactly 32 bytes is a block record with empty
+    /// block bytes (judged as a block on replay, not by the store), not a damaged
+    /// record; 31 bytes are refused (mutation run G6: `p.len() < 32`).
+    #[test]
+    fn a_block_record_of_the_pow_hash_alone_loads_with_empty_block_bytes() {
+        let mut body = vec![TYPE_BLOCK];
+        body.extend_from_slice(&[9; 32]);
+        assert_eq!(
+            Codec::Typed.decode_body(&body).unwrap(),
+            Some(Record::Block(([9; 32], vec![])))
+        );
+        body.pop();
+        assert_eq!(
+            Codec::Typed.decode_body(&body).unwrap_err(),
+            "block record of 31 bytes"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let mut s = bound(&path);
+        s.append(&[9; 32], &[]).unwrap();
+        s.append(&[1; 32], &[1; 11]).unwrap();
+        drop(s);
+        assert_eq!(
+            load(&path).unwrap(),
+            vec![Record::Block(([9; 32], vec![])), block(1)]
+        );
     }
 }
