@@ -396,6 +396,83 @@ fn memory_traps() {
     }
 }
 
+/// A program whose code starts exactly at the null guard: every load reads
+/// its own instruction words at the lowest legal address (exec.rs `check_addr`
+/// is `addr < NULL_GUARD`, not `<=`; the AIR's SLTU(addr, 0x1000) = 0 accepts
+/// 0x1000 too, so a stricter executor would make this honest program unprovable).
+#[test]
+fn loads_at_exactly_the_null_guard_succeed() {
+    let mut p = Asm::new(NULL_GUARD);
+    p.li(S0, NULL_GUARD)
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .load(Op::Lbu, A1, S0, 0)
+        .write_reg(A1)
+        .load(Op::Lhu, A1, S0, 0)
+        .write_reg(A1)
+        .halt(0);
+    let prog = p.finish().unwrap();
+    assert_eq!(prog.code_base, NULL_GUARD);
+    let first = prog.code[0];
+    let e = run(&prog, &[], MAX_CYCLES).expect("a load at exactly NULL_GUARD is legal");
+    assert_eq!(e.output, vec![first, first & 0xff, first & 0xffff]);
+    assert_eq!(e.exit_code, 0);
+    // One word lower is inside the guard, for loads as well as stores.
+    for op in [Op::Lw, Op::Lbu] {
+        let mut q = Asm::new(NULL_GUARD);
+        q.li(S0, NULL_GUARD - 4).load(op, A1, S0, 0).halt(0);
+        assert_eq!(trap_of(&q, &[]), TrapKind::NullGuard, "{op:?}");
+    }
+    let mut q = Asm::new(NULL_GUARD);
+    q.li(S0, NULL_GUARD).load(Op::Lbu, A1, S0, -1).halt(0);
+    assert_eq!(trap_of(&q, &[]), TrapKind::NullGuard, "last guard byte");
+}
+
+/// `li` of an address >= 0x800 is always LUI + ADDI, so the program's length
+/// (and so its code end) does not depend on `addr`.
+fn store_then_load_at(addr: u32, op: Op) -> Asm {
+    let mut p = Asm::new(BASE);
+    p.li(S0, addr)
+        .li(T0, 0xdead_beef)
+        .store(op, T0, S0, 0)
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .halt(0);
+    p
+}
+
+/// A store at exactly the code end is the first writable address (exec.rs
+/// `check_addr` is `addr < code_end()`, not `<=`; the AIR's
+/// SLTU(addr, code_end) = 0 accepts it too).
+#[test]
+fn stores_at_exactly_the_code_end_succeed() {
+    let code_end = store_then_load_at(DATA, Op::Sw)
+        .finish()
+        .unwrap()
+        .code_end();
+    let prog = store_then_load_at(code_end, Op::Sw).finish().unwrap();
+    assert_eq!(
+        prog.code_end(),
+        code_end,
+        "layout independent of the address"
+    );
+    let e = run(&prog, &[], MAX_CYCLES).expect("a store at exactly code_end is legal");
+    assert_eq!(e.output, vec![0xdead_beef]);
+    let prog = store_then_load_at(code_end, Op::Sb).finish().unwrap();
+    assert_eq!(prog.code_end(), code_end);
+    let e = run(&prog, &[], MAX_CYCLES).expect("a byte store at exactly code_end is legal");
+    assert_eq!(e.output, vec![0xef]);
+    // The last code word is still read-only.
+    for (addr, op) in [(code_end - 4, Op::Sw), (code_end - 1, Op::Sb)] {
+        assert_eq!(
+            trap_of(&store_then_load_at(addr, op), &[]),
+            TrapKind::StoreBelowCodeEnd,
+            "{op:?} at code_end - {}",
+            code_end - addr
+        );
+    }
+}
+
 #[test]
 fn code_is_readable_and_stores_below_the_code_end_trap() {
     // Loads from the code segment return the instruction words (RISC-V semantics).
