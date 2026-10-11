@@ -533,3 +533,82 @@ fn the_function_run_stops_at_the_cycle_cap() {
         Err(TransferError::FunctionMismatch(0))
     ));
 }
+
+/// A function that traps within its budget for a reason other than the
+/// cycle limit is refused as a failed execution, naming the function and
+/// the trap, not as over budget in `cycles` (mutation run G4: the
+/// `CycleLimit && budget.cycles < limit` guard of `prove`). Both traps come
+/// after the function wrote the kernel's prefix exactly, so the program is
+/// right up to the trap; nothing is proven.
+#[test]
+fn a_function_trap_other_than_the_cycle_limit_is_an_execution_error() {
+    use blacksilk_px::prove::TransferError;
+    use blacksilk_px::vault::{self, Terms};
+    use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION};
+    use blacksilk_zkvm::asm::{reg::T0, Asm};
+    let mut rng = ChaCha20Rng::seed_from_u64(8);
+    let c = CONTRACTS[0];
+    let secret = wallet::random_digest(&mut rng);
+    let terms = Terms::claim_only(&c, &secret);
+    let blind = wallet::random_digest(&mut rng);
+    let (_, fw) = vault::lock_call(&c, 500, &terms, 0, &blind, &Window::UNBOUNDED);
+    let mut w = wallet::witness(
+        Tree::new(&mut HostPerm::new()).root(),
+        500,
+        0,
+        [wallet::dummy_input(&mut rng), wallet::dummy_input(&mut rng)],
+        [
+            wallet::contract_output(&mut rng, c, 500, terms.data(&c)),
+            wallet::empty_output(&mut rng),
+        ],
+    );
+    w.n_fn = 1;
+    w.functions[0] = Some(fw);
+    let words = witness_words(&w);
+    let public = kernel::transfer(&mut HostPerm::new(), &mut SliceSource::new(&words)).unwrap();
+    let (contract, io_hash) = &public.functions[0];
+    let prefix = function_prefix(ABI_VERSION, io_hash, contract, &Window::UNBOUNDED);
+    // The prefix, then an unknown system call or a read past the (empty)
+    // private input.
+    let trapping = |syscall: u32| {
+        let mut a = Asm::new(0x1_0000);
+        for &x in &prefix {
+            a.li(T0, x).write_reg(T0);
+        }
+        a.ecall(syscall).halt(0);
+        std::sync::Arc::new(a.finish().expect("assembles"))
+    };
+    // The run traps well inside the cycle budget; the other tables (zero
+    // here) are measured only after a completed run.
+    let budget = Budget {
+        cycles: 1 << 12,
+        keys: 0,
+        add: 0,
+        bit: 0,
+        lt: 0,
+        shift: 0,
+        mul: 0,
+        poseidon: 0,
+    };
+    for (syscall, trap) in [(0x77, "UnknownSyscall(119)"), (1, "InputExhausted")] {
+        let program = trapping(syscall);
+        let t = run(&program, &[], MAX_CYCLES).expect_err("the function traps");
+        assert!(format!("{:?}", t.kind).starts_with(trap), "{:?}", t.kind);
+        assert!((t.clk as usize) < budget.cycles, "within its cycle budget");
+        match prove::prove(
+            &w,
+            &[(program, vec![], budget)],
+            &Window::UNBOUNDED,
+            [4; 32],
+            &mut rng,
+        )
+        .map(|_| ())
+        {
+            Err(TransferError::Execution(e)) => {
+                assert!(e.starts_with("function 0: "), "{e}");
+                assert!(e.contains(trap), "{e}");
+            }
+            other => panic!("syscall {syscall}: expected Execution, got {other:?}"),
+        }
+    }
+}
