@@ -8,7 +8,8 @@
 //!   built off-tree; provenance in the data file's header). Its first 16
 //!   entries are the digest cases, so the pinned digest is a reference value,
 //!   not only a self-consistency value; the remaining entries (keys of 0, 1,
-//!   31, 60, 61 and 128 bytes, inputs up to 2048 bytes) are hashed here.
+//!   31, 60, 61 and 128 bytes, inputs up to 2048 bytes) and the targeted
+//!   inputs (`targeted_cases`, rare VM paths) are hashed here.
 //! - `pinned_digest_large` (ignored): 256 cases over 8 keys.
 //! - `reused_vm_matches_fresh_vm` and the harness self-test: the
 //!   differential API of `support`, for future candidate implementations.
@@ -68,6 +69,24 @@ fn edge_cases() -> Vec<Case> {
     .collect()
 }
 
+/// Single inputs chosen for a code path the random and edge cases miss,
+/// each found by a probe and hashed by the reference (corpus lines 25-).
+fn targeted_cases() -> Vec<Case> {
+    [
+        // IMUL_RCP with a power-of-two immediate (mutation run G3): the
+        // first program has IMUL_RCP (opcode 78) with imm32 = 0x200, which
+        // the VM must execute as a NOP. A VM that multiplies by a reciprocal
+        // there instead hashes e7ebcd8c...
+        (&b"test key 000"[..], &b"G3 rcp probe 26476422"[..]),
+    ]
+    .into_iter()
+    .map(|(key, input)| Case {
+        key: key.to_vec(),
+        input: input.to_vec(),
+    })
+    .collect()
+}
+
 #[test]
 fn pinned_digest() {
     assert_eq!(digest(&digest_cases(), light_hash()), PINNED_DIGEST);
@@ -76,7 +95,8 @@ fn pinned_digest() {
 #[test]
 fn reference_corpus() {
     let corpus = parse_corpus(CORPUS);
-    let (digest_part, edge_part) = corpus.split_at(16);
+    let (digest_part, rest) = corpus.split_at(16);
+    let (edge_part, targeted_part) = rest.split_at(8.min(rest.len()));
 
     // The digest cases, hashed by the reference: their digest is the pin.
     let cases = digest_cases();
@@ -93,15 +113,24 @@ fn reference_corpus() {
         "the pinned digest is the reference's"
     );
 
-    // The edge cases, hashed here.
+    // The edge and targeted cases, hashed here.
     assert_eq!(
         edge_part.iter().map(|k| k.case.clone()).collect::<Vec<_>>(),
         edge_cases(),
         "corpus order must follow edge_cases()"
     );
+    assert_eq!(
+        targeted_part
+            .iter()
+            .map(|k| k.case.clone())
+            .collect::<Vec<_>>(),
+        targeted_cases(),
+        "corpus order must follow targeted_cases()"
+    );
     let mut hasher = LightHasher::default();
     let mismatches: Vec<String> = edge_part
         .iter()
+        .chain(targeted_part)
         .filter_map(|kat| {
             let got = hasher.hash(&kat.case);
             (got != kat.hash).then(|| {
@@ -120,7 +149,7 @@ fn reference_corpus() {
         mismatches.is_empty(),
         "{} of {} reference answers differ:\n{}",
         mismatches.len(),
-        edge_part.len(),
+        edge_part.len() + targeted_part.len(),
         mismatches.join("\n")
     );
 }

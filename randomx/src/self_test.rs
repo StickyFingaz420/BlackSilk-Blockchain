@@ -481,8 +481,56 @@ mod tests {
     #[test]
     #[ignore]
     fn the_full_mode_check_passes() {
+        let _one_dataset = FULL_MODE.lock().unwrap_or_else(|p| p.into_inner());
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-        check_full(&[VECTORS[0], BLACKSILK_VECTORS[0]], threads).expect("full mode");
+        let took = check_full(&[VECTORS[0], BLACKSILK_VECTORS[0]], threads).expect("full mode");
+        // Two 2 GiB datasets were expanded and checked: not a hollow Ok.
+        assert!(took >= Duration::from_millis(1), "{took:?}");
+    }
+
+    /// Serialises this module's full-mode tests: one 2 GiB dataset at a time
+    /// (the `--ignored` run also has `lib.rs`'s full-mode test in parallel).
+    static FULL_MODE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The full-mode check fails on a wrong answer, naming the vector (one
+    /// dataset: 1a and 1b share `test key 000`; 1a passes first).
+    #[test]
+    #[ignore]
+    fn the_full_mode_check_detects_a_wrong_answer() {
+        let _one_dataset = FULL_MODE.lock().unwrap_or_else(|p| p.into_inner());
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        assert_eq!(VECTORS[0].key, VECTORS[1].key);
+        let mut wrong = VECTORS[1];
+        wrong.hash[0] ^= 0x80;
+        let e = check_full(&[VECTORS[0], wrong], threads).unwrap_err();
+        assert_eq!(e.what, "RandomX hash test 1b (full mode)");
+        assert_eq!(e.expected, hex(&wrong.hash));
+        assert_eq!(e.got, hex(&VECTORS[1].hash));
+    }
+
+    /// The dataset check accepts the dataset of its own cache and rejects it
+    /// against the cache of another key, or of the same key under the other
+    /// salt (one dataset, two more 256 MiB caches).
+    #[test]
+    #[ignore]
+    fn the_dataset_check_rejects_another_cache() {
+        let _one_dataset = FULL_MODE.lock().unwrap_or_else(|p| p.into_inner());
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let cache = Cache::new(KEY_000);
+        let dataset = Dataset::new(&cache, threads);
+        check_dataset(&cache, &dataset).expect("its own cache");
+        drop(cache);
+
+        let other_key = Cache::new(KEY_001);
+        let e = check_dataset(&other_key, &dataset).unwrap_err();
+        assert_eq!(e.what, "RandomX dataset key");
+        assert_eq!(e.expected, hex(KEY_001));
+        assert_eq!(e.got, hex(KEY_000));
+        drop(other_key);
+
+        let other_salt = Cache::with_variant(KEY_000, Variant::MoneroRx0);
+        let e = check_dataset(&other_salt, &dataset).unwrap_err();
+        assert_eq!(e.what, "RandomX dataset variant");
     }
 
     /// The samples cover the first and last item, are increasing and
