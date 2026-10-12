@@ -1851,4 +1851,34 @@ mod tests {
         }
         assert_eq!(network_by_name("x"), None);
     }
+
+    /// Blank and whitespace-only lines are skipped by both fixture parsers:
+    /// the checked-in texts with an empty line before them, between their
+    /// entries and a whitespace-only line after them parse to the same
+    /// fixtures (G7 survivors 721:17 and 788:17: without the `[]` arm such a
+    /// line made the parser return `None`).
+    #[test]
+    fn fixture_parsers_skip_blank_lines() {
+        let spaced = |text: &str| {
+            let mut s = String::from("\n");
+            for line in text.lines() {
+                s.push_str(line);
+                s.push_str("\n\n");
+            }
+            s.push_str(" \t \n");
+            s
+        };
+        let f = Fixture::get();
+        let g = Fixture::parse(&spaced(FIXTURE)).expect("the spaced fixture parses");
+        assert_eq!(g.height, f.height);
+        assert_eq!(g.transfer, f.transfer);
+        assert_eq!(g.coinbase, f.coinbase);
+        assert_eq!(g.outputs, f.outputs);
+
+        let p = PxFixture::get();
+        let q = PxFixture::parse(PX_FIXTURE_TX, &spaced(PX_FIXTURE_TEXT))
+            .expect("the spaced PX fixture parses");
+        assert_eq!(q.px, p.px);
+        assert_eq!(q.deploy, p.deploy);
+    }
 }
