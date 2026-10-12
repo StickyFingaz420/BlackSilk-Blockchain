@@ -574,6 +574,32 @@ mod tests {
         assert_ne!(c.encode(), d.encode());
     }
 
+    /// `i` appends exactly one `I64` entry to the manifest it is called on,
+    /// and the entry encodes as the documented layout (G7 survivor 78:9: an
+    /// `i` that returned a fresh manifest pushed nothing).
+    #[test]
+    fn i_appends_one_signed_entry() {
+        let mut d = Manifest::new();
+        d.i("x", 1);
+        d.i("y", -2);
+        assert_eq!(
+            d.entries(),
+            [
+                ("x".to_string(), Value::I64(1)),
+                ("y".to_string(), Value::I64(-2)),
+            ]
+        );
+        // u32le(count = 2), then per entry u32le(name len = 1) ‖ name ‖
+        // tag 1 (I64) ‖ i64le(value); -2 in two's complement is 0xfe then
+        // seven 0xff bytes.
+        let mut expected = vec![2, 0, 0, 0];
+        expected.extend_from_slice(&[1, 0, 0, 0, b'x', 1, 1, 0, 0, 0, 0, 0, 0, 0]);
+        expected.extend_from_slice(&[
+            1, 0, 0, 0, b'y', 1, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ]);
+        assert_eq!(d.encode(), expected);
+    }
+
     #[test]
     fn digest_is_domain_separated() {
         let m = px_entries();
