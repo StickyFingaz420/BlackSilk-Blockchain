@@ -303,6 +303,51 @@ fn a_changed_ciphertext_byte_is_bound() {
     }
 }
 
+/// PX1 on the fixture chain: the golden transaction with another anchor
+/// passes every stateless rule and the key-image check, and is refused as
+/// `PxUnknownAnchor` (the fixture chain's one recent root is the empty
+/// tree's), with or without PX5. A chain view that called every anchor
+/// recent would let it reach the CLSAG, which signs the anchor (G7 survivor
+/// 868:9).
+#[test]
+fn an_unknown_anchor_is_refused() {
+    let p = PxFixture::get();
+    let mut v = p.px.clone();
+    v.anchor[0] ^= 1;
+    assert_ne!(v.anchor, px_fixture_anchor());
+    for with_proof in [false, true] {
+        assert_eq!(
+            px_fixture_verdict(&v, with_proof),
+            Err(TxError::PxUnknownAnchor),
+            "PX5 {with_proof}"
+        );
+    }
+}
+
+/// PX4 on the fixture chain (an empty pool): the golden transaction with
+/// `bridge_out = bridge_in + 1` and its first pseudo-output lowered by
+/// `(bridge_in + 1)·H` still balances (`check_px_balance`: `Σ pseudo_outs −
+/// Σ outputs = (fee + bridge_in + Σ payouts − bridge_out)·H`), so it passes
+/// the stateless rules, and is refused as `PxPoolUnderflow`: `0 + bridge_in
+/// < bridge_in + 1`. With a pool of 1 it would pass PX4 and fail later, at
+/// the CLSAG (G7 survivor 874:9).
+#[test]
+fn a_bridge_out_above_the_pool_is_refused() {
+    let p = PxFixture::get();
+    let mut v = p.px.clone();
+    v.bridge_out = v.bridge_in + 1;
+    let shift = Scalar::from(v.bridge_out) * blacksilk_crypto::generators::h();
+    v.pseudo_outs[0] = Point::from_point(v.pseudo_outs[0].point() - shift);
+    assert_eq!(blacksilk_tx::px::check_px_balance(&v), Ok(()));
+    for with_proof in [false, true] {
+        assert_eq!(
+            px_fixture_verdict(&v, with_proof),
+            Err(TxError::PxPoolUnderflow),
+            "PX5 {with_proof}"
+        );
+    }
+}
+
 /// The checked-in transaction re-encodes to the file's exact bytes: the
 /// fingerprint pins the decoded transaction, so this pins the file itself
 /// (RT-PXR2 L1).
