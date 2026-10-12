@@ -1233,3 +1233,626 @@ Decision: W4-MUTF (run F), confirmed by the Lead's review (read, not run).
 the frame just found not to parse. `next_valid_record` re-runs `parse_frame` on exactly
 that input, which fails again deterministically, and moves on; the only cost is one
 redundant parse. The answer is the same for every input.
+
+## E65: the "helper ended" log guard, `<` to `>` (chain/src/manager/pow_cache.rs)
+
+Decision: mutation run G (freeze gate 1.1), batch G9, for the Lead's review. E65–E86
+are run G's ([evidence](../evidence/mutation-runG-2026-10-12/README.md)).
+
+**Code.** `HashPool::start`: `let before = workers.len(); workers.retain(|h|
+!h.is_finished()); if workers.len() < before { log::error!(…) }`, then the loop that
+starts helpers until there are `wanted`.
+
+**Mutant covered:** 289:26 `replace < with >` (cargo-mutants).
+
+**Argument.** `Vec::retain` only removes elements, so after it `workers.len() >
+before` is never true: the mutant deletes the log line and nothing else. The
+original's branch is unreachable as well while the pool is open: `Queue::serve` runs
+every batch under `catch_unwind` (the guard also covers dropping the ticket), its lock
+and condition-variable waits recover from poisoning, and it returns only once
+`closed` is set, which only `HashPool`'s `Drop` does; `start` takes `&self`, so it
+never runs after that. The other two mutants of the condition (`==`, `<=`), which log
+a false error at every start, are killed by
+`starting_the_pool_logs_no_error_when_no_helper_ended` (chain/tests/pow_pool_log.rs).
+
+**Evidence.** Missed in `runG9s1` (stage 1) and `runG9s2` (stage 2), internal records
+of run G.
+
+Record: mutation run G, 2026-10-12.
+
+## E66: `OutputMmr::truncate` to its own length (tx/src/mmr.rs)
+
+Decision: mutation run G, batch G2, for the Lead's review.
+
+**Code.** `pub fn truncate(&mut self, count: u64) { if count < self.count {
+self.nodes.truncate(mmr_size(count) as usize); self.count = count; } }`. The fields
+`count` and `nodes` are private; only `Default` (`new`), `push` and `truncate` change
+them.
+
+**Mutant covered:** 186:18 `replace < with <=` (cargo-mutants).
+
+**Argument.** The invariant `nodes.len() == mmr_size(count)` holds after `default`
+(0 and 0), after `push` (asserted there: `debug_assert_eq!`) and after `truncate`
+(both set together). The mutant adds only the case `count == self.count`, where it
+truncates `nodes` to `mmr_size(self.count) = nodes.len()` (a no-op) and sets `count`
+to its own value: the same state. Truncation below the count is tested
+(`truncate_then_append_equals_the_original`).
+
+**Evidence.** Missed in `runG2s1m` and `runG2s2` (every non-PX-proving tx target and
+the chain set).
+
+Record: mutation run G, 2026-10-12.
+
+## E67: `ProverChallenger` methods Plonky3 never calls (zk/src/config.rs)
+
+Decision: mutation run G, batch G5, for the Lead's review.
+
+**Code.** `ProverChallenger` wraps the verifier's `Challenger` and forwards each trait
+method to it: `CanSample::sample_vec` (`self.inner.sample_vec(n)`) and
+`GrindingChallenger::check_witness` (`self.inner.check_witness(bits, witness)`). Its
+`grind` calls `self.inner.check_witness`, the inner challenger's, not its own.
+
+**Mutants covered:** 150:9 `replace sample_vec -> Vec<T> with vec![]`; 203:9 `replace
+check_witness -> bool with true` and `with false` (cargo-mutants).
+
+**Argument.** `ProverChallenger` is only the prover's challenger (`ProverZkConfig`);
+the verifier uses `Challenger` itself. In Plonky3 0.7.0 (and the patched `p3-fri`),
+`check_witness` is called only by the FRI verifier (`p3-fri` `verifier.rs`), on the
+verifier's challenger, and `sample_vec` is called by no prover or verifier code (only
+`p3-challenger`'s own tests); BlackSilk's code calls neither on a
+`ProverChallenger` (`grep -rn 'sample_vec\|check_witness' zk zkvm px tx`). The
+mutated bodies never run. If a Plonky3 upgrade starts calling them, these mutants
+become live and need a test.
+
+**Evidence.** Missed in `runG5s1`, `runG5s2a`, `runG5s2b` and `runG5s3` (every zk
+target, px `consensus_fingerprint` and `proof_limits`, tx `px_proof_wiring`, zkvm
+`alu`).
+
+Record: mutation run G, 2026-10-12.
+
+## E68: candidates at or past the field order in `smallest_pow_witness` (zk/src/config.rs)
+
+Decision: mutation run G, batch G5, for the Lead's review.
+
+**Code.** `while start < order { let mut state = base; state[slot] =
+Packed::from_fn(|l| Val::from_u64((start + l as u64).min(order - 1)));
+permute_mut(&mut state); for (l, sample) in state[RATE - 1].as_slice().iter()
+.enumerate() { let candidate = start + l as u64; if candidate < order && sample & mask
+== 0 { return Val::from_u64(candidate) } } start += lanes; }` (`order` = p, `lanes` =
+the packing width). The lanes of one packed permutation are independent.
+
+**Mutants covered:** 246:17 `replace < with <=` (the loop bound); 250:86 `replace -
+with +` and `replace - with /` (the clamp `order - 1` becomes `order + 1` or
+`order`); 254:26 `replace < with <=` (`candidate <= order`) (cargo-mutants).
+
+**Argument.** Each mutant changes only what happens to candidates `≥ order`, which
+the original never returns, and never changes a candidate below `order` or the order
+of the scan:
+
+- 246:17 adds one pass at `start == order`; all its candidates are `≥ order`, so the
+  `candidate < order` test skips them and the function panics as the original does
+  (both only after the whole field was scanned without a witness).
+- 250:86 changes the value placed in a padding lane (`start + l > order - 1`) from
+  `order - 1` to `order` or `order + 1` (`from_u64` reduces); a candidate below the
+  order is never clamped by either bound. Padding lanes' samples are never returned
+  (`candidate < order` fails), and lanes do not mix, so every other sample is the same.
+- 254:26 can additionally return `candidate = order`, which only a padding lane
+  holds, with the value `order - 1`; that lane's sample equals the sample of the
+  candidate `order - 1`, which is scanned first (the lane before it in the same
+  permutation, or the last lane of the previous one, since `start < order`) and
+  returned first if it has the zero bits. So `order` is never returned.
+
+This holds for every packing width, including width 1, where there is no padding lane.
+The result is also confirmed by the verifier's `check_witness` in `grind`.
+
+**Evidence.** Missed in `runG5s1`, `runG5s2a`, `runG5s2b`, `runG5s3`.
+
+Record: mutation run G, 2026-10-12.
+
+## E69: `start - l` for `start + l` in `smallest_pow_witness`, at packing width 1 (zk/src/config.rs)
+
+Decision: mutation run G, batch G5, for the Lead's review. **Conditional on the build
+target** (§ Open items (f) of the run G evidence).
+
+**Code.** As E68: the lane values `start + l as u64` (250:64) and the candidate
+`start + l as u64` (253:35).
+
+**Mutants covered:** 250:64 `replace + with -`, 253:35 `replace + with -`
+(cargo-mutants).
+
+**Argument.** On this build `<BabyBear as Field>::Packing` has width 1 (x86_64 with no
+AVX2 or AVX-512 target feature; `.cargo/config.toml` sets none), so `l` is always 0
+and `start - 0 = start + 0`: the same function. On a build with a wider packing (NEON,
+AVX2, AVX-512) the mutants are not equivalent: a lane's value and its candidate no
+longer match, or `start - l` underflows; either way `grind`'s
+`assert!(self.inner.check_witness(…))` or the overflow check panics the prover. No
+invalid proof results, since the witness is checked with the verifier's code before
+use. A census on such a build would kill them; until then this entry holds for
+width-1 builds only.
+
+**Evidence.** Missed in `runG5s1`, `runG5s2a`, `runG5s2b`, `runG5s3`, on
+x86_64-pc-windows-msvc.
+
+Record: mutation run G, 2026-10-12.
+
+## E70: `VerifierConfig::setup` as `Default::default()` (zk/src/config.rs)
+
+Decision: mutation run G, batch G5, for the Lead's review.
+
+**Code.** `pub fn setup() -> Self { Self::new() }` and `impl Default for
+VerifierConfig { fn default() -> Self { Self::new() } }`.
+
+**Mutant covered:** 450:9 `replace VerifierConfig::setup -> Self with
+Default::default()` (cargo-mutants).
+
+**Argument.** Both bodies call `Self::new()`: the same code.
+
+**Evidence.** Missed in `runG5s1`, `runG5s2a`, `runG5s2b`, `runG5s3`.
+
+Record: mutation run G, 2026-10-12.
+
+## E71: the cycle-limit trap at a budget of exactly `MAX_CYCLES` (px/src/prove.rs)
+
+Decision: mutation run G, batch G4, for the Lead's review.
+
+**Code.** For each function: `let limit = budget.cycles.max(1 << FN_RUN_LOG_CYCLES)
+.saturating_add(1).min(MAX_CYCLES as usize) as u32;` then a `CycleLimit` trap with
+`budget.cycles < limit as usize` is `OverBudget`, any other trap `Execution`.
+`FN_RUN_LOG_CYCLES = 15`, `zkvm::MAX_CYCLES = 2^21`.
+
+**Mutant covered:** 302:38 `replace < with <=` (cargo-mutants).
+
+**Argument.** The versions differ only when `budget.cycles == limit`. For `b ≤ 2^15`,
+`limit = 2^15 + 1 > b`; for `2^15 < b < 2^21`, `limit = b + 1 > b`; for `b > 2^21`,
+`limit = 2^21 < b`. So they differ only at `b = 2^21`, and only in which error a
+cycle-limit trap returns (`OverBudget` against `Execution`), on the prover's side. No
+registered function has that budget: a deploy is valid only with `b.cycles ≤ 2^15`
+(`budget_is_provable`, tx/src/px.rs:873, `PX_FN_LOG_CYCLES = 15`). The other two
+mutants of the guard are killed by
+`a_function_trap_other_than_the_cycle_limit_is_an_execution_error`.
+
+**Evidence.** Missed in `runG4s1` and `runG4s2a`.
+
+Record: mutation run G, 2026-10-12.
+
+## E72: the record loops' bounds and the damage search's start in the store repair (chain/src/store.rs)
+
+Decision: mutation run G, batch G6, for the Lead's review (as E63 and E64).
+
+**Code.** `valid_prefix`: `while pos < data.len() { match parse_frame(&data[pos..]) {
+Ok((_, used)) => pos += used, Err(_) => break } }`. `operator_records`: `while pos <
+region.len() { match parse_frame(&region[pos..]) { Ok(..) => … pos += used, Err(_) =>
+{ let named_end = (…).then(|| pos + RECORD_HEADER + n).filter(|&end| end ==
+region.len() || (end < region.len() && parse_frame(&region[end..]).is_ok()));
+match named_end.or_else(|| next_valid_record(codec, region, pos + 1)) { Some(next) =>
+pos = next, None => break } } } }`.
+
+**Mutants covered:** 912:15 `replace < with <=` (`valid_prefix`); 939:15 `replace <
+with <=`, 969:33 `replace < with <=`, 971:81 `replace + with *` (`operator_records`)
+(cargo-mutants).
+
+**Argument.**
+
+- **912:15, 939:15.** `pos` never exceeds the length: `used` is at most the rest of
+  the slice; a `named_end` is kept only if it equals or is below the length; and
+  `next_valid_record` returns an `at` with `at + 4 ≤ len`. So the mutants add one pass
+  at `pos == len` only. There `parse_frame(&[])` is `Err("short header")`; in
+  `valid_prefix` that breaks with the same `pos`; in `operator_records` the named end
+  needs `len − pos ≥ RECORD_HEADER` (false) and `next_valid_record(.., len + 1)` finds
+  nothing, so the loop breaks with the same records.
+- **969:33.** The right operand of `end == region.len() || (end < region.len() && …)`
+  runs only when `end != region.len()`, where `end < len` and `end <= len` agree.
+- **971:81.** `pos * 1 = pos` starts the search one byte earlier, at the frame that
+  just failed to parse. `next_valid_record` finds the first magic at or after its
+  start; if it is at `pos`, `parse_frame` fails there again (deterministic) and the
+  search moves on to `pos + 1`, as the original starts; if it is not, the first magic
+  found is the same. The same answer for every input.
+
+**Evidence.** Missed in `runG6s1` and `runG6s2` (every chain target but
+`restart_rebuilds_the_px_state_exactly`, and node lib, `halt_exit`, `node_binary`).
+
+Record: mutation run G, 2026-10-12.
+
+## E73: log lines of store replay (chain/src/manager/replay.rs)
+
+Decision: mutation run G, batch G6, for the Lead's review (as E12 and E33).
+
+**Code.** In `open_checked`: `if checkpoints + verdicts > 0 { log::info!(…) }` and
+`if !operator.is_empty() { log::warn!(…) }`, then `manager.log_operator_verdicts()`.
+In `replay`: `if !invalid_desc.is_empty() { log::info!(…) }` and `if orphans > 0 {
+log::warn!(…) }`. In `scan`: `out.checkpoints += 1` and `out.verdicts += 1`.
+`log_operator_verdicts(&self)` only logs (one warning per verdict in force, and one
+for `operator_fork()`, a `&self` query).
+
+**Mutants covered:** 243:35 `replace > with ==`, `with <`, `with >=`; 243:24 `replace +
+with *`; 249:12 `delete !`; 402:12 `delete !`; 412:20 `replace > with ==`, `with <`,
+`with >=`; 695:70 `replace += with *=`; 697:56 `replace += with *=`; 595:9 `replace
+ChainManager::log_operator_verdicts with ()` (12, cargo-mutants).
+
+**Argument.** Each condition guards only a log line, and `checkpoints` and `verdicts`
+are read only by the line at 243 to 246 (`grep -n 'checkpoints\|verdicts'
+chain/src/manager/replay.rs`); `invalid_desc` and `orphans` are read by their log
+lines only after the replay is complete. 243:24 `*` cannot overflow for any store a
+node can hold. 595:9 removes the operator warnings and changes no state. The same
+blocks are connected and refused in both versions, and no test observes the log. The
+other 243:24 mutant (`-`, an overflow panic when verdicts outnumber checkpoints) is
+killed by `a_store_with_verdict_markers_and_no_checkpoint_opens`.
+
+Not covered by the argument: the warning of 595:9 is the operator-facing message of
+RTW3-11 (each operator verdict in force, and whether a heavier chain is refused only
+because of it). Only a log-capture test can hold it: open, low (run G evidence, § Open
+items (c)).
+
+**Evidence.** Missed in `runG6s1` and `runG6s2`.
+
+Record: mutation run G, 2026-10-12.
+
+## E74: `|` of disjoint bits in the store instructions (zkvm/src/exec.rs)
+
+Decision: mutation run G, batch G10, for the Lead's review.
+
+**Code.** `Op::Sb | Op::Sh | Op::Sw`: `(align, mask)` is `(4, 0xffff_ffff)`, `(2,
+0xffff)` or `(1, 0xff)`; `check_addr(addr, align, true)?`; `let shift = 8 * (addr %
+4);` `let after = (before & !(mask << shift)) | ((rs2 & mask) << shift);`.
+
+**Mutant covered:** 288:57 `replace | with ^` (cargo-mutants).
+
+**Argument.** The left operand has every bit of `mask << shift` cleared; the right
+operand has bits only inside `mask << shift` (`rs2 & mask` is within `mask`, and the
+same shift moves both, bits shifted out of the word being lost from both). The
+operands share no bit, so `|` and `^` agree for every input.
+
+**Evidence.** Missed in `runG10s1`, `runG10s2` (every zkvm target), `runG10s3` (px
+`kernel`, `kernel_budget`, `elf_paths`, `fuzz`, `proof_limits`, tx `deploy_rules`), and
+`runG10keq` (with the new loader and boundary tests).
+
+Record: mutation run G, 2026-10-12.
+
+## E75: two loader checks that refuse only programs refused anyway (zkvm/src/program.rs)
+
+Decision: mutation run G, batch G10, for the Lead's review.
+
+**Code.** `Program::from_elf`: `if elf.len() < 52 || &elf[..4] != b"\x7fELF" { return
+Err(e("not an ELF file")) }` (82); the identification, type, machine and flag checks;
+each `PT_LOAD` header read with `u32_at` (which returns `Err("truncated")` past the
+end), a `memsz == 0` segment skipped; the executable segment must be 4-aligned with
+`memsz == filesz`; then `if writable.iter().any(|&base| base < code_base) { return
+Err(…) }` (162) and `Self::new(…)`, whose `validate` refuses overlapping segments,
+a code base below `NULL_GUARD = 0x1000` and an empty code segment. Consensus reads
+only whether loading fails (`load_programs` maps every error to
+`TxError::PxInvalidProgram`).
+
+**Mutants covered:** 162:45 `replace < with <=`; 82:22 `replace < with <=`
+(cargo-mutants).
+
+**Argument.** Each mutant refuses one more class of input, and the original refuses
+every input of that class too; only the error value differs, which no consensus path
+reads.
+
+- **162:45** also refuses a writable segment at `base == code_base`. Such a data
+  segment has `mem_size ≥ 1` (zero-size segments are skipped) and the code segment is
+  non-empty (else `validate` refuses it), so both ranges start at `code_base` and end
+  above it: `validate`'s overlap check refuses the program.
+- **82:22** also refuses an input of exactly 52 bytes. No 52-byte input loads: it
+  needs an executable `PT_LOAD` header read entirely inside the file, so at an offset
+  `h ≤ 24` (its flags are at `h + 24 … h + 28`), and only the first header can be
+  there (`h = phoff + 32 i`). Its type word `01 00 00 00` at `h` conflicts with the
+  fixed ELF header bytes for `h` = 0 to 5 (the magic, the identification bytes) and 13
+  to 19 (`e_type = 2`, `e_machine = 243`). For `h` = 6 and 7 its flags byte is a zero
+  byte of `phoff` (`PF_X` clear); for `h = 8` its `vaddr` is bytes 16 to 19, `0x00f30002`,
+  not 4-aligned; for `h` = 9 to 12 and 21 to 23 its file offset contains `e_type`,
+  `e_machine` or `phoff` bytes, which put it far past the 52 bytes ("segment outside
+  the file"); for `h = 20` its `vaddr` is `phoff = 20`, below `NULL_GUARD`; for `h =
+  24` its `filesz` contains `e_phentsize = 32` in its third byte (at least 2^21),
+  past the file. So every 52-byte input is refused by the original, as by the mutant.
+
+**Evidence.** Missed in `runG10s1`, `runG10s2`, `runG10s3`, and `runG10keq` (with
+the new zkvm/tests/elf_loader.rs, among them
+`inputs_shorter_than_an_elf_header_are_rejected_without_panicking` and
+`writable_segment_below_the_code_is_rejected_and_above_it_is_accepted`).
+
+Record: mutation run G, 2026-10-12.
+
+## E76: `|` of disjoint bit fields in RandomX (randomx/src/superscalar.rs, vm.rs)
+
+Decision: mutation run G, batch G3, for the Lead's review.
+
+**Code and mutants covered** (cargo-mutants, each `replace | with ^`):
+
+- superscalar.rs 267:22 `P01 = P0 | P1`, 268:22 `P05 = P0 | P5`, 269:23 and 269:28
+  `P015 = P0 | P1 | P5`, with `P0 = 1`, `P1 = 2`, `P5 = 4`;
+- vm.rs 225:14 `small_positive_float_bits`: `exponent | mantissa`;
+- vm.rs 236:24 `float_mask`: `(entropy & MASK22) | static_exponent(entropy)`;
+- vm.rs 649:69, 650:69 `mask_e`: `(x[k].to_bits() & DYNAMIC_MANTISSA_MASK) |
+  e_mask[k]`.
+
+**Argument.** In each, the two operands share no bit, so `|` and `^` agree:
+
+- the ports are distinct single bits;
+- `exponent` is masked to 11 bits and shifted by 52, `mantissa` is below 2^52;
+- `static_exponent` is `(0x300 | (entropy >> 60) << 4) << 52`, bits 56 to 61, and
+  `MASK22` is bits 0 to 21;
+- `mask_e`'s argument is always a `load_f` value (its only callers, vm.rs 690 and
+  866), an `i32` converted to `f64`. A nonzero `n` with `2^k ≤ |n| < 2^(k+1)` has the
+  fraction `(|n| − 2^k) · 2^(52−k)`, so bits 0 to 21 are zero for `k ≤ 30`, and
+  `|n| = 2^31` has fraction 0. So `x & DYNAMIC_MANTISSA_MASK` (bits 0 to 55) has bits
+  0 to 21 clear, while `e_mask` (a `float_mask`) has bits only in 0 to 21 and 56 to
+  61. Disjoint.
+
+**Evidence.** Missed in `runG3s1`, `runG3s2` (with the ignored light-mode tests: the
+FPU oracle, the large pinned digest) and `runG3s2b` (consensus `golden`).
+
+Record: mutation run G, 2026-10-12.
+
+## E77: unreachable comparisons in RandomX program generation and compilation (randomx/src/superscalar.rs, vm.rs)
+
+Decision: mutation run G, batch G3, for the Lead's review.
+
+**Mutants covered** (cargo-mutants): superscalar.rs 344:65, 345:67, 346:67, 347:67,
+348:67, 349:67, 350:67 `delete -` (the `src_op` of `IROR_C`, `IADD_C7`, `IXOR_C7`,
+`IADD_C8`, `IXOR_C8`, `IADD_C9`, `IXOR_C9`: `-1` becomes `1`); superscalar.rs 744:26
+`replace < with <=` (`program.len() < SUPERSCALAR_MAX_SIZE` in `generate`'s loop);
+vm.rs 501:26 `replace < with <=` (`opcode < Ceil::ISTORE` in `compile`).
+
+**Argument.**
+
+- **344 to 350.** These instructions have one macro-op. `generate` compares
+  `macro_op_index == current.info.src_op` only after reading `ops[macro_op_index]`,
+  so with `macro_op_index = 0`; `-1` and `1` both differ from 0. The source branch
+  never runs in either version.
+- **744:26.** The versions differ only if `program.len()` reaches
+  `SUPERSCALAR_MAX_SIZE = 3 · 170 + 2 = 512`. Every instruction has at least one
+  macro-op that is not eliminated, and each committed uop takes a free (cycle, port)
+  slot of the map (`schedule_uop` writes a slot only where it is 0). While the ports
+  are not saturated every commit is at a cycle below 170 (a commit at 170 or later sets
+  `ports_saturated`), so at most `3 · 170 = 510` instructions are complete before
+  saturation, and at most one more (the instruction in progress) after it: at most 511
+  instructions. `program.len() < 512` always holds, and the mutated condition is
+  equivalent. (Observed maximum: 494 in 8 million programs.)
+- **501:26.** `opcode` is a byte (`ins[0] as u16 ≤ 255`) and `Ceil::ISTORE = 256` (the
+  frequencies sum to 256, a compile-time assertion in randomx/src/config.rs). Both
+  `< 256` and `≤ 256` hold for every opcode; the final `else` (`Op::Nop`) is
+  unreachable in both.
+
+**Evidence.** Missed in `runG3s1`, `runG3s2`, `runG3s2b`.
+
+Record: mutation run G, 2026-10-12.
+
+## E78: initial values that are overwritten or never compared with another value (randomx/src/superscalar.rs)
+
+Decision: mutation run G, batch G3, for the Lead's review.
+
+**Mutants covered** (cargo-mutants, each `delete -`, so `-1` becomes `1`): 422:28
+`INVALID_GROUP`; 458:18 and 459:18 (`Instruction::null`'s `src`, `dst`); 497:20
+(`create`'s `self.dst = -1`); 535:37, 541:37, 547:37, 565:37 (`op_group_par = -1` of
+`IROR_C`, the `IADD_C*`, the `IXOR_C*`, `IMUL_RCP`).
+
+**Argument.**
+
+- **422:28.** `INVALID_GROUP` is only the `last_op_group` of a register no
+  instruction has written (`RegisterInfo::default`, `last_op_par = -1`); a written
+  register gets the writer's group and parameter together. It is read in
+  `select_destination` in `reg.last_op_group != ImulR` (3: both `-1` and `1` differ)
+  and in `(reg.last_op_group != self.op_group || reg.last_op_par !=
+  self.op_group_par)`. Only an `IXOR_R` has `op_group = 1`; its `op_group_par` is
+  set by `select_source` to a register index (`group_par_is_source`, `src_op =
+  dst_op = 0`, the source chosen first), so `-1 != op_group_par` and the condition
+  holds in both versions.
+- **458:18, 459:18.** `Instruction::null` has no macro-ops, so the next loop pass
+  calls `create`, which sets `src = -1` and `dst = -1`, before anything reads them; a
+  null instruction is never emitted.
+- **497:20.** Every instruction's `dst_op` is below its macro-op count and not above
+  its `result_op`, so `select_destination` sets `dst` before `registers[dst]` (at
+  `result_op`) or `to_instr` reads it; a thrown-away instruction is never read.
+- **535, 541, 547, 565.** These groups (`IROR_C` 4, `IADD_C7` 5, `IXOR_C7` 6,
+  `IMUL_RCP` 13) have `src_op = -1`, so `select_source` never sets their parameter,
+  and no other instruction has these groups. `op_group_par` is read only in the
+  condition above and stored as the register's `last_op_par` with its group. The
+  comparison matters only against a register last written by the same group, which
+  stored the same constant: `-1` against `-1`, or `1` against `1`, the same answer.
+
+**Evidence.** Missed in `runG3s1`, `runG3s2`, `runG3s2b`.
+
+Record: mutation run G, 2026-10-12.
+
+## E79: `+ 4` for `% 4` in the float register indices (randomx/src/vm.rs)
+
+Decision: mutation run G, batch G3, for the Lead's review.
+
+**Code.** `compile` stores `dst: dst % 4` and `src: src % 4` in the float operations
+(`dst`, `src` are `ins[k] % 8`, so 0 to 7); `execute_program` reads them only through
+`fi(i) = i as usize & 3`.
+
+**Mutants covered:** 443:26, 444:26, 448:26, 455:26, 456:26, 460:26, 466:35, 469:26,
+470:26, 474:26, 480:35 `replace % with +` (11, cargo-mutants).
+
+**Argument.** `(d + 4) & 3 = d & 3 = (d % 4) & 3` for `d` in 0 to 7 (no overflow of a
+`u8`). The fields are read nowhere else (`grep -n 'FaddR\|FsubR\|FmulR\|FscalR\|FsqrtR\|FdivM\|FaddM\|FsubM'
+randomx/src`: the definition, `compile` and `execute_program` only).
+
+**Evidence.** Missed in `runG3s1`, `runG3s2`, `runG3s2b`.
+
+Record: mutation run G, 2026-10-12.
+
+## E80: `|=` for `^=` on a zero scratchpad address (randomx/src/vm.rs)
+
+Decision: mutation run G, batch G3, for the Lead's review.
+
+**Code.** `execute`: `self.r = [0; 8]; let mut sp_addr0 = self.mx; let mut sp_addr1 =
+self.ma;` then per iteration `let sp_mix = self.r[rr0] ^ self.r[rr1]; sp_addr0 ^=
+sp_mix as u32; … sp_addr1 ^= (sp_mix >> 32) as u32; …` and at its end `sp_addr0 = 0;
+sp_addr1 = 0;`.
+
+**Mutants covered:** 676:22, 678:22 `replace ^= with |=` (cargo-mutants).
+
+**Argument.** In the first iteration the registers are zero, so `sp_mix = 0` and
+`a ^ 0 = a | 0`; in every later iteration the address is 0 (reset at the end of the
+previous one) and `0 ^ b = 0 | b`. One operand is always zero.
+
+**Evidence.** Missed in `runG3s1`, `runG3s2`, `runG3s2b`.
+
+Record: mutation run G, 2026-10-12.
+
+## E81: an extra pass past the port map in `schedule_mop` (randomx/src/superscalar.rs)
+
+Decision: mutation run G, batch G3, checked by the lead.
+
+**Code.** `while (cycle as usize) < CYCLE_MAP_SIZE { let cycle1 = schedule_uop(false,
+…, cycle); let cycle2 = schedule_uop(false, …, cycle); if cycle1 >= 0 && cycle1 ==
+cycle2 { … return cycle1 } cycle += 1 } -1`, with `CYCLE_MAP_SIZE = 174`.
+
+**Mutant covered:** 706:28 `replace < with <=` (cargo-mutants).
+
+**Argument.** The only extra pass is at `cycle = 174`. There both `schedule_uop` calls
+(not committing) skip their loop and return `-1`, so the test fails, `cycle` becomes
+175 and the function returns `-1`, as the original does, with no state written.
+
+**Evidence.** Missed in `runG3s1`, `runG3s2`, `runG3s2b`.
+
+Record: mutation run G, 2026-10-12.
+
+## E82: the 257th consecutive throwaway (randomx/src/superscalar.rs)
+
+Decision: mutation run G, batch G3, for the Lead's review. **Equivalent under a
+probabilistic reachability argument, not unconditionally.**
+
+**Code.** In `generate`, when no source (782) or destination (807) register is found
+within `LOOK_FORWARD_CYCLES = 4` cycles: `if throw_away_count < MAX_THROWAWAY_COUNT
+{ throw_away_count += 1; macro_op_index = ops.len(); continue } current =
+Instruction::null(); break`, with `MAX_THROWAWAY_COUNT = 256`. `throw_away_count` is
+reset to 0 whenever a macro-op passes both selections.
+
+**Mutants covered:** 782:41, 807:41 `replace < with <=` (cargo-mutants).
+
+**Argument.** The versions differ only after 256 consecutive throwaways. Each
+throwaway follows four failed tries, each of which adds 1 to `cycle`, and `continue`
+skips the reset `cycle = top_cycle`; nothing else lowers `cycle` during a streak. So a
+streak raises `cycle` by 4 per throwaway, so at most 44 throwaways of a streak happen
+below cycle 174, the end of the port map. No macro-op is committed during a streak,
+so every register's latency comes from a commit before it, at a cycle below 170 (a
+later commit saturates the ports), plus at most 4: at most 173. From cycle 174 on, an
+instruction whose first
+macro-op uses a port is refused by `schedule_mop` with `-1`, which saturates the
+ports and ends the program, not a throwaway. The only instructions that can still be
+thrown away are `IMULH_R` and `ISMULH_R`, whose first macro-op (`MOV_RR`) is
+eliminated (their source is chosen at the second macro-op, which a full map refuses).
+Their destination choice, with every register's latency passed, `can_reuse` set and
+chained multiplications allowed (`throw_away_count > 0`), fails only if every register was
+last written by the same group with the same `op_group_par`, a fresh 32-bit value from
+the generator. So the remaining throwaways, at least 212, each need an event of
+probability at most `8 · 2^−32`, treating the Blake2 generator's output as uniform.
+The streak's probability is far below anything observable. In 8 million generated
+programs the longest streak was 3 (internal record `reach-1M.txt`). This is an
+argument about the generator's output, not a proof for every key.
+
+**Evidence.** Missed in `runG3s1`, `runG3s2`, `runG3s2b`.
+
+Record: mutation run G, 2026-10-12.
+
+## E83: the compile-time check of the kernel error list (px/src/fingerprint.rs)
+
+Decision: mutation run G, batch G7, for the Lead's review (as E24).
+
+**Code.** `const _: () = { let mut i = 0; while i < KERNEL_ERRORS.len() { assert!(…);
+assert!(…); i += 1; } };`
+
+**Mutants covered:** 550:13 `replace < with ==`, `replace < with >` (cargo-mutants).
+
+**Argument.** The block is evaluated at compile time and produces no run-time code.
+With `i = 0` and a non-empty list, `0 == len` and `0 > len` are false, so the mutated
+loop never runs and the assertions, which hold in the original, are skipped. The
+built program is the same.
+
+**Evidence.** Missed in `runG7s1px` and `runG7s2px` (the cheap px targets and every
+node target).
+
+Record: mutation run G, 2026-10-12.
+
+## E84: difficulty sample inputs whose change cancels in the rule (node/src/fingerprint.rs)
+
+Decision: mutation run G, batch G7, for the Lead's review.
+
+**Code.** `rule_samples`: `ts = 1_000_000 + i · 120` and `cd = (i + 1) · 10^6` for `i`
+in 0 to 86; `ts[11] -= 1_300`; samples `next_difficulty(&ts, &cd, …)`,
+`next_difficulty(&ts[11..], &cd[11..], …)` and the genesis-only case. In
+`next_difficulty` (consensus/src/difficulty.rs) the cumulative difficulties enter only
+as differences `cumulative[w0 + i] − cumulative[w0 + i − 1]`; the counted clock is
+`prev = max(ts, prev + step)` over the warm-up (`DIFFICULTY_WARMUP = 11`) and the
+window; each solve time is `min(this − prev, 6T)`.
+
+**Mutants covered:** 480:48 `replace + with *` (`cd = i · 10^6`); 482:12 `replace -=
+with /=` (`ts[11] = 1_001_320 / 1_300 = 770` instead of `1_000_020`) (cargo-mutants).
+
+**Argument.**
+
+- **480:48** shifts every cumulative difficulty by the same `10^6`; only differences
+  are read (the genesis-only sample reads none). The same samples, on the same path.
+- **482:12.** With the full history (`w0 = 11`, warm-up from index 0), the clock
+  reaches `1_001_200 + 60` at index 11, above both `1_000_020` and `770`, so `prev`
+  is the same and the stamp is lifted in both. With `ts[11..]` (no warm-up), `prev =
+  ts[11]` and the first solve time is `1_420` or `1_000_670`, both capped at `6T =
+  720`; from there `prev = ts[12]` in both. The same outputs, through the same rules
+  (the warm-up's lift and the 6T cap) as the original input.
+
+**Evidence.** Missed in `runG7s1node` and `runG7s2node` (every node target).
+
+Record: mutation run G, 2026-10-12.
+
+## E85: transaction-sample variants changed by another amount, with the same verdict (node/src/fingerprint.rs)
+
+Decision: mutation run G, batch G7, for the Lead's review.
+
+**Mutants covered** (cargo-mutants): 1007:58 `replace + with -` (`plus_g` adds `−G`
+instead of `G`); 1023:36 `replace ^ with &` (the "other branch id" rules:
+`branch_id & 1` instead of `branch_id ^ 1`); 1208:52 `replace += with -=` (the PX
+"bridge_in + 1" variant becomes `− 1`); 1253:54 `replace ^= with &=` (the "other
+salt" variant: `salt[0] & 1` instead of `salt[0] ^ 1`).
+
+**Argument.** Each variant still changes the same field so that the same rule refuses
+it, and the sample records that verdict:
+
+- `−G` instead of `+G`: a pseudo-output shifted alone leaves the transfer unbalanced;
+  a pseudo-output and an output commitment shifted together keep it balanced and break
+  the output's range proof. The same two verdicts.
+- `branch_id & 1` is 1 for `BRANCH_ID_V3` (`"BSv3"`, odd and above 1), so the rules
+  still name another branch than the fixture's.
+- `bridge_in − 1` breaks the PX balance by one unit, as `+ 1` does (the fixture's
+  `bridge_in` is nonzero: under the mutants profile's overflow checks the mutant would
+  otherwise panic and be caught).
+- `salt[0] & 1` changes the salt, as `^ 1` does, since the golden deploy's `salt[0]`
+  is above 1 (otherwise the variant would be the valid deploy and its pinned verdict
+  would differ).
+
+These differ from the open sample mutants (run G evidence, § Open items (b)): there,
+the mutated input reaches the same output through another rule.
+
+**Evidence.** Missed in `runG7s1node` and `runG7s2node`.
+
+Record: mutation run G, 2026-10-12.
+
+## E86: `FixtureChain` answers the samples never use (node/src/fingerprint.rs)
+
+Decision: mutation run G, batch G7, for the Lead's review.
+
+**Code.** `FixtureChain`, the chain view of the fixture samples and of
+node/tests/px_fixture.rs, used only for transaction verdicts (`validate_transfer`,
+`validate_px`, `validate_px_without_proof`, `validate_deploy`): `px_tree_size` → 0;
+`px_root_after` → the empty PX state's root after the leaves; `output_frontier` → an
+empty frontier ("no block is validated on this view").
+
+**Mutants covered:** 887:9 `replace px_tree_size -> u64 with 1`; 893:9 `replace
+px_root_after -> Option<Digest> with None` and `with Some(Default::default())`; 898:9
+`replace output_frontier -> OutputFrontier with Default::default()` (cargo-mutants).
+
+**Argument.**
+
+- `px_root_after` and `output_frontier` are called only by block-level validation
+  (tx/src/validate.rs `BlockContext::committing` and the block checks at 1313 and
+  1373), which no sample or fixture test runs on this view: never called.
+- `px_tree_size` is read by B8 for one transaction (`check_px_capacity`, through
+  `px_free_leaves = CAPACITY − size`): `2^32 − 1` instead of `2^32` free leaves; the
+  fixture transactions have a few commitments, so the verdict is the same.
+
+**Evidence.** Missed in `runG7s1node` and `runG7s2node`.
+
+Record: mutation run G, 2026-10-12.
