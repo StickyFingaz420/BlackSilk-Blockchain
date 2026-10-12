@@ -912,3 +912,65 @@ fn mulh(a: u64, b: u64) -> u64 {
 fn smulh(a: u64, b: u64) -> u64 {
     ((a as i64 as i128 * b as i64 as i128) >> 64) as u64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One 8-byte program instruction (opcode, dst, src, mod, imm32 LE).
+    fn ins(opcode: u16, dst: u8, src: u8, mod_: u8, imm32: u32) -> [u8; 8] {
+        let opcode = u8::try_from(opcode).expect("opcode byte");
+        let i = imm32.to_le_bytes();
+        [opcode, dst, src, mod_, i[0], i[1], i[2], i[3]]
+    }
+
+    /// `IMUL_RCP r2, imm` between an `IMUL_R r2` and a `CBRANCH r2`; the
+    /// branch target is the last instruction that changed r2 (spec 5.1).
+    fn rcp_program(opcode: u16, imm32: u32) -> Vec<Op> {
+        let bytes: Vec<u8> = [
+            ins(Ceil::ISUB_M, 2, 3, 0, 0),
+            ins(opcode, 2, 5, 0, imm32),
+            ins(Ceil::FSQRT_R, 2, 0, 0, 0),
+        ]
+        .concat();
+        compile(&bytes)
+    }
+
+    fn branch_target(op: &Op) -> i32 {
+        match *op {
+            Op::Cbranch { reg: 2, target, .. } => target,
+            _ => panic!("not a CBRANCH r2"),
+        }
+    }
+
+    /// The reference (`bytecode_machine`): an `IMUL_RCP` whose divisor is 0
+    /// or a power of two is a NOP and does not count as a write of its
+    /// register; any other divisor multiplies by its reciprocal. Every opcode
+    /// of the `IMUL_RCP` range (76..=83) behaves alike.
+    #[test]
+    fn imul_rcp_by_zero_or_a_power_of_two_is_a_nop() {
+        let opcodes = Ceil::ISMULH_M..Ceil::IMUL_RCP;
+        assert_eq!(opcodes, 76..84);
+        for opcode in opcodes {
+            for imm in [0, 1, 2, 0x200, 1 << 31] {
+                let ops = rcp_program(opcode, imm);
+                assert!(matches!(ops[0], Op::ImulR { dst: 2, .. }));
+                assert!(matches!(ops[1], Op::Nop), "{opcode} {imm:#x}");
+                assert_eq!(branch_target(&ops[2]), 0, "{opcode} {imm:#x}");
+            }
+            for imm in [3, 0x201, 0xffff_ffff] {
+                let ops = rcp_program(opcode, imm);
+                let rcp = reciprocal(imm);
+                assert!(
+                    matches!(ops[1], Op::ImulR { dst: 2, src: Src::Imm(r) } if r == rcp),
+                    "{opcode} {imm:#x}"
+                );
+                assert_eq!(branch_target(&ops[2]), 1, "{opcode} {imm:#x}");
+            }
+        }
+        assert!(matches!(
+            rcp_program(Ceil::IMUL_RCP, 0x200)[1],
+            Op::InegR { dst: 2 }
+        ));
+    }
+}

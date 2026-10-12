@@ -874,3 +874,152 @@ pub(crate) fn generate(gen: &mut Blake2Generator) -> SsProgram {
         address_register,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Contract tests of the generator's helpers. The generator itself is
+    //! covered end to end by the official vectors (`lib.rs`); these pin the
+    //! parts natural keys never reach (mutation run G3: no key among 10^6
+    //! fills the port map to its end or draws a rejected `IMUL_RCP` divisor).
+
+    use super::*;
+
+    /// The reference's `isZeroOrPowerOf2`: the divisors `IMUL_RCP` must not
+    /// use (the generator redraws them, the VM turns them into a NOP).
+    #[test]
+    fn zero_and_powers_of_two_are_recognised() {
+        for x in [0, 1, 2, 4, 0x200, 1 << 31, 1 << 32, 1 << 63] {
+            assert!(is_zero_or_power_of_2(x), "{x:#x}");
+        }
+        for x in [
+            3,
+            6,
+            0x201,
+            (1 << 31) + 1,
+            (1 << 63) + 1,
+            u64::MAX - 1,
+            u64::MAX,
+        ] {
+            assert!(!is_zero_or_power_of_2(x), "{x:#x}");
+        }
+    }
+
+    /// The reference's `CycleMapSize`: `RANDOMX_SUPERSCALAR_LATENCY + 4`.
+    #[test]
+    fn the_port_map_spans_the_latency_plus_four_cycles() {
+        assert_eq!(CYCLE_MAP_SIZE, 174);
+        assert_eq!(CYCLE_MAP_SIZE, SUPERSCALAR_LATENCY as usize + 4);
+    }
+
+    fn free_map() -> PortBusy {
+        [[P_NULL; 3]; CYCLE_MAP_SIZE]
+    }
+
+    fn full_map() -> PortBusy {
+        [[P015; 3]; CYCLE_MAP_SIZE]
+    }
+
+    /// A uOP goes to the first cycle at or after the requested one with a
+    /// free port it can use, trying P5, then P0, then P1; it is recorded
+    /// only when committed.
+    #[test]
+    fn a_uop_takes_the_first_free_port() {
+        let mut map = free_map();
+        assert_eq!(schedule_uop(false, P015, &mut map, 7), 7);
+        assert_eq!(map, free_map(), "a trial schedules nothing");
+        assert_eq!(schedule_uop(true, P015, &mut map, 7), 7);
+        assert_eq!(map[7], [P_NULL, P_NULL, P015], "P5 first");
+        assert_eq!(schedule_uop(true, P015, &mut map, 7), 7);
+        assert_eq!(map[7], [P015, P_NULL, P015], "then P0");
+        assert_eq!(schedule_uop(true, P015, &mut map, 7), 7);
+        assert_eq!(map[7], [P015, P015, P015], "then P1");
+        assert_eq!(schedule_uop(true, P015, &mut map, 7), 8, "next cycle");
+        assert_eq!(schedule_uop(false, P1, &mut map, 8), 8);
+        assert_eq!(schedule_uop(false, P5, &mut map, 8), 9, "P5 of 8 is taken");
+    }
+
+    /// The last schedulable cycle is `CYCLE_MAP_SIZE - 1` (173); a request
+    /// at or past the end of the map fails with -1 (it neither panics nor
+    /// wraps around).
+    #[test]
+    fn a_uop_is_never_scheduled_past_the_map() {
+        let mut map = free_map();
+        assert_eq!(schedule_uop(false, P5, &mut map, 173), 173);
+        assert_eq!(schedule_uop(true, P1, &mut map, 173), 173);
+        assert_eq!(map[173], [P_NULL, P1, P_NULL]);
+        let mut map = free_map();
+        assert_eq!(schedule_uop(false, P5, &mut map, 174), -1);
+        assert_eq!(schedule_uop(true, P015, &mut map, 174), -1);
+        assert_eq!(schedule_uop(true, P015, &mut map, 1000), -1);
+        assert_eq!(map, free_map());
+    }
+
+    /// With every port busy to the end of the map, scheduling fails with
+    /// -1, whatever the start cycle, and commits nothing; a single free port
+    /// in the last cycle is found from cycle 0.
+    #[test]
+    fn a_saturated_map_fails_with_minus_one() {
+        let mut map = full_map();
+        for start in [0, 1, 100, 173] {
+            for uop in [P0, P1, P5, P01, P05, P015] {
+                assert_eq!(schedule_uop(true, uop, &mut map, start), -1);
+            }
+        }
+        assert_eq!(map, full_map());
+
+        map[173][0] = P_NULL;
+        assert_eq!(schedule_uop(false, P5, &mut map, 0), -1, "only P0 is free");
+        assert_eq!(schedule_uop(true, P015, &mut map, 0), 173);
+        assert_eq!(map, full_map());
+    }
+
+    /// A two-uOP macro-op needs both uOPs in one cycle; an eliminated one
+    /// takes no port; a dependent one waits for its dependency.
+    #[test]
+    fn a_macro_op_schedules_both_uops_in_one_cycle() {
+        let mut map = free_map();
+        // P1 is free at 10 but P5 only from 12.
+        map[10][2] = P5;
+        map[11][2] = P5;
+        assert_eq!(schedule_mop(false, &IMUL_R_OP, &mut map, 10, 0), 12);
+        assert_eq!(map[12], [P_NULL; 3]);
+        assert_eq!(schedule_mop(true, &IMUL_R_OP, &mut map, 10, 0), 12);
+        assert_eq!(map[12], [P_NULL, P1, P5]);
+        // MOV_RR is eliminated: no port, the requested cycle.
+        let before = map;
+        assert_eq!(schedule_mop(true, &MOV_RR, &mut map, 12, 0), 12);
+        assert_eq!(map, before);
+        // A dependent op starts no earlier than its dependency.
+        let dep = SUB_RR.dependent();
+        assert_eq!(schedule_mop(false, &dep, &mut map, 3, 40), 40);
+        assert_eq!(schedule_mop(false, &SUB_RR, &mut map, 3, 40), 3);
+    }
+
+    /// A two-uOP macro-op that finds no cycle with both ports free fails
+    /// with -1 and commits nothing, also when the only free pair is split
+    /// across cycles or lies past the end of the map.
+    #[test]
+    fn a_macro_op_on_a_saturated_map_fails_with_minus_one() {
+        let mut map = full_map();
+        for start in [0, 1, 173, 174] {
+            assert_eq!(schedule_mop(true, &IMUL_R_OP, &mut map, start, 0), -1);
+            assert_eq!(schedule_mop(true, &SUB_RR, &mut map, start, 0), -1);
+        }
+        assert_eq!(map, full_map());
+        // P1 free in 172 and P5 free in 173: never in the same cycle.
+        map[172][1] = P_NULL;
+        map[173][2] = P_NULL;
+        let before = map;
+        assert_eq!(schedule_mop(true, &IMUL_R_OP, &mut map, 0, 0), -1);
+        assert_eq!(map, before);
+        // Both free in 173, the last cycle: found.
+        map[173][1] = P_NULL;
+        assert_eq!(schedule_mop(true, &IMUL_R_OP, &mut map, 0, 0), 173);
+        assert_eq!(map[173], [P015, P1, P5]);
+        // A dependency past the map's end cannot be scheduled.
+        let mut map = free_map();
+        let dep = IMUL_R_OP.dependent();
+        assert_eq!(schedule_mop(false, &dep, &mut map, 0, 174), -1);
+        assert_eq!(schedule_mop(false, &dep, &mut map, 0, 173), 173);
+    }
+}
