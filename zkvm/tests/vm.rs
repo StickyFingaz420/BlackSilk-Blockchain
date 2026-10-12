@@ -271,6 +271,48 @@ fn a_small_program_proves_and_verifies_and_statements_are_bound() {
     }
 }
 
+/// Code at exactly the null guard, loading its own first word at 0x1000 and
+/// storing at exactly `code_end` (both addresses the lowest legal ones).
+fn boundary_program(store_addr: u32) -> Asm {
+    let mut p = Asm::new(blacksilk_zkvm::NULL_GUARD);
+    p.li(S0, blacksilk_zkvm::NULL_GUARD)
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .load(Op::Lbu, A1, S0, 0)
+        .write_reg(A1)
+        .li(S1, store_addr) // LUI + ADDI for any address >= 0x800
+        .li(T0, 0xdead_beef)
+        .store(Op::Sw, T0, S1, 0)
+        .load(Op::Lw, A1, S1, 0)
+        .write_reg(A1)
+        .halt(0);
+    p
+}
+
+/// The executor and the circuit agree at the memory-guard boundaries: an
+/// access at exactly NULL_GUARD and a store at exactly `code_end` execute,
+/// satisfy every constraint and prove and verify (exec.rs `check_addr`
+/// against cpu.rs's SLTU(addr, 0x1000) = 0 and SLTU(addr, code_end) = 0).
+#[test]
+fn accesses_at_the_null_guard_and_code_end_prove_and_verify() {
+    let code_end = boundary_program(0x10_0000).finish().unwrap().code_end();
+    let asm = boundary_program(code_end);
+    let program = Arc::new(asm.finish().unwrap());
+    assert_eq!(program.code_base, blacksilk_zkvm::NULL_GUARD);
+    assert_eq!(program.code_end(), code_end);
+    let first = program.code[0];
+    let expected = vec![first, first & 0xff, 0xdead_beef];
+    let (st, traces) = statement(&asm, &[]);
+    assert_eq!(st.output, expected);
+    let v = check(&trace::tables(&st), &traces, &trace::public_values(&st));
+    assert!(v.is_empty(), "{v:?}");
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(10);
+    let (st, proof) = prove::prove(program, &[], [1; 32], &mut rng).expect("proves");
+    assert_eq!(st.output, expected);
+    assert_eq!(st.exit_code, 0);
+    assert_eq!(prove::verify(&st, &proof), Ok(()));
+}
+
 /// Base-field columns a proof commits and FRI batches: the widths of the rows
 /// opened at the first query, over every opening round (`R`, main, quotient
 /// chunks, preprocessed, lookup), hidden random codewords included. This is
