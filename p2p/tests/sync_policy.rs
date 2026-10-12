@@ -598,7 +598,15 @@ async fn proven_identities_cannot_delay_outbound_headers() {
         wait_for("proving header stored", 20, || stored(&chain, &id)).await;
         writers.push((r, w));
     }
-    assert_eq!(net.stats().header_pow_failed, 0);
+    // A valid header's hashes are charged before they are computed and
+    // refunded after the header is accepted (`net/headers.rs`), so the counter
+    // can still hold the last proving header's charge just after it is
+    // stored. It settles to 0 unless a proving header really failed: a
+    // failure is never refunded, and this wait then times out.
+    wait_for("no proving header failed its proof of work", 20, || {
+        net.stats().header_pow_failed == 0
+    })
+    .await;
     // All of them queue junk at once, then H mines.
     for (k, (_, w)) in writers.iter_mut().enumerate() {
         let m = Message::Headers(vec![junk(&proto, 1000 + k as u64)]);
