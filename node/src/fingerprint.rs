@@ -18,8 +18,8 @@
 //!   that names a chain, so a release-candidate build and the final build of
 //!   a network have the same rules fingerprint.
 //! - [`identity_manifest`]: the network name and id, the genesis block and
-//!   id, and the branch ids of the schedule. Its digest is
-//!   [`identity_fingerprint`].
+//!   id, the initial difficulty (D0) and the branch ids of the schedule. Its
+//!   digest is [`identity_fingerprint`].
 //!
 //! [`consensus_fingerprint`] hashes the two fingerprints together: one value
 //! that changes with either. `blacksilk-node --print-manifest` prints both
@@ -31,6 +31,18 @@
 //! verdict, or a rule only a PX proof or a full block exercises) is told
 //! apart only by [`BUILD_COMMIT`], so operators compare both, and the build
 //! commit is marked `-dirty` when tracked files differ from it (`build.rs`).
+//!
+//! Every rule sample's **input** is recorded next to its output
+//! (fingerprint-sample-inputs), built from the same values the sample is
+//! computed from: an entry named `<sample> input` (or `<sample>
+//! input.<part>`) holds the sampled numbers, bytes or, for a sampled
+//! transaction, [`input_hash`] of its canonical encoding, and a verdict
+//! variant that changes the chain view, the height or the rules instead of
+//! the transaction records that change too. So a change of a sample's input
+//! moves the rules fingerprint even when the rule gives the same output for
+//! both inputs. The network's initial difficulty (D0) is an identity entry:
+//! it is a per-chain tuning value, not a rule, and it also enters the genesis
+//! header.
 
 use blacksilk_chain::build_flags::BuildFlags;
 use blacksilk_chain::{block, emission};
@@ -83,6 +95,22 @@ pub const RULES_DOMAIN: &str = "node/rules-fingerprint/v1";
 
 /// The hash domain of [`identity_fingerprint`].
 pub const IDENTITY_DOMAIN: &str = "node/identity-fingerprint/v1";
+
+/// The hash domain of the sample-input digests ([`input_hash`]): a sampled
+/// transaction enters the rules manifest next to its verdict as
+/// `H64(SAMPLE_INPUT_DOMAIN, encoding)[..32]` of its canonical encoding
+/// (docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs).
+pub const SAMPLE_INPUT_DOMAIN: &str = "node/fingerprint-sample-input/v1";
+
+/// `H64(SAMPLE_INPUT_DOMAIN, encoding)[..32]`: the input entry of a sample
+/// whose input is a transaction (`Transaction::encode`).
+pub fn input_hash(encoding: &[u8]) -> [u8; 32] {
+    let mut h = blacksilk_crypto::hash::Hasher64::new(SAMPLE_INPUT_DOMAIN);
+    h.update(encoding);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&h.finalize()[..32]);
+    out
+}
 
 /// Every network, in a fixed order.
 pub const NETWORKS: [Network; 3] = [Network::Testnet, Network::Regtest, Network::Mainnet];
@@ -245,14 +273,18 @@ pub fn manifest(network: Network) -> Manifest {
 }
 
 /// The identity entries: the network name and id, the genesis block and id,
-/// the branch id of every epoch, and the ids `TxRules` carries at genesis.
+/// the initial difficulty (D0), the branch id of every epoch, and the ids
+/// `TxRules` carries at genesis.
 pub fn identity_manifest(network: Network) -> Manifest {
     let p = ChainParams::for_network(network);
     let mut m = Manifest::new();
     m.text("chain.network", crate::network_name(p.network))
         .u("chain.network_id", p.network_id)
         .bytes("chain.genesis", &p.genesis.to_bytes())
-        .bytes("chain.genesis_id", &p.genesis_id());
+        .bytes("chain.genesis_id", &p.genesis_id())
+        // A per-chain tuning value, not a rule (fingerprint-sample-inputs);
+        // it is also the genesis header's difficulty.
+        .u("chain.initial_difficulty", p.initial_difficulty);
     m.list(
         "schedule.branch_ids",
         p.schedule.epochs().iter().map(|e| u64::from(e.branch_id)),
@@ -290,8 +322,8 @@ fn chain_entries(network: Network) -> Manifest {
         network: _,
         network_id: _,
         genesis: _,
+        initial_difficulty: _,
         target_block_time,
-        initial_difficulty,
         difficulty_window,
         median_time_window,
         future_time_limit,
@@ -301,26 +333,38 @@ fn chain_entries(network: Network) -> Manifest {
     } = &p;
     let mut m = Manifest::new();
     m.u("chain.target_block_time", *target_block_time)
-        .u("chain.initial_difficulty", *initial_difficulty)
         .size("chain.difficulty_window", *difficulty_window)
         .text("chain.difficulty_rule", DIFFICULTY_RULE_ID)
         .size("chain.DIFFICULTY_WARMUP", difficulty::DIFFICULTY_WARMUP)
         .size("chain.median_time_window", *median_time_window)
         .u("chain.future_time_limit", *future_time_limit)
         .u("chain.seed_epoch", *seed_epoch)
-        .u("chain.seed_lag", *seed_lag)
-        // The RandomX key schedule around the first key change.
-        .list(
-            "chain.seed_height samples",
-            [
-                0,
-                1,
-                seed_epoch + seed_lag,
-                seed_epoch + seed_lag + 1,
-                10 * seed_epoch,
-            ]
-            .map(|h| seed_height(h, *seed_epoch, *seed_lag)),
-        );
+        .u("chain.seed_lag", *seed_lag);
+    // The RandomX key schedule (E = seed_epoch, L = seed_lag): around the
+    // first key change (E + L), at the lag itself, at the later key changes
+    // 2E + L and 10E + L (the first heights where a dropped `- 1` in
+    // `seed_height` moves the key: `h - L` is a multiple of E there), and at
+    // the top of the height range.
+    let (e, l) = (*seed_epoch, *seed_lag);
+    let heights = [
+        0,
+        1,
+        e + l,
+        e + l + 1,
+        10 * e,
+        l,
+        l + 1,
+        2 * e + l,
+        2 * e + l + 1,
+        10 * e + l,
+        10 * e + l + 1,
+        u64::MAX,
+    ];
+    m.list(
+        "chain.seed_height samples",
+        heights.map(|h| seed_height(h, e, l)),
+    )
+    .list("chain.seed_height samples input (heights)", heights);
     // The activation table: every epoch, in order (docs/consensus.md §11);
     // the branch ids are identity.
     m.size("schedule.len", schedule.len());
@@ -446,20 +490,24 @@ fn chain_entries(network: Network) -> Manifest {
     m.u("emission.COIN", emission::COIN)
         .u("emission.MONEY_SUPPLY", emission::MONEY_SUPPLY)
         .u("emission.EMISSION_SPEED", emission::EMISSION_SPEED)
-        .u("emission.TAIL_REWARD", emission::TAIL_REWARD)
-        // The curve itself at a few points: (height, coins generated before it).
-        .list(
-            "emission.block_reward samples",
-            [
-                (0, 0),
-                (1, 0),
-                (2, emission::block_reward(1, 0)),
-                (1_000, 1_000 * emission::COIN),
-                (1, emission::MONEY_SUPPLY - emission::COIN),
-                (1, emission::MONEY_SUPPLY),
-            ]
-            .map(|(h, g)| emission::block_reward(h, g)),
-        );
+        .u("emission.TAIL_REWARD", emission::TAIL_REWARD);
+    // The curve itself at a few points: (height, coins generated before it).
+    let rewards = [
+        (0, 0),
+        (1, 0),
+        (2, emission::block_reward(1, 0)),
+        (1_000, 1_000 * emission::COIN),
+        (1, emission::MONEY_SUPPLY - emission::COIN),
+        (1, emission::MONEY_SUPPLY),
+    ];
+    m.list(
+        "emission.block_reward samples",
+        rewards.map(|(h, g)| emission::block_reward(h, g)),
+    )
+    .list(
+        "emission.block_reward samples input (height, generated)",
+        rewards.iter().flat_map(|&(h, g)| [h, g]),
+    );
     randomx_entries(&mut m);
     m
 }
@@ -476,48 +524,86 @@ fn rule_samples(network: Network) -> Manifest {
     // 999 824), then only the window's stamps (no warm-up: 998 248); a
     // genesis-only history (D0), and the clock step and ancestor count.
     let (t, n) = (120, difficulty::DIFFICULTY_WINDOW);
-    let mut ts: Vec<u64> = (0..87).map(|i| 1_000_000 + i * t).collect();
+    let steady: Vec<u64> = (0..87).map(|i| 1_000_000 + i * t).collect();
     let cd: Vec<u128> = (0..87u128).map(|i| (i + 1) * 1_000_000).collect();
-    let steady = difficulty::next_difficulty(&ts, &cd, t, n, 1);
+    let mut ts = steady.clone();
     ts[11] -= 1_300;
+    let cases: [(&[u64], &[u128], u64); 4] = [
+        (&steady, &cd, 1),
+        (&ts, &cd, 1),
+        (&ts[11..], &cd[11..], 1),
+        (&ts[..1], &cd[..1], 777),
+    ];
+    let name = "rules.sample.next_difficulty (T 120, N 75)";
     m.list(
-        "rules.sample.next_difficulty (T 120, N 75)",
-        [
-            steady,
-            difficulty::next_difficulty(&ts, &cd, t, n, 1),
-            difficulty::next_difficulty(&ts[11..], &cd[11..], t, n, 1),
-            difficulty::next_difficulty(&ts[..1], &cd[..1], t, n, 777),
-        ],
-    )
-    .list(
+        name,
+        cases.map(|(ts, cd, d0)| difficulty::next_difficulty(ts, cd, t, n, d0)),
+    );
+    for (i, (ts, cd, d0)) in cases.into_iter().enumerate() {
+        difficulty_input(&mut m, &format!("{name} input[{i}]"), ts, cd, (t, n, d0));
+    }
+    let steps = [120, 10, 2, 1];
+    m.list(
         "rules.sample.clock_step (T 120, 10, 2, 1)",
-        [120, 10, 2, 1].map(difficulty::clock_step),
+        steps.map(difficulty::clock_step),
     )
+    .list("rules.sample.clock_step (T 120, 10, 2, 1) input", steps)
     .size(
         "rules.sample.difficulty_ancestors(75)",
         difficulty::difficulty_ancestors(n),
     )
+    .size("rules.sample.difficulty_ancestors(75) input", n);
     // The lower clamp (RTFP3-6): a tiny difficulty over a slow window gives
     // a result below 1, which the rule raises to 1.
-    .u(
-        "rules.sample.next_difficulty([0, 1000], [1, 2], T 120, N 75, D0 1)",
-        difficulty::next_difficulty(&[0, 1_000], &[1, 2], t, n, 1),
+    let (clamp_ts, clamp_cd, clamp_d0) = ([0, 1_000], [1, 2], 1);
+    let name = "rules.sample.next_difficulty([0, 1000], [1, 2], T 120, N 75, D0 1)";
+    m.u(
+        name,
+        difficulty::next_difficulty(&clamp_ts, &clamp_cd, t, n, clamp_d0),
+    );
+    difficulty_input(
+        &mut m,
+        &format!("{name} input"),
+        &clamp_ts,
+        &clamp_cd,
+        (t, n, clamp_d0),
     );
 
     // Median time past (strict, lower median for an even count).
     let recent = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+    let four = [4, 1, 3, 2];
+    let candidates = [150, 151];
     m.list(
         "rules.sample.median (11 stamps, 4 stamps)",
-        [timestamp::median(&recent), timestamp::median(&[4, 1, 3, 2])],
+        [timestamp::median(&recent), timestamp::median(&four)],
     )
+    .list("rules.sample.median (11 stamps, 4 stamps) input[0]", recent)
+    .list("rules.sample.median (11 stamps, 4 stamps) input[1]", four)
     .list(
         "rules.sample.after_median_time_past (150, 151)",
-        [150, 151].map(|s| u64::from(timestamp::after_median_time_past(s, &recent))),
+        candidates.map(|s| u64::from(timestamp::after_median_time_past(s, &recent))),
     )
-    // The future time limit at its boundary (RTFP3-5): now 1 000, FTL 360.
     .list(
+        "rules.sample.after_median_time_past (150, 151) input.stamps",
+        candidates,
+    )
+    .list(
+        "rules.sample.after_median_time_past (150, 151) input.recent",
+        recent,
+    );
+    // The future time limit at its boundary (RTFP3-5): now 1 000, FTL 360.
+    let (stamps, now, ftl) = ([1_359, 1_360, 1_361], 1_000, 360);
+    m.list(
         "rules.sample.within_future_limit (1359, 1360, 1361; now 1000, FTL 360)",
-        [1_359, 1_360, 1_361].map(|s| u64::from(timestamp::within_future_limit(s, 1_000, 360))),
+        stamps.map(|s| u64::from(timestamp::within_future_limit(s, now, ftl))),
+    )
+    .list(
+        "rules.sample.within_future_limit (1359, 1360, 1361; now 1000, FTL 360) input.stamps",
+        stamps,
+    )
+    .list(
+        "rules.sample.within_future_limit (1359, 1360, 1361; now 1000, FTL 360) input (now, FTL)",
+        [now, ftl],
     );
 
     // The proof-of-work target at its boundary: hash · d < 2^256.
@@ -525,17 +611,23 @@ fn rule_samples(network: Network) -> Manifest {
     half[31] = 0x80; // 2^255 (little-endian)
     let mut below = [0xffu8; 32];
     below[31] = 0x7f; // 2^255 − 1
-    m.list(
-        "rules.sample.check_hash (max*1, 2^255*2, (2^255-1)*2, 0*0, 0*u64::MAX)",
-        [
-            check_hash(&[0xff; 32], 1),
-            check_hash(&half, 2),
-            check_hash(&below, 2),
-            check_hash(&[0; 32], 0),
-            check_hash(&[0; 32], u64::MAX),
-        ]
-        .map(u64::from),
-    );
+    let hashes = [
+        ([0xff; 32], 1),
+        (half, 2),
+        (below, 2),
+        ([0; 32], 0),
+        ([0; 32], u64::MAX),
+    ];
+    let name = "rules.sample.check_hash (max*1, 2^255*2, (2^255-1)*2, 0*0, 0*u64::MAX)";
+    m.list(name, hashes.map(|(h, d)| u64::from(check_hash(&h, d))))
+        .bytes(
+            &format!("{name} input.hashes"),
+            &hashes.map(|(h, _)| h).concat(),
+        )
+        .list(
+            &format!("{name} input.difficulties"),
+            hashes.map(|(_, d)| d),
+        );
 
     // The block id and the transaction Merkle root.
     let header = BlockHeader {
@@ -550,63 +642,97 @@ fn rule_samples(network: Network) -> Manifest {
         px_root: [4; 32],
         nonce: 42,
     };
+    let id_network = TEST_VECTOR_NETWORK_ID;
     m.bytes(
         "rules.sample.block_id (test-vector network id)",
-        &header.id(TEST_VECTOR_NETWORK_ID),
+        &header.id(id_network),
+    )
+    .bytes(
+        "rules.sample.block_id (test-vector network id) input.header",
+        &header.to_bytes(),
+    )
+    .u(
+        "rules.sample.block_id (test-vector network id) input.network",
+        id_network,
     )
     // The proof-of-work input of the same header (docs/consensus.md §3).
     .bytes(
         "rules.sample.pow_blob (test-vector network id)",
-        &header.pow_blob(TEST_VECTOR_NETWORK_ID),
-    )
-    .bytes("rules.sample.tx_root([])", &merkle::tx_root(&[]))
-    .bytes(
-        "rules.sample.tx_root([1; 32], [2; 32], [3; 32])",
-        &merkle::tx_root(&[[1; 32], [2; 32], [3; 32]]),
+        &header.pow_blob(id_network),
     );
+    let three = [[1; 32], [2; 32], [3; 32]];
+    m.bytes("rules.sample.tx_root([])", &merkle::tx_root(&[]))
+        .bytes(
+            "rules.sample.tx_root([1; 32], [2; 32], [3; 32])",
+            &merkle::tx_root(&three),
+        )
+        .bytes(
+            "rules.sample.tx_root([1; 32], [2; 32], [3; 32]) input",
+            &three.concat(),
+        );
 
     // The output range (B-OMR, docs/consensus.md §7.1): a leaf, and the
     // roots over the first n leaves of key [i; 32], commitment [i + 100; 32],
     // height i / 2, coinbase for even i (the empty range, one peak, two and
     // three peaks).
+    let one_leaf = ([1; 32], [2; 32], 3, true);
     m.bytes(
         "rules.sample.output_mmr.leaf ([1; 32], [2; 32], 3, coinbase)",
-        &mmr::leaf(&[1; 32], &[2; 32], 3, true),
+        &mmr::leaf(&one_leaf.0, &one_leaf.1, one_leaf.2, one_leaf.3),
+    );
+    leaf_input(
+        &mut m,
+        "rules.sample.output_mmr.leaf ([1; 32], [2; 32], 3, coinbase) input",
+        &[one_leaf],
     );
     let mut outputs = mmr::OutputFrontier::new();
+    let mut pushed = Vec::new();
     for n in 0u8..=7 {
         if [0, 1, 2, 3, 7].contains(&n) {
-            m.bytes(
-                &format!("rules.sample.output_mmr.root ({n} leaves)"),
-                &outputs.root(),
-            );
+            let name = format!("rules.sample.output_mmr.root ({n} leaves)");
+            m.bytes(&name, &outputs.root());
+            leaf_input(&mut m, &format!("{name} input"), &pushed);
         }
-        outputs.push(mmr::leaf(
-            &[n; 32],
-            &[n + 100; 32],
-            u64::from(n / 2),
-            n % 2 == 0,
-        ));
+        let leaf = ([n; 32], [n + 100; 32], u64::from(n / 2), n % 2 == 0);
+        outputs.push(mmr::leaf(&leaf.0, &leaf.1, leaf.2, leaf.3));
+        pushed.push(leaf);
     }
 
     // The genesis-nonce derivation (Bitcoin block 0, H = 0, test-vector id).
     let btc0 =
         parse_display_hex("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")
             .expect("Bitcoin block 0's hash");
+    let (nonce_network, nonce_height) = (TEST_VECTOR_NETWORK_ID, 0);
     m.u(
         "rules.sample.genesis_nonce (Bitcoin block 0, test-vector id)",
-        derive_genesis_nonce(TEST_VECTOR_NETWORK_ID, 0, &btc0),
+        derive_genesis_nonce(nonce_network, nonce_height, &btc0),
+    )
+    .bytes(
+        "rules.sample.genesis_nonce (Bitcoin block 0, test-vector id) input.beacon",
+        &btc0,
+    )
+    .list(
+        "rules.sample.genesis_nonce (Bitcoin block 0, test-vector id) input (network, height)",
+        [u64::from(nonce_network), nonce_height],
     );
 
     // The signature domain layout (RT-14): network id, branch id, genesis id.
+    let domain = SigDomain {
+        network_id: 0x0102_0304,
+        branch_id: 0x0506_0708,
+        genesis_id: [9; 32],
+    };
     m.bytes(
         "rules.sample.sig_domain (0x01020304, 0x05060708, [9; 32])",
-        &SigDomain {
-            network_id: 0x0102_0304,
-            branch_id: 0x0506_0708,
-            genesis_id: [9; 32],
-        }
-        .bytes(),
+        &domain.bytes(),
+    )
+    .list(
+        "rules.sample.sig_domain (0x01020304, 0x05060708, [9; 32]) input (network, branch)",
+        [domain.network_id, domain.branch_id].map(u64::from),
+    )
+    .bytes(
+        "rules.sample.sig_domain (0x01020304, 0x05060708, [9; 32]) input.genesis",
+        &domain.genesis_id,
     );
 
     // Weights and fees (T8, R12-2): max_weight over transfer shapes; the v1
@@ -614,32 +740,99 @@ fn rule_samples(network: Network) -> Manifest {
     // fee; the deploy fee at three program sizes (the vault's budget and
     // output words).
     let shapes = [(1, 2), (2, 2), (1, 16), (64, 16), (1, 0), (64, 2)];
-    m.list(
-        "rules.sample.max_weight (1,2) (2,2) (1,16) (64,16) (1,0) (64,2)",
-        shapes.map(|(i, o)| max_weight(i, o)),
-    )
-    .list(
-        "rules.sample.px_v1_part_weight (0,2) (1,0) (64,16) (1,2) (64,2)",
-        [(0, 2), (1, 0), (64, 16), (1, 2), (64, 2)].map(|(i, o)| v1_part_weight(i, o)),
-    );
+    let px_shapes = [(0, 2), (1, 0), (64, 16), (1, 2), (64, 2)];
+    let name = "rules.sample.max_weight (1,2) (2,2) (1,16) (64,16) (1,0) (64,2)";
+    m.list(name, shapes.map(|(i, o)| max_weight(i, o)))
+        .list(&format!("{name} input (inputs, outputs)"), pairs(&shapes));
+    let name = "rules.sample.px_v1_part_weight (0,2) (1,0) (64,16) (1,2) (64,2)";
+    m.list(name, px_shapes.map(|(i, o)| v1_part_weight(i, o)))
+        .list(
+            &format!("{name} input (inputs, outputs)"),
+            pairs(&px_shapes),
+        );
     let rules = TxRules::at_height(&ChainParams::for_network(network), 0);
+    let name = "rules.sample.standard_fee (1,2) (2,2) (1,16) (64,16) (1,0) (64,2)";
     m.list(
-        "rules.sample.standard_fee (1,2) (2,2) (1,16) (64,16) (1,0) (64,2)",
+        name,
         shapes.map(|(i, o)| rules.standard_fee(i, o).unwrap_or(u64::MAX)),
     )
+    .list(&format!("{name} input (inputs, outputs)"), pairs(&shapes));
+    let (ins, outs) = (1, 2);
+    let lens = [1, 4_096, tx::MAX_PROGRAM_BYTES];
+    let b = blacksilk_px::vault::BUDGET;
+    let registration = |len: usize| {
+        Registration::new(
+            vec![0; len],
+            blacksilk_px::vault::BUDGET,
+            blacksilk_px::vault::OUT_WORDS,
+        )
+    };
+    let name = "rules.sample.deploy_fee (1 in, 2 out; 1, 4 096, MAX_PROGRAM_BYTES)";
+    m.list(
+        name,
+        lens.map(|len| deploy_fee(ins, outs, &[registration(len)], &rules)),
+    )
     .list(
-        "rules.sample.deploy_fee (1 in, 2 out; 1, 4 096, MAX_PROGRAM_BYTES)",
-        [1, 4_096, tx::MAX_PROGRAM_BYTES].map(|len| {
-            let r = Registration::new(
-                vec![0; len],
-                blacksilk_px::vault::BUDGET,
-                blacksilk_px::vault::OUT_WORDS,
-            );
-            deploy_fee(1, 2, &[r], &rules)
-        }),
+        &format!("{name} input (inputs, outputs)"),
+        pairs(&[(ins, outs)]),
+    )
+    .list(
+        &format!("{name} input.program_lengths"),
+        lens.map(|len| len as u64),
+    )
+    .list(
+        &format!("{name} input.budget (cycles, keys, add, bit, lt, shift, mul, poseidon)"),
+        [
+            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+        ]
+        .map(|w| w as u64),
+    )
+    .u(
+        &format!("{name} input.out_words"),
+        blacksilk_px::vault::OUT_WORDS,
     );
     m.extend(transaction_samples().clone());
     m
+}
+
+/// The input entries of a difficulty sample: its timestamps, its cumulative
+/// difficulties (each fits in 64 bits) and `(T, N, D0)`.
+fn difficulty_input(
+    m: &mut Manifest,
+    name: &str,
+    timestamps: &[u64],
+    cumulative: &[u128],
+    (t, n, d0): (u64, usize, u64),
+) {
+    m.list(&format!("{name}.timestamps"), timestamps.iter().copied())
+        .list(
+            &format!("{name}.cumulative_difficulties"),
+            cumulative.iter().map(|&c| {
+                u64::try_from(c).expect("a sampled cumulative difficulty fits in 64 bits")
+            }),
+        )
+        .list(&format!("{name} (T, N, D0)"), [t, n as u64, d0]);
+}
+
+/// The input entry of an output-range sample: per leaf `key ‖ commitment ‖
+/// LE64(height) ‖ u8(coinbase)`, in push order (empty for no leaf).
+fn leaf_input(m: &mut Manifest, name: &str, leaves: &[([u8; 32], [u8; 32], u64, bool)]) {
+    let mut bytes = Vec::new();
+    for (key, commitment, height, coinbase) in leaves {
+        bytes.extend_from_slice(key);
+        bytes.extend_from_slice(commitment);
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.push(u8::from(*coinbase));
+    }
+    m.bytes(name, &bytes);
+}
+
+/// `(inputs, outputs)` shapes as a flat list.
+fn pairs(shapes: &[(usize, usize)]) -> Vec<u64> {
+    shapes
+        .iter()
+        .flat_map(|&(i, o)| [i as u64, o as u64])
+        .collect()
 }
 
 /// The RandomX configuration, read from the crate
@@ -948,16 +1141,22 @@ fn compute_transaction_samples() -> Manifest {
             proof: Vec::new(),
         }))
     };
-    m.list(
-        "rules.sample.weight (fixture transfer 2-in 3-out, coinbase, PX 2-in 3-out, PX 0-in 3-out)",
-        [
-            Transaction::from(t.clone()).weight(),
-            f.coinbase.weight(),
-            px(t.inputs.clone()).weight(),
-            px(Vec::new()).weight(),
-        ],
-    )
-    .bytes(
+    let weighed = [
+        Transaction::from(t.clone()),
+        f.coinbase.clone(),
+        px(t.inputs.clone()),
+        px(Vec::new()),
+    ];
+    let name =
+        "rules.sample.weight (fixture transfer 2-in 3-out, coinbase, PX 2-in 3-out, PX 0-in 3-out)";
+    m.list(name, weighed.iter().map(Transaction::weight)).bytes(
+        &format!("{name} input"),
+        &weighed
+            .iter()
+            .flat_map(|tx| input_hash(&tx.encode()))
+            .collect::<Vec<u8>>(),
+    );
+    m.bytes(
         "rules.sample.tx_hash (fixture transfer)",
         &Transaction::from(t.clone()).hash(),
     )
@@ -992,14 +1191,24 @@ fn compute_transaction_samples() -> Manifest {
         "rules.sample.block_commitments (fixture coinbase on the genesis state)",
         &commitments,
     )
-    .bytes(
-        "rules.sample.px_root_after ([1, 2, 3, 4, 5, 6, 7, 8], [9; 8]; empty tree)",
+    .u(
+        "rules.sample.block_commitments (fixture coinbase on the genesis state) input.height",
+        height,
+    );
+    let leaves = [[1, 2, 3, 4, 5, 6, 7, 8], [9; 8]];
+    let name = "rules.sample.px_root_after ([1, 2, 3, 4, 5, 6, 7, 8], [9; 8]; empty tree)";
+    m.bytes(
+        name,
         &blacksilk_tx::px::digest_bytes(
             &genesis_state
                 .px()
-                .root_after(&[[1, 2, 3, 4, 5, 6, 7, 8], [9; 8]])
+                .root_after(&leaves)
                 .expect("two leaves fit"),
         ),
+    )
+    .list(
+        &format!("{name} input"),
+        leaves.iter().flatten().map(|&x| u64::from(x)),
     );
 
     // One variant per error class; each changes one thing of the valid case.
@@ -1010,8 +1219,35 @@ fn compute_transaction_samples() -> Manifest {
         missing: None,
         spent: None,
     };
-    let verdict = |tx: &Transfer, chain: &FixtureChain, height: u64, rules: &TxRules| {
-        format!("{:?}", validate_transfer(tx, chain, height, rules))
+    // The verdict, the input hash of the transfer, and what the case changes
+    // besides the transfer: the chain view, the height or the rules.
+    let verdict = |tx: &Transfer, chain: &FixtureChain, height: u64, case_rules: &TxRules| {
+        let mut context = Manifest::new();
+        if let Some(k) = chain.spent {
+            context.bytes("spent key image", k.bytes());
+        }
+        if let Some(i) = chain.missing {
+            context.u("missing ring member", i);
+        }
+        if height != f.height {
+            context.u("height", height);
+        }
+        if case_rules.domain() != rules.domain() {
+            context.bytes("signature domain", &case_rules.domain().bytes());
+        }
+        if (case_rules.fee_per_weight, case_rules.max_block_weight)
+            != (rules.fee_per_weight, rules.max_block_weight)
+        {
+            context.list(
+                "fees (fee per weight, max block weight)",
+                [case_rules.fee_per_weight, case_rules.max_block_weight],
+            );
+        }
+        Sampled {
+            verdict: format!("{:?}", validate_transfer(tx, chain, height, case_rules)),
+            input: input_hash(&Transaction::from(tx.clone()).encode()),
+            context,
+        }
     };
     let variant = |change: &dyn Fn(&mut Transfer)| {
         let mut v = t.clone();
@@ -1023,7 +1259,7 @@ fn compute_transaction_samples() -> Manifest {
         branch_id: rules.branch_id ^ 1,
         ..rules
     };
-    let cases: [(&str, String); 21] = [
+    let cases: [(&str, Sampled); 21] = [
         ("valid", verdict(t, &full, f.height, &rules)),
         ("no inputs", variant(&|v| v.inputs.clear())),
         ("one output", variant(&|v| v.outputs.truncate(1))),
@@ -1120,11 +1356,59 @@ fn compute_transaction_samples() -> Manifest {
             variant(&|v| v.signatures[0] = v.signatures[1].clone()),
         ),
     ];
+    // The context every case shares (the fixture's height and rules).
+    m.list(
+        "rules.sample.verdict input.fixture (height, fee per weight, max block weight)",
+        [f.height, rules.fee_per_weight, rules.max_block_weight],
+    )
+    .bytes(
+        "rules.sample.verdict input.fixture signature domain",
+        &rules.domain().bytes(),
+    );
     for (name, v) in cases {
-        m.text(&format!("rules.sample.verdict ({name})"), &v);
+        v.record(&mut m, &format!("rules.sample.verdict ({name})"));
     }
     px_transaction_samples(&mut m);
     m
+}
+
+/// A sampled verdict and its input (fingerprint-sample-inputs): the
+/// [`input_hash`] of the sampled transaction's encoding, and the context
+/// entries of a case that changes the chain view, the height or the rules
+/// instead of the transaction (empty otherwise).
+struct Sampled {
+    verdict: String,
+    input: [u8; 32],
+    context: Manifest,
+}
+
+impl Sampled {
+    /// A stateless or fixture-context verdict of `tx` (no context entry).
+    fn of(verdict: String, tx: &Transaction) -> Self {
+        Sampled {
+            verdict,
+            input: input_hash(&tx.encode()),
+            context: Manifest::new(),
+        }
+    }
+
+    /// `<name> = verdict`, `<name> input = input hash`, and one `<name>
+    /// input.<part>` entry per context entry.
+    fn record(self, m: &mut Manifest, name: &str) {
+        use blacksilk_px::fingerprint::Value;
+        m.text(name, &self.verdict)
+            .bytes(&format!("{name} input"), &self.input);
+        for (part, value) in self.context.entries() {
+            let entry = format!("{name} input.{part}");
+            match value {
+                Value::U64(x) => m.u(&entry, *x),
+                Value::I64(x) => m.i(&entry, *x),
+                Value::Text(t) => m.text(&entry, t),
+                Value::Bytes(b) => m.bytes(&entry, b),
+                Value::List(l) => m.list(&entry, l.iter().copied()),
+            };
+        }
+    }
 }
 
 /// The PX and deploy samples on the golden PX fixture ([`PxFixture`]):
@@ -1163,11 +1447,14 @@ fn px_transaction_samples(m: &mut Manifest) {
         );
 
     let stateless = |t: &PxTx| {
-        format!(
-            "{:?}",
-            check_px_structure(t)
-                .and_then(|_| check_px_balance(t))
-                .and_then(|_| decode_px_proof(t).map(|_| ()))
+        Sampled::of(
+            format!(
+                "{:?}",
+                check_px_structure(t)
+                    .and_then(|_| check_px_balance(t))
+                    .and_then(|_| decode_px_proof(t).map(|_| ()))
+            ),
+            &Transaction::Px(Box::new(t.clone())),
         )
     };
     let variant = |change: &dyn Fn(&mut PxTx)| {
@@ -1179,7 +1466,7 @@ fn px_transaction_samples(m: &mut Manifest) {
     let mut p_bytes = [0xff; 32];
     p_bytes[0] = 0xed;
     p_bytes[31] = 0x7f;
-    let px_cases: [(&str, String); 10] = [
+    let px_cases: [(&str, Sampled); 10] = [
         ("valid", stateless(&p.px)),
         (
             "identity R in ciphertext 0",
@@ -1221,7 +1508,7 @@ fn px_transaction_samples(m: &mut Manifest) {
         ),
     ];
     for (name, v) in px_cases {
-        m.text(&format!("rules.sample.px.stateless_verdict ({name})"), &v);
+        v.record(m, &format!("rules.sample.px.stateless_verdict ({name})"));
     }
 
     let d = &p.deploy;
@@ -1241,9 +1528,14 @@ fn px_transaction_samples(m: &mut Manifest) {
     let deploy_verdict = |change: &dyn Fn(&mut PxDeploy)| {
         let mut v = d.clone();
         change(&mut v);
-        format!("{:?}", validate_deploy(&v, &chain, f.height, &rules))
+        Sampled::of(
+            format!("{:?}", validate_deploy(&v, &chain, f.height, &rules)),
+            &Transaction::PxDeploy(Box::new(v)),
+        )
     };
-    let deploy_cases: [(&str, String); 5] = [
+    // Every deploy case is validated in the fixture's context (the transfer
+    // verdicts' `input.fixture` entries).
+    let deploy_cases: [(&str, Sampled); 5] = [
         ("valid", deploy_verdict(&|_| {})),
         ("fee + 1", deploy_verdict(&|v| v.fee += 1)),
         (
@@ -1259,7 +1551,7 @@ fn px_transaction_samples(m: &mut Manifest) {
         ),
     ];
     for (name, v) in deploy_cases {
-        m.text(&format!("rules.sample.deploy.verdict ({name})"), &v);
+        v.record(m, &format!("rules.sample.deploy.verdict ({name})"));
     }
 }
 
@@ -1436,19 +1728,32 @@ mod tests {
             let text = identity_manifest(n).render();
             assert!(text.contains(&format!("chain.network_id = {}", p.network_id)));
             assert!(text.contains(&hex(&p.genesis_id())));
-            assert_eq!(identity_manifest(n).entries().len(), 7);
-        }
-        // Two networks that differ only in their identity fields (testnet and
-        // mainnet also differ in D0) share every rule except D0.
-        let strip = |n: Network| {
-            rules_manifest(n)
+            // D0 is identity (fingerprint-sample-inputs): in the identity
+            // manifest, not in the rules manifest.
+            assert!(text.contains(&format!(
+                "chain.initial_difficulty = {}",
+                p.initial_difficulty
+            )));
+            assert!(rules
                 .entries()
                 .iter()
-                .filter(|(name, _)| name != "chain.initial_difficulty")
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(strip(Network::Testnet), strip(Network::Mainnet));
+                .all(|(name, _)| name != "chain.initial_difficulty"));
+            assert_eq!(identity_manifest(n).entries().len(), 8);
+        }
+        // Testnet and mainnet differ only in identity fields (D0 among them),
+        // so they share the rules manifest exactly; regtest's rules differ.
+        assert_eq!(
+            rules_manifest(Network::Testnet).entries(),
+            rules_manifest(Network::Mainnet).entries()
+        );
+        assert_eq!(
+            rules_fingerprint(Network::Testnet),
+            rules_fingerprint(Network::Mainnet)
+        );
+        assert_ne!(
+            rules_manifest(Network::Testnet).entries(),
+            rules_manifest(Network::Regtest).entries()
+        );
     }
 
     /// One record section of docs/reviews/v3-consensus-changes.md: the keys
@@ -1574,6 +1879,87 @@ mod tests {
         assert_eq!(
             get("rules.sample.next_difficulty (T 120, N 75)"),
             Value::List(vec![1_000_000, 999_824, 998_248, 777])
+        );
+        // fingerprint-sample-inputs: the inputs of the DAA golden case (87
+        // on-target stamps at T = 120 from 10^6, cumulative difficulties
+        // (i + 1) * 10^6, the window-oldest stamp 1 300 s low; D0 1, then 777
+        // for the genesis-only history).
+        let steady: Vec<u64> = (0..87).map(|i| 1_000_000 + i * 120).collect();
+        let mut low = steady.clone();
+        low[11] = 1_000_020;
+        let cd: Vec<u64> = (1..=87).map(|i| i * 1_000_000).collect();
+        let n = difficulty::DIFFICULTY_WINDOW as u64;
+        for (i, ts, cd, d0) in [
+            (0, &steady[..], &cd[..], 1),
+            (1, &low[..], &cd[..], 1),
+            (2, &low[11..], &cd[11..], 1),
+            (3, &low[..1], &cd[..1], 777),
+        ] {
+            let name = format!("rules.sample.next_difficulty (T 120, N 75) input[{i}]");
+            assert_eq!(get(&format!("{name}.timestamps")), Value::List(ts.to_vec()));
+            assert_eq!(
+                get(&format!("{name}.cumulative_difficulties")),
+                Value::List(cd.to_vec())
+            );
+            assert_eq!(
+                get(&format!("{name} (T, N, D0)")),
+                Value::List(vec![120, n, d0])
+            );
+        }
+        // The RandomX key schedule (E = 2048, L = 64): the heights and their
+        // keys. A dropped `- 1` in `seed_height` moves the key at 2E + L and
+        // 10E + L (4 096 and 20 480 instead of 2 048 and 18 432).
+        let (e, l) = (2_048u64, 64u64);
+        assert_eq!(
+            get("chain.seed_height samples input (heights)"),
+            Value::List(vec![
+                0,
+                1,
+                e + l,
+                e + l + 1,
+                10 * e,
+                l,
+                l + 1,
+                4_160,
+                4_161,
+                20_544,
+                20_545,
+                u64::MAX
+            ])
+        );
+        assert_eq!(
+            get("chain.seed_height samples"),
+            Value::List(vec![
+                0,
+                0,
+                0,
+                2_048,
+                18_432,
+                0,
+                0,
+                2_048,
+                4_096,
+                18_432,
+                20_480,
+                (u64::MAX - 65) & !2_047
+            ])
+        );
+        assert_eq!(
+            get("emission.block_reward samples input (height, generated)"),
+            Value::List(vec![
+                0,
+                0,
+                1,
+                0,
+                2,
+                emission::block_reward(1, 0),
+                1_000,
+                1_000 * emission::COIN,
+                1,
+                emission::MONEY_SUPPLY - emission::COIN,
+                1,
+                emission::MONEY_SUPPLY
+            ])
         );
         assert_eq!(
             get("rules.sample.max_weight (1,2) (2,2) (1,16) (64,16) (1,0) (64,2)"),
@@ -1709,6 +2095,90 @@ mod tests {
                 deploy(case)
             );
         }
+    }
+
+    /// fingerprint-sample-inputs: every verdict variant records an input that
+    /// differs from the valid case's. A variant of the transaction has another
+    /// input hash; a variant of the chain view, the height or the rules keeps
+    /// the valid transaction (the same hash) and records what it changes in
+    /// `input.<part>` entries, which differ from the fixture's context.
+    #[test]
+    fn every_verdict_variant_records_a_distinct_input() {
+        let m = rules_manifest(Network::Regtest);
+        let e = m.entries();
+        let get = |name: &str| e.iter().find(|(n, _)| n == name).map(|(_, v)| v);
+        let f = Fixture::get();
+        let rules = fixture_rules();
+        let mut context_only = Vec::new();
+        for family in [
+            "rules.sample.verdict",
+            "rules.sample.px.stateless_verdict",
+            "rules.sample.deploy.verdict",
+        ] {
+            let valid = get(&format!("{family} (valid) input")).expect("the valid input");
+            assert!(matches!(valid, Value::Bytes(b) if b.len() == 32));
+            assert!(
+                e.iter()
+                    .all(|(n, _)| !n.starts_with(&format!("{family} (valid) input."))),
+                "{family}: the valid case has no context entry"
+            );
+            let cases: Vec<&str> = e
+                .iter()
+                .filter_map(|(n, _)| n.strip_prefix(&format!("{family} (")))
+                .filter_map(|n| n.strip_suffix(") input"))
+                .collect();
+            assert!(cases.len() >= 5, "{family}: {cases:?}");
+            for case in cases.into_iter().filter(|c| *c != "valid") {
+                let input = get(&format!("{family} ({case}) input")).expect("an input");
+                if input != valid {
+                    continue;
+                }
+                // The same transaction: the case must change its context.
+                let prefix = format!("{family} ({case}) input.");
+                let parts: Vec<(&str, &Value)> = e
+                    .iter()
+                    .filter_map(|(n, v)| n.strip_prefix(&prefix).map(|p| (p, v)))
+                    .collect();
+                assert!(!parts.is_empty(), "{family} ({case}): no distinct input");
+                for (part, v) in parts {
+                    match part {
+                        "height" => assert_ne!(*v, Value::U64(f.height)),
+                        "signature domain" => {
+                            assert_ne!(*v, Value::Bytes(rules.domain().bytes().to_vec()))
+                        }
+                        "spent key image" | "missing ring member" => {}
+                        other => panic!("{family} ({case}): unexpected part {other}"),
+                    }
+                }
+                context_only.push(format!("{family} ({case})"));
+            }
+        }
+        assert_eq!(
+            context_only,
+            [
+                "rules.sample.verdict (key image spent)",
+                "rules.sample.verdict (ring member unknown)",
+                "rules.sample.verdict (coinbase ring member immature (height 60))",
+                "rules.sample.verdict (other branch id)",
+            ]
+        );
+        // The other-branch case records the branch it signs under, not
+        // the fixture's.
+        let other = fixture_rules().domain();
+        let other_branch = SigDomain {
+            branch_id: other.branch_id ^ 1,
+            ..other
+        };
+        assert_eq!(
+            get("rules.sample.verdict (other branch id) input.signature domain"),
+            Some(&Value::Bytes(other_branch.bytes().to_vec()))
+        );
+        assert_eq!(
+            get("rules.sample.verdict (valid) input"),
+            Some(&Value::Bytes(
+                input_hash(&Transaction::from(f.transfer.clone()).encode()).to_vec()
+            ))
+        );
     }
 
     /// The rules fingerprint is the digest of the rules manifest, and a

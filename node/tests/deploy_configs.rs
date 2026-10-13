@@ -197,7 +197,8 @@ fn a_typo_in_a_config_is_an_error() {
 /// **rules** fingerprint (every consensus constant, the rule samples and the
 /// rule-revision list, including the PX side that
 /// `px/tests/consensus_fingerprint.rs` pins on its own), the **identity**
-/// fingerprint (network id, genesis, branch ids) and the **consensus**
+/// fingerprint (network id, genesis, initial difficulty, branch ids) and the
+/// **consensus**
 /// fingerprint that combines them. The test pins the values the node
 /// computes at run time, prints in `--version` and `--print-manifest`, and
 /// serves in `/info`.
@@ -250,24 +251,30 @@ fn consensus_fingerprints_are_pinned() {
 /// once by bs-zk-4 and px-deploy-row-caps together (rules and consensus: the
 /// parameter set BS-ZK-4, the regenerated golden PX fixture, the deploy caps
 /// and their verdict sample, `PX_MAX_LOG_HEIGHT`, and the revisions
-/// ZK:BS-ZK-4-query-grinding-20 and B2:px-deploy-row-caps; identity unchanged).
+/// ZK:BS-ZK-4-query-grinding-20 and B2:px-deploy-row-caps; identity unchanged);
+/// re-pinned by fingerprint-sample-inputs (all three: every rule sample's
+/// input is recorded next to its output, the key schedule gains the samples
+/// 2E + L and 10E + L that see a dropped `- 1`, and D0 moves from the rules
+/// to the identity manifest, so testnet and mainnet share one rules value; no
+/// rule, network id, genesis id or D0 value changes).
 const TESTNET: [&str; 3] = [
-    "f6d04adf7e19dc04820f665f8e3d948907af57ccb12eb625747642178251f9e8",
-    "68aff77abdebf4daa143f94e412ba03f5b4227b1d8823ce215c872341dad0253",
-    "3ad61ec9d375629ebcc56fa9231bb2d946a50c26c913d471495a7c10b3f62603",
+    "77c9751b5f5bfbd13c80ee35603ce225ce64ec248124a883a1b18fc335b18631",
+    "2a8e546697e61720f13ab1db7f5513b7b056bf49b3f06627c9cdd9ebbd3f9d2d",
+    "fe014b5706d9b0b8737404cb45dd3489efe1a648bb1b10c8f9232308d1d1ee95",
 ];
 /// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
-/// output-root; bs-zk-4 with px-deploy-row-caps).
+/// output-root; bs-zk-4 with px-deploy-row-caps; fingerprint-sample-inputs).
 const REGTEST: [&str; 3] = [
-    "a8669525661569ca5345ed0b6af610712d85e7c84802c01e40c563c4c95d7238",
-    "a5fe79371067581727d6d5682c17f1d4ff4813fea1cbe50f550a4af2908b7aae",
-    "93d0d09dc0dee8070e8d0cfde0d10db3484c31bf65301eab09056f34aa72a79b",
+    "4d1e5c1ddd41f3d7805f4ec2b197ce89eba41bcd5732520e621b18166a9bd00f",
+    "ba12487a659c58c721aa0c8f55a5184f959c2c926ced3654205b261e94986a98",
+    "bc72c2dca0607b24ac771c102a6940237fcdf1a54d7294f3047624affda3bf0e",
 ];
 /// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
-/// output-root; bs-zk-4 with px-deploy-row-caps). The mainnet parameters are
-/// provisional; mainnet is not launched.
+/// output-root; bs-zk-4 with px-deploy-row-caps; fingerprint-sample-inputs).
+/// The mainnet parameters are provisional; mainnet is not launched. Its rules
+/// value is the testnet's (fingerprint-sample-inputs).
 const MAINNET: [&str; 3] = [
-    "282d81ec26b90b9b7e5f5e55b49d92414833c04166acec7b95ac9d58508d34a6",
-    "bebfe3a7d12d57247080b25ad922794db3d90806cb3f95675eadb9aa5c875e1c",
-    "4e8f80d69dccb7dc9ace4acc870f3f3dd7fa0b047e05dac91a12d298716798d8",
+    "e7419968a229a05a7c01f931dd32838a8032ff90f1cf800d049cfa4baead207a",
+    "2a8e546697e61720f13ab1db7f5513b7b056bf49b3f06627c9cdd9ebbd3f9d2d",
+    "70718cc76c9b5305e3e2b524ee286ca9a573b574986b6fab9394935dd9a4759e",
 ];
