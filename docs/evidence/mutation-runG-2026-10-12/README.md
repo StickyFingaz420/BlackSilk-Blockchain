@@ -427,15 +427,26 @@ targets and every node target (`runG7s2px`: 4 caught).
 **Every one of the 80 killed mutants has a kill record after its test landed:** 67 in
 the confirmation run `runGconf` (at `dfed6a5`), 2 in `runG3k783` (at `a2fbac1`) and
 11 in `runFPSI` (at `1a74131`), the 11 re-run again at the final commit `cf2414e`
-(below). Between `dfed6a5` and `cf2414e` the only changed files are
+(below), as are the four node kills of `runGconf` (`runGnode-cf2414e`, below). Between `dfed6a5` and `cf2414e` the only changed files are
 node/src/fingerprint.rs, node/tests/deploy_configs.rs, randomx/tests/equivalence.rs,
 randomx test data and randomx/README.md (`git diff --stat dfed6a5 cf2414e`), and
 randomx/ is unchanged from `a2fbac1` to `cf2414e`. So the 63 `runGconf` kills outside
 node and the two 783:42 kills stand on the same crate source at `cf2414e`, with the
-killing tests unchanged or only appended to. **Gap, stated:** the four node kills of
-`runGconf` (721:17, 788:17, 868:9, 874:9) were not re-run at `cf2414e`; the code
-around them (lines 705 to 880 at `dfed6a5`, 889 to 1064 at `cf2414e`) and the killing
-tests are textually identical there, but the rest of the file changed.
+killing tests unchanged or only appended to. The four node kills of `runGconf`
+(721:17, 788:17, 868:9, 874:9 at `dfed6a5`) sit in a region that is textually
+identical at `cf2414e` (lines 705 to 880 then, 889 to 1064 now), but the rest of
+node/src/fingerprint.rs changed, so they were re-run at `cf2414e`: `runGnode-cf2414e`
+(2026-10-13, a detached worktree at `cf2414e`, cargo-mutants 27.1.0, `--profile
+mutants --cap-lints true --jobs 1`, `-p blacksilk-node -f node/src/fingerprint.rs`,
+anchored `--re`, oracle `--lib --test px_fixture`): **4 of 4 caught**, 0 missed, 0
+timeouts, environment-failure scan clean. 905:17 and 972:17 (`delete match arm []`
+in `Fixture::parse` and `PxFixture::parse`) fail `fixture_parsers_skip_blank_lines`;
+1052:9 (`px_is_recent_root` → `true`) fails `an_unknown_anchor_is_refused`; 1058:9
+(`px_pool` → 1) fails `a_bridge_out_above_the_pool_is_refused`. The three `delete
+field` mutants (1228:9, 1296:21, 1308:21) rode along: caught, not counted. In sum,
+15 kills have a run at `cf2414e` itself (the 11 fingerprint-sample kills and these
+4); the other 65 were run at `dfed6a5` or `a2fbac1`, on crate source identical at
+`cf2414e`.
 
 The confirmation run (`runGconf`, at `dfed6a5`, 2026-10-12 16:15 to 2026-10-13 01:17,
 9 h 02) re-ran all 67 kills made before it, one package at a time (consensus, miner,
@@ -553,7 +564,8 @@ These are stated as open. None is exempt.
        `cycle < CYCLE_MAP_SIZE = 174` (656, 664): it returns −1, 767 to 769 set
        `ports_saturated` and break, and the loop ends. No draw, no instruction, no
        register written: the same program, and the same generator state for the next
-       programs of the cache.
+       programs of the cache (randomx/src/dataset.rs 75 to 77 generates the 8
+       programs in sequence from one generator).
 
     This replaces the probabilistic argument of the earlier revision ("no throwaway
     in the whole program, otherwise at least 211 consecutive equal Blake2 outputs,
@@ -599,8 +611,15 @@ These are stated as open. None is exempt.
     30%: many states with no throwaway that meet N1 and N4 at decode cycle
     169, none in case A or B); tag-guided full-model beams (width 1 000). None of
     this is a bound; it is evidence only.
-  - **Lead, unproven:** a descent argument noted during the research (not written up
-    and not checked) is the suggested next step if the research continues.
+  - **Lead, unproven: a descent argument.** In one case, where decode cycle e − 1 is
+    the IMUL_RCP follow-on buffer 493 with an IMUL_RR as the hop, the forced port
+    shape repeats one level down: MUL_R must sit at e − 2 and cycle e − 2 must be
+    fully free, so the P1 booking at e − 1 was made at decode cycle e − 3 or earlier
+    by a multiplication that skipped a free P1 slot at e − 2, that is, another hop,
+    with its own register-tag requirement. If every branch descended like this back
+    to decode cycle 0, where no register is tagged, the descent would be a proof.
+    Not checked: the default-493 case at e − 1, and hops by an IMUL_R from a 4444
+    buffer. This is the suggested next step if the research continues.
   - **Status: OPEN. No proof that m1 is unreachable, and no key that reaches it.**
     The shipped code equals the reference (`superscalar.cpp:678`), so this is a
     test-adequacy gap, not a known consensus risk: if m1 were reachable, a node built
@@ -709,7 +728,7 @@ These are stated as open. None is exempt.
   research on 783:42 and 742:24 (`G3/rxreach/`: 32 million programs, the tilted
   sampling, beam and climbing runs, the reference request and outputs; `G3/rx742/`:
   the models, their validation and searches, `RESULTS.txt`), the `runG3k783` kill
-  check, and `ledger-runG.tsv`, one line per mutant of the 1 848 (batch, base, the
+  check, the `runGnode-cf2414e` re-run of the four node kills, and `ledger-runG.tsv`, one line per mutant of the 1 848 (batch, base, the
   outcome in each stage, the final status, the kill record or exemption).
 - **Command shape** (stage 1 of G6 shown; the others differ in package, files and
   targets as listed per batch):
