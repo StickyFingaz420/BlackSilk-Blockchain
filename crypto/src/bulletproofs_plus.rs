@@ -66,6 +66,10 @@ use zeroize::Zeroize;
 pub const BITS: usize = 64;
 /// Maximum number of commitments in one proof.
 pub const MAX_OUTPUTS: usize = 16;
+// BPP-10: an aggregated proof over `MAX_OUTPUTS` commitments uses
+// `BITS × MAX_OUTPUTS` generators of each vector, which must exist
+// (`generators::bp_generators`).
+const _: () = assert!(BITS * MAX_OUTPUTS <= crate::generators::BP_MAX_GENERATORS);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BppProof {

@@ -48,6 +48,8 @@ pub const MAX_FN_OUTPUT_WORDS: usize = 256;
 const _: () = assert!(MAX_DEPLOY_TX_SIZE as u64 <= MAX_DEPLOY_BLOCK_BYTES);
 const _: () = assert!(MAX_DEPLOY_BLOCK_BYTES <= MAX_PX_BLOCK_BYTES);
 const _: () = assert!(DEPLOY_FEE_PER_BYTE >= FEE_PER_WEIGHT);
+// F11-10: every valid PX transaction fits in a block's PX budget.
+const _: () = assert!(MAX_PX_TX_SIZE as u64 <= MAX_PX_BLOCK_BYTES);
 
 /// Programs one deploy may register, and the largest program binary.
 pub const MAX_DEPLOY_PROGRAMS: usize = 16;
@@ -96,6 +98,9 @@ pub const MAX_TX_SIZE: usize = 100_000;
 pub const MAX_INPUTS: usize = 64;
 pub const MIN_OUTPUTS: usize = 2;
 pub const MAX_OUTPUTS: usize = 16;
+// Every allowed hidden-output count has a range proof: one Bulletproofs+
+// proof aggregates at most `bpp::MAX_OUTPUTS` commitments.
+const _: () = assert!(MAX_OUTPUTS <= bpp::MAX_OUTPUTS);
 /// Coinbase output count bounds (spec §4.3).
 pub const MIN_COINBASE_OUTPUTS: usize = 1;
 pub const MAX_COINBASE_OUTPUTS: usize = 16;
