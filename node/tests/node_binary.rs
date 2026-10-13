@@ -761,6 +761,23 @@ fn top_level_keys(json: &str) -> Vec<String> {
     keys
 }
 
+/// Writes `TEST_PSK` to `path` as `openssl rand -hex 32` writes it (64 hex
+/// characters and a newline). On Unix the file's permission bits are then
+/// set to `mode` exactly, whatever the umask; elsewhere `mode` is unused
+/// (the node checks the bits on Unix only).
+fn write_test_psk(path: &Path, mode: u32) {
+    std::fs::write(path, format!("{}\n", hex::encode(TEST_PSK))).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        let set = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(set, mode, "{}", path.display());
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+}
+
 /// The P2P options of a regtest node that dials nobody: a loopback
 /// listener, no seeds.
 fn quiet_p2p(bind: &str) -> Vec<&str> {
@@ -772,15 +789,21 @@ fn quiet_p2p(bind: &str) -> Vec<&str> {
 /// key: not its bytes in any common encoding (nor an 8-byte piece of them),
 /// not the key file's path or name, no member that a node without a key
 /// does not have; the other members read the same. The start-up log says
-/// the key is loaded, without the key. (`--no-p2p` ignores the key file:
+/// the key is loaded, without the key, and (the key file being 0600) without
+/// its path or name. (`--no-p2p` ignores the key file:
 /// the key is P2P configuration, so P2P is on here.)
 #[test]
 fn info_reports_a_loaded_psk_and_never_the_key() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("node");
     let key_file = dir.path().join("trial-network-key.psk");
-    // As `openssl rand -hex 32` writes it.
-    std::fs::write(&key_file, format!("{}\n", hex::encode(TEST_PSK))).unwrap();
+    // Owner-only, as docs/testnet.md §12.3 asks: on Unix a key file its
+    // group or others can read draws a start-up warning that names the file
+    // (`p2p::transport::warn_if_shared`, tested by
+    // `a_shared_psk_file_is_named_in_a_warning_but_the_key_never_is`), and a
+    // new file under umask 022 is 0644 (CI run 38463712394). With 0600 the
+    // path must be absent from the log on every platform.
+    write_test_psk(&key_file, 0o600);
     let key_path = key_file.display().to_string();
     let bind = free_port().to_string();
     let info = |n: &NodeProc| {
@@ -857,6 +880,58 @@ fn info_reports_a_loaded_psk_and_never_the_key() {
         log.contains("P2P: network pre-shared key loaded; only nodes with it can connect"),
         "{log}"
     );
+}
+
+/// docs/testnet.md §12.3, `p2p::transport::warn_if_shared`: on Unix a key
+/// file its group or others can read (here 0644, as umask 022 leaves a new
+/// file) draws a start-up warning that names the file, gives its mode and
+/// says `chmod 600`; the path is operator guidance, the key is never logged.
+/// The node still starts with the key loaded, and `/info` holds neither the
+/// key in any checked encoding nor the file's path or name.
+#[cfg(unix)]
+#[test]
+fn a_shared_psk_file_is_named_in_a_warning_but_the_key_never_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    let key_file = dir.path().join("shared-network-key.psk");
+    write_test_psk(&key_file, 0o644);
+    let key_path = key_file.display().to_string();
+    let bind = free_port().to_string();
+    let mut net = quiet_p2p(&bind);
+    net.extend(["--network-psk-file", &key_path]);
+    let n = NodeProc::start_net(&data, &net, &[]);
+    let raw = info_response(&n);
+    let log = n.log_text();
+    drop(n);
+
+    let text = String::from_utf8(raw.clone()).expect("a UTF-8 response");
+    let (_, body) = text.split_once("\r\n\r\n").unwrap();
+    assert!(body.contains("\"network_psk_loaded\":true"), "{body}");
+    let warning = format!(
+        "the network key file {key_path} is readable by its group or other users (mode 644); \
+         restrict it with `chmod 600`"
+    );
+    assert!(log.contains(&warning), "{log}");
+    assert!(
+        log.contains("P2P: network pre-shared key loaded; only nodes with it can connect"),
+        "{log}"
+    );
+    for (name, needle) in key_encodings(&TEST_PSK) {
+        assert!(
+            !find(&raw, &needle),
+            "/info holds the key ({name}):\n{text}"
+        );
+        assert!(
+            !find(log.as_bytes(), &needle),
+            "the log holds the key ({name}):\n{log}"
+        );
+    }
+    for p in [key_path.as_str(), "shared-network-key"] {
+        assert!(
+            !text.contains(p),
+            "/info holds the key file's path {p:?}:\n{text}"
+        );
+    }
 }
 
 /// docs/testnet.md §12.3, `NetworkPsk::load`: a missing key file, or one
