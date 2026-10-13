@@ -6,21 +6,31 @@ the tests notice; it does not show that the code is correct or secure.
 The gate (decisions "Agent 42", "W4-MUT and RT-MUT", "RT-MUTD"): zero unexplained
 missed mutants per completed file or function set. Every survivor is killed by a new
 test or explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md)
-(run G's entries: E65 to E86). **Run G does not meet the criterion yet:** one
+(run G's entries: E65 to E86). **Run G does not meet the criterion:** one
 RandomX mutant (`superscalar.rs` 742:24) is neither killed nor shown equivalent
-(§ Open items (a)). It is listed as open, not exempt. The eight fingerprint mutants
-that showed a structural weakness of the manifest, and three exempt ones, are killed
-since the manifest records the sample inputs (§ Open items (b), closed).
+(§ Open items (a)). It is listed as open, not exempt, and nothing about it is
+accepted; the owner decides between funding further research and formally accepting
+the residual. Of the 160 survivors, 80 are killed by new tests (each with a kill
+record, § Kill confirmation), 79 are exempt (77 shown equivalent or log-only from the
+code, E69's two on width-1 builds only; E82's two by a probabilistic argument,
+labelled so) and 1 is open. The eight
+fingerprint mutants that showed a structural weakness of the manifest, and three
+formerly exempt ones (E84, E85, now superseded), are killed since the manifest
+records the sample inputs (§ Open items (b), closed).
 
-Revised 2026-10-13 after the red team's review: every kill re-run at the final commit
-(§ Kill confirmation), the open-sample criterion stated and applied (three G7 mutants
+Revised 2026-10-13 after the red team's review: every kill made by then re-run at the
+then final commit `dfed6a5` (§ Kill confirmation), the open-sample criterion stated and applied (three G7 mutants
 moved from E84 and E85 to open), and the aarch64 limit of E69. Revised again on
 2026-10-13: the two `superscalar.rs` 783:42 mutants are killed by a new reference
 corpus line (`a2fbac1`, § G3), and the reachability research on 742:24 is stated in
 § Open items (a). Revised again on 2026-10-13: the change fingerprint-sample-inputs
 (`1a74131`, branch `consensus/fingerprint-sample-inputs`) records the rule samples'
 inputs in the node manifest (the exceptions are listed in the record, item 5); it kills the eight open G7 mutants and the three G7
-mutants that E84 and E85 exempted (§ Kill confirmation, `runFPSI`).
+mutants that E84 and E85 exempted (§ Kill confirmation, `runFPSI`). Revised again on
+2026-10-13: the counts were recounted mutant by mutant from the raw cargo-mutants
+outcomes (a ledger of all 1 848 mutants, an internal record), the kill records were
+checked against the final commit `cf2414e`, and open item (a) states the research
+on 742:24, including a proof that removes every run with a throwaway from it.
 
 ## Scope
 
@@ -79,7 +89,7 @@ records).
   guard-stopped catch was re-run alone under an oracle that cannot reach the memory
   limit: G6's three (`runG6v`: all three caught by assertions) and G5's two
   (`runG5v`: `lib.rs:232:17` `-=` → `/=` caught by
-  `schedule_tests::known_schedules`; `+=` → `*=` was **voided** and counted as a
+  `schedule_tests::known_schedules`; `-=` → `+=` was **voided** and counted as a
   timeout, since its schedule grows without bound). The guard does not watch
   `rustc`: px `fingerprint.rs:553:11` `+=` → `*=` (a const evaluation that never ends)
   ran rustc unguarded at 0.02 GB free for 38 min before its build timeout.
@@ -120,6 +130,22 @@ G3 together: 768 mutants, 732 viable, 662 caught, 17 timeouts, 53 missed: 92.8% 
 90.4%; 97.8% excluding the 38 equivalents shown from the code (E76 to E80), 98.3%
 excluding all 41 (with E81 and E82).
 
+What the columns are, and are not:
+
+- **Unviable** (117): the mutated code does not build. Not a kill and not a survivor.
+- **Timeout** (37): a genuine hang or an unbounded run, re-run alone with a longer
+  limit (§ Method) and still not finished; not re-run: G5's voided guard stop and
+  G7's px `fingerprint.rs:553:11` (a build timeout, a const evaluation that never
+  ends). Counted as detected in the first score only, never as caught.
+- **Caught**: a test failed under the mutant in one of the batch's stages, with the
+  tests at the batch's base. G3 R2's base is the re-check at `f7ccd19`, so its 31
+  include 4 pilot survivors caught there by tests the pilot added (`bd5c73d`,
+  `runG3a`) and 2 that only the ignored full-mode tests catch (`runG3b`); G1's two
+  pilot survivors are counted as missed and killed instead, since G1 was not
+  re-checked.
+- **Missed** (160): survived every stage. Each is resolved below as killed by a new
+  test, exempt, or open.
+
 The 160 survivors:
 
 | Batch | Killed by new tests | Equivalent or log-only (exempt) | Open |
@@ -131,8 +157,8 @@ The 160 survivors:
 | G4 | 2 | 1 (E71) | 0 |
 | G6 | 5 | 4 (E72) + 12 log-only (E73) | 0 (one low item on E73's warning, § Open items) |
 | G10 | 28 | 3 (E74, E75) | 0 |
-| G3 | 2 (R2) + 9 (R1) | 41 (E76 to E82) | 1 |
-| G7 | 5 + 11 (fingerprint-sample-inputs) | 6 (E83, E86) | 0 |
+| G3 | 2 (R2) + 9 (R1) | 41 (E76 to E82; E82's 2 by a probabilistic argument) | 1 (742:24) |
+| G7 | 5 + 11 (fingerprint-sample-inputs) | 6 (E83, E86; E84 and E85 superseded, their 3 mutants are among the 11 killed) | 0 |
 | **Total** | **80** | **79** | **1** |
 
 (Before fingerprint-sample-inputs: G7 5 killed, 9 exempt (E83 to E86), 8 open; total
@@ -145,7 +171,8 @@ The 160 survivors:
 - **No survivor lets a verifier accept an invalid proof or block**, changes a pinned
   soundness parameter unnoticed, or changes today's fingerprint (per batch below),
   **except possibly the open RandomX mutant** (`superscalar.rs` 742:24): if its state
-  is reachable, it generates a different SuperscalarHash program, so a different PoW
+  is reachable by a run without any throwaway (every run with one is proven
+  equivalent), it may generate a different SuperscalarHash program, so a different PoW
   hash, and a node built with it would disagree with reference RandomX on which blocks
   are valid (§ Open items (a)). The shipped code has the reference's loop bound there.
   The two 783:42 mutants, open before, do reach such a state: a key on which they
@@ -238,7 +265,7 @@ limit).
 - Timeouts (8, still timeouts alone, `runG5t`): `smallest_pow_witness` scans of the
   whole field or endless loops (250:64 `*`, 254:26 `==`, `>`, 254:63 `|`, `^`, 258:15
   `*=`), `VerifierConfig::for_statement` → `Default` (infinite recursion), and the
-  voided guard stop `lib.rs:232:17` `+=` → `*=` (an unbounded schedule).
+  voided guard stop `lib.rs:232:17` `-=` → `+=` (an unbounded schedule).
 
 ## G4: px prove and state diff (9e3983e)
 
@@ -397,11 +424,34 @@ targets and every node target (`runG7s2px`: 4 caught).
 
 ## Kill confirmation
 
-**Every one of the 67 killed mutants has a re-run record at the final commit.** The
-confirmation run (`runGconf`, at `dfed6a5`, 2026-10-12 16:15 to 2026-10-13 01:17,
-9 h 02) re-ran all 67, one package at a time (consensus, miner, node, px, chain, zk,
-randomx, zkvm), against each batch's union oracle plus the new targets: **67 of 67
-caught**, 0 missed, 0 timeouts. The environment-failure scan was clean, and the memory
+**Every one of the 80 killed mutants has a kill record after its test landed:** 67 in
+the confirmation run `runGconf` (at `dfed6a5`), 2 in `runG3k783` (at `a2fbac1`) and
+11 in `runFPSI` (at `1a74131`), the 11 re-run again at the final commit `cf2414e`
+(below), as are the four node kills of `runGconf` (`runGnode-cf2414e`, below). Between `dfed6a5` and `cf2414e` the only changed files are
+node/src/fingerprint.rs, node/tests/deploy_configs.rs, randomx/tests/equivalence.rs,
+randomx test data and randomx/README.md (`git diff --stat dfed6a5 cf2414e`), and
+randomx/ is unchanged from `a2fbac1` to `cf2414e`. So the 63 `runGconf` kills outside
+node and the two 783:42 kills stand on the same crate source at `cf2414e`, with the
+killing tests unchanged or only appended to. The four node kills of `runGconf`
+(721:17, 788:17, 868:9, 874:9 at `dfed6a5`) sit in a region that is textually
+identical at `cf2414e` (lines 705 to 880 then, 889 to 1064 now), but the rest of
+node/src/fingerprint.rs changed, so they were re-run at `cf2414e`: `runGnode-cf2414e`
+(2026-10-13, a detached worktree at `cf2414e`, cargo-mutants 27.1.0, `--profile
+mutants --cap-lints true --jobs 1`, `-p blacksilk-node -f node/src/fingerprint.rs`,
+anchored `--re`, oracle `--lib --test px_fixture`): **4 of 4 caught**, 0 missed, 0
+timeouts, environment-failure scan clean. 905:17 and 972:17 (`delete match arm []`
+in `Fixture::parse` and `PxFixture::parse`) fail `fixture_parsers_skip_blank_lines`;
+1052:9 (`px_is_recent_root` → `true`) fails `an_unknown_anchor_is_refused`; 1058:9
+(`px_pool` → 1) fails `a_bridge_out_above_the_pool_is_refused`. The three `delete
+field` mutants (1228:9, 1296:21, 1308:21) rode along: caught, not counted. In sum,
+15 kills have a run at `cf2414e` itself (the 11 fingerprint-sample kills and these
+4); the other 65 were run at `dfed6a5` or `a2fbac1`, on crate source identical at
+`cf2414e`.
+
+The confirmation run (`runGconf`, at `dfed6a5`, 2026-10-12 16:15 to 2026-10-13 01:17,
+9 h 02) re-ran all 67 kills made before it, one package at a time (consensus, miner,
+node, px, chain, zk, randomx, zkvm), against each batch's union oracle plus the new
+targets: **67 of 67 caught**, 0 missed, 0 timeouts. The environment-failure scan was clean, and the memory
 guard (which this time also watched `rustc` and would abort below 1 GB free) stopped
 nothing. The per-mutant outcomes and failing test names are in `runGconf-summary.txt`.
 
@@ -427,22 +477,27 @@ counted).
 `1a74131`, cargo-mutants 27.1.0, `--profile mutants --cap-lints true --jobs 1`,
 `-p blacksilk-node -f node/src/fingerprint.rs`, anchored `--re`, oracle `--lib --test
 deploy_configs --test px_fixture`): **11 of 11 caught**, 0 missed, 0 timeouts. Line
-numbers moved with the change; the mapping (run G line at `85a8753` → line at
-`1a74131`, same function and expression) and the failing tests:
+numbers moved with the change; the mapping (run G line at `90be46f`, the same at
+`85a8753` → line at `1a74131` and at `cf2414e`, same function and expression) and the
+failing tests in `runFPSI`:
 
-| Run G | Now | Mutation | Caught by |
-|---|---|---|---|
-| 318:28 | 352:11 | `chain_entries`: `seed_epoch + seed_lag` (`e + l`), `+ → -` | `samples_are_the_golden_values` |
-| 458:44 | 500:36 | `chain_entries`: `MONEY_SUPPLY - COIN`, `- → +` | `samples_are_the_golden_values` |
-| 480:48 (E84) | 528:48 | `rule_samples`: `(i + 1) * 1_000_000`, `+ → *` | `samples_are_the_golden_values` |
-| 482:12 | 530:12 | `rule_samples`: `ts[11] -= 1_300`, `-= → /=` | `samples_are_the_golden_values` |
-| 1007:58 (E85) | 1216:58 | `compute_transaction_samples`: `plus_g`, `+ → -` | `consensus_fingerprints_are_pinned` |
-| 1023:36 | 1259:36 | `compute_transaction_samples`: `rules.branch_id ^ 1`, `^ → &` | `every_verdict_variant_records_a_distinct_input` |
-| 1194:47 | 1481:47 | `px_transaction_samples`: `ciphertexts[0][31] \|= 0x80`, `\|= → &=` | `consensus_fingerprints_are_pinned` |
-| 1208:52 | 1495:52 | `px_transaction_samples`: `bridge_in += 1`, `+= → -=` | `consensus_fingerprints_are_pinned` |
-| 1218:42 | 1505:42 | `px_transaction_samples`: `proof.len() / 2`, `/ → %` | `consensus_fingerprints_are_pinned` |
-| 1251:51 | 1543:51 | `px_transaction_samples`: `programs[0].abi += 1`, `+= → -=` | `consensus_fingerprints_are_pinned` |
-| 1253:54 (E85) | 1545:54 | `px_transaction_samples`: `salt[0] ^= 1`, `^= → &=` | `consensus_fingerprints_are_pinned` |
+| Run G | `1a74131` | `cf2414e` | Mutation | Caught by |
+|---|---|---|---|---|
+| 318:28 | 352:11 | 352:11 | `chain_entries`: `seed_epoch + seed_lag` (`e + l`), `+ → -` | `samples_are_the_golden_values` |
+| 458:44 | 500:36 | 500:36 | `chain_entries`: `MONEY_SUPPLY - COIN`, `- → +` | `samples_are_the_golden_values` |
+| 480:48 (E84) | 528:48 | 528:48 | `rule_samples`: `(i + 1) * 1_000_000`, `+ → *` | `samples_are_the_golden_values` |
+| 482:12 | 530:12 | 530:12 | `rule_samples`: `ts[11] -= 1_300`, `-= → /=` | `samples_are_the_golden_values` |
+| 1007:58 (E85) | 1216:58 | 1207:58 | `compute_transaction_samples`: `plus_g`, `+ → -` | `consensus_fingerprints_are_pinned` |
+| 1023:36 | 1259:36 | 1228:36 | `compute_transaction_samples`: `rules.branch_id ^ 1`, `^ → &` | `every_verdict_variant_records_a_distinct_input` |
+| 1194:47 | 1481:47 | 1504:47 | `px_transaction_samples`: `ciphertexts[0][31] \|= 0x80`, `\|= → &=` | `consensus_fingerprints_are_pinned` |
+| 1208:52 | 1495:52 | 1518:52 | `px_transaction_samples`: `bridge_in += 1`, `+= → -=` | `consensus_fingerprints_are_pinned` |
+| 1218:42 | 1505:42 | 1528:42 | `px_transaction_samples`: `proof.len() / 2`, `/ → %` | `consensus_fingerprints_are_pinned` |
+| 1251:51 | 1543:51 | 1569:51 | `px_transaction_samples`: `programs[0].abi += 1`, `+= → -=` | `consensus_fingerprints_are_pinned` |
+| 1253:54 (E85) | 1545:54 | 1571:54 | `px_transaction_samples`: `salt[0] ^= 1`, `^= → &=` | `consensus_fingerprints_are_pinned` |
+
+At `cf2414e` the independent re-check (`evidence-p1-cf2414e`, `runTargets`, same tool,
+flags and oracle) caught all 11 at the lines of the third column, with the three
+`delete field` mutants riding along (caught, not counted).
 
 Three unrequested `delete field` mutants rode along (1259:9 `branch_id`, 1327:21
 `spent`, 1339:21 `missing`): all caught, not counted. The new code's own mutants were
@@ -465,40 +520,119 @@ Earlier kill checks, kept for the record: `runG4k1`, `runG6k1`, `runG6k2`, `runG
 
 These are stated as open. None is exempt.
 
-- **(a) RandomX `superscalar.rs:742:24` (1 mutant), unkilled, not shown equivalent.
-  OPEN.** `decode_cycle < SUPERSCALAR_LATENCY` → `<=` runs one more decode cycle when
-  the loop reaches its cycle limit before the ports saturate. (The two 783:42 mutants
-  listed here before are killed, § G3.)
+- **(a) RandomX `superscalar.rs:742:24` (1 mutant): neither killed nor shown
+  equivalent. OPEN.** `decode_cycle < SUPERSCALAR_LATENCY` → `<=` runs one more
+  decode cycle when the loop reaches decode cycle 170 before the ports saturate. (The
+  two 783:42 mutants listed here before are killed, § G3.) Line numbers in this item
+  are randomx/src/superscalar.rs at `cf2414e`, the same as at `f7ccd19`, the batch's
+  base (only test modules were appended since).
   - **The shipped code agrees with the reference here.** The reference
     `superscalar.cpp` (tevador/RandomX v1.2.3, line 678) has the identical loop bound,
     `decodeCycle < RANDOMX_SUPERSCALAR_LATENCY && !portsSaturated && programSize <
     SuperscalarMaxSize`, and the same loop body. The mutant differs from both only in
     one state, m1: the top of the loop at decode cycle 170, ports unsaturated, fewer
     than 512 instructions.
-  - **Necessary conditions for m1, shown from the code:** no throwaway in the whole
-    program (otherwise at least 211 consecutive equal Blake2 `u32` outputs, about
-    2^-6700); and decode cycle 169 in exactly one of two narrow port and buffer cases:
-    (A) the forced decode configuration 3310, with cycle 169 fully free and M(169) =
-    169, or (B) the default configuration 493, with M(169) = 170 and ports P0 and P5
-    free at cycle 169. (M(c) is `mul_count` at the start of decode cycle c: the
-    number of multiplication instructions committed before it, superscalar.rs:738,
-    844; with no throwaway, M(c) ≥ c for every c.)
-  - **No proof that m1 is unreachable.** Evidence only: 0 occurrences in 32 million
-    real programs (4 million keys; only 272 programs had no throwaway, and the latest
-    loop exit was at decode cycle 168); 0 in 1.5 million tilted states at decode
-    cycle 169 (importance sampling over an abstract model of the scheduler, 20 million
-    tilted programs; neither case's port pattern ever occurred); a beam search and hill
-    climbing never reached it. A heuristic estimate puts it far below 10^-13 per
-    program; that is not a rigorous bound.
-  - **Status: open, a test-adequacy gap, not a known consensus risk:** the shipped
-    code is the reference's. If m1 were reachable, a node built with the *mutant*
-    would compute a different SuperscalarHash program for that key, so different
-    dataset items and PoW hashes, and disagree with reference RandomX (a consensus
-    split, not a forged proof); the shipped code would not. No direct test exists
-    without restructuring production code.
-  - The research artefacts (the instrumented copy, the sampling, beam and climbing
-    runs, the reference request and output) are internal records in the lead's
-    scratch area (`C:/bszkeval/g11-scratch/G3/rxreach/`), not in the repository.
+  - **R0 (from the code, as E77):** at most 510 instructions exist before the ports
+    saturate. Each instruction commits at least one macro-op that is not eliminated
+    into a free (cycle, port) slot (`schedule_uop` writes a slot only where it is 0,
+    662 to 687), and every commit while the ports are unsaturated is below cycle 170
+    (837 to 838), so at m1 `program.len() ≤ 3 · 170 = 510`; the size bounds (744,
+    753) decide nothing there.
+  - **R1 (proof, deterministic): on every run that reaches m1 after at least one
+    throwaway (or a null break, which needs 256 of them), the mutant's extra pass
+    draws nothing and pushes nothing, so it is equivalent there.**
+    1. `cycle` never falls below its value at the start of an inner pass: it changes
+       only at 778 and 803 (+1 per failed try), at 840 (back to `top_cycle`, taken at
+       750) and at 847 (+1, with `decode_cycle`). A throwaway (782 to 785, 807 to 810)
+       follows four failed tries (+4) and its `continue` skips 840. So after the first
+       throwaway `cycle ≥ decode_cycle + 4` at every top of the outer loop, and at m1
+       `cycle ≥ 174`.
+    2. Then the pass of decode cycle 169 did not end by filling its buffer: its last
+       commit would have started from `top_cycle ≥ 173`, so been scheduled at 173 or
+       later, and 837 to 838 would have saturated the ports. It did not end at 753 to
+       754 either (that needs saturation or 512 instructions, R0), nor at 767 to 769
+       or 820 to 822 (both saturate). So it ended at 787 to 788 or 812 to 813, the
+       null break after 256 consecutive throwaways, with `current` the NOP.
+    3. The extra pass: `fetch_next(None, 170, mul_count, gen)` (746; 400 to 420)
+       returns `BUF_4444` without a draw (409 to 410), since `mul_count ≤ 170`: each
+       multiplication (IMUL_R, IMULH_R, ISMULH_R, IMUL_RCP; 343, 351 to 353) commits
+       exactly one uop that needs port P1 (IMUL_RR, MUL_R, IMUL_R_OP; 306, 307, 310),
+       each in its own free slot below cycle 170. The NOP has no macro-op, so 756 calls
+       `create_for_slot(gen, 4, 4, false)`, which takes IMUL_R without a draw (483),
+       and `create` draws nothing for IMUL_R (520 to 525). `schedule_mop(false,
+       IMUL_RR, …)` with `cycle ≥ 174` reaches `schedule_uop`, whose loop needs
+       `cycle < CYCLE_MAP_SIZE = 174` (656, 664): it returns −1, 767 to 769 set
+       `ports_saturated` and break, and the loop ends. No draw, no instruction, no
+       register written: the same program, and the same generator state for the next
+       programs of the cache (randomx/src/dataset.rs 75 to 77 generates the 8
+       programs in sequence from one generator).
+
+    This replaces the probabilistic argument of the earlier revision ("no throwaway
+    in the whole program, otherwise at least 211 consecutive equal Blake2 outputs,
+    about 2^-6700"). Only runs with no throwaway at all can tell the mutant apart.
+  - **R2 and R3 (proofs in the research record): necessary conditions for m1 with no
+    throwaway.** Every P1 slot of cycles 0 to 169 holds a multiplication uop (the
+    record's N1 and N4; it works with `L(d) = M(d) − d`, where M(c) is `mul_count`
+    at the start of decode cycle c, 738 and 844). The end of the program is forced into one of two
+    windows (the record's end windows e = 166 and e = 167): (A) the forced decode
+    configuration 3310, with cycle 169 fully free and M(169) = 169, or (B) the
+    default configuration 493, with M(169) = 170 and ports P0 and P5 free at cycle
+    169. And the hop lemma: a destination-selection failure at a cycle (a one-cycle
+    hop that is not a throwaway) of an IMUL_R needs at least 4 ready registers last
+    written by an IMUL_R, and of an IMUL_RCP at least 5 ready registers last written
+    by an IMUL_RCP.
+  - **Negative results: why the search did not close it.**
+    - A register-free model of the scheduler (ports, decode configurations,
+      multiplication counts, no registers) does reach m1 (a beam witness: a period-2
+      pattern after an IMUL_RCP alternating the configurations 493 and 3310). That
+      witness needs all 8 registers unavailable for 3 cycles, which the real
+      generator cannot give, so registers are essential to any proof; an exhaustive
+      register-free search was infeasible anyway (stopped at decode cycle 6).
+    - A window model with the full register logic, starting at decode cycle s from
+      an unknown history, cannot close it: the unknown history may supply 5
+      registers already tagged IMUL_RCP (or 4 tagged IMUL_R), exactly the hop lemma's
+      requirement. Its search from s = 165 did not finish its first level (stopped at
+      a 6.1 GB working set).
+    - A tag model from decode cycle 0 (exact ports and types; registers as latency
+      and group, with the parameter comparisons over-approximated) is sound and
+      validated, but grows too fast: 9, 2 234, 60 835, 33 530 and 578 346 states at
+      the decode boundaries 0 to 4, about 927 million intermediate states at decode
+      cycle 4 (1 077 s); stopped. Infeasible at this rate.
+  - **Validation of the models:** each agrees with the real generator on 12 001 keys
+    (96 008 programs, among them "test key 000"): the register-free model on every
+    decision (128 251 871) and state, the full model with Blake2 draws, the window
+    model (573 042 windows, 204 529 162 events) and the tag model (74 393 555
+    selection attempts).
+  - **Searches, none of which reached m1:** 32 million real programs (4 million keys;
+    272 without a throwaway, the latest loop exit at decode cycle 168); 1.5 million
+    tilted states at decode cycle 169 (importance sampling, 20 million tilted
+    programs; neither case's port pattern occurred); beam search and hill climbing;
+    adversarial full-model beams (300 and 2 000 wide, forced collision rates 0 and
+    30%: many states with no throwaway that meet N1 and N4 at decode cycle
+    169, none in case A or B); tag-guided full-model beams (width 1 000). None of
+    this is a bound; it is evidence only.
+  - **Lead, unproven: a descent argument.** In one case, where decode cycle e − 1 is
+    the IMUL_RCP follow-on buffer 493 with an IMUL_RR as the hop, the forced port
+    shape repeats one level down: MUL_R must sit at e − 2 and cycle e − 2 must be
+    fully free, so the P1 booking at e − 1 was made at decode cycle e − 3 or earlier
+    by a multiplication that skipped a free P1 slot at e − 2, that is, another hop,
+    with its own register-tag requirement. If every branch descended like this back
+    to decode cycle 0, where no register is tagged, the descent would be a proof.
+    Not checked: the default-493 case at e − 1, and hops by an IMUL_R from a 4444
+    buffer. This is the suggested next step if the research continues.
+  - **Status: OPEN. No proof that m1 is unreachable, and no key that reaches it.**
+    The shipped code equals the reference (`superscalar.cpp:678`), so this is a
+    test-adequacy gap, not a known consensus risk: if m1 were reachable, a node built
+    with the *mutant* would compute a different SuperscalarHash program for that key,
+    so different dataset items and PoW hashes, and disagree with reference RandomX (a
+    consensus split, not a forged proof); the shipped code would not. No direct test
+    exists without restructuring production code. **The gate's criterion (zero
+    unexplained survivors) is not met.** The owner may either fund further research
+    (the descent argument) or formally accept the residual; nothing is accepted yet.
+  - The research artefacts (the instrumented copies, the models and their
+    validation, the sampling, beam, climbing and search runs, the reference request
+    and output) are internal records in the lead's scratch area
+    (`C:/bszkeval/g11-scratch/G3/rxreach/` and `G3/rx742/`), not in the repository.
 - **(b) The fingerprint manifest records sample outputs, not their inputs (8 G7
   mutants). CLOSED (2026-10-13)** by fingerprint-sample-inputs (`1a74131`; record
   docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs; decisions
@@ -557,6 +691,20 @@ These are stated as open. None is exempt.
   give an invalid proof, since the witness is checked with the verifier's code before
   use. **Follow-up:** re-check `config.rs` 250:64 and 253:35 on the arm64 runner.
 
+- **(g) Verdict samples are derived-`Debug` text (fingerprint, outside this run's
+  survivors).** The rules fingerprint's verdict samples are `format!("{:?}")` text of
+  `Result<(), TxError>`, whose format the standard library does not guarantee across
+  Rust versions. Builds are pinned to 1.98.1 in CI, Docker and the guests; a root
+  `rust-toolchain.toml` is ruled out (decisions "Agent 45", per SX2). A local build
+  with another toolchain could therefore print another fingerprint (consensus itself
+  is unaffected). Follow-up before the freeze: a stable explicit verdict encoding.
+  Record: v3-consensus-changes.md#fingerprint-sample-inputs, item 12. OPEN.
+- **Line numbers.** The G7 mapping (§ Kill confirmation) gives the lines at `1a74131`
+  and at `cf2414e`; after the red-team commits (`cb2f58a`) seven of the eleven moved,
+  by −9, −31, +23 (three) and +26 (two) lines (independent re-check at `cf2414e`: all
+  11 targeted mutants caught; sweep of the changed lines 67 mutants, 66 caught, 1
+  unviable; internal record `evidence-p1-cf2414e`).
+
 ## Reproduction
 
 - **Code:** a worktree of `rebuild/core` at each batch's base (table above); every
@@ -578,8 +726,10 @@ These are stated as open. None is exempt.
   `runG7s2px`), all in the lead's scratch area with the lead's batch summary. The RandomX reachability probe (8 million programs) and the reference
   RandomX comparison are internal records there too, as are the later reachability
   research on 783:42 and 742:24 (`G3/rxreach/`: 32 million programs, the tilted
-  sampling, beam and climbing runs, the reference request and outputs) and the
-  `runG3k783` kill check.
+  sampling, beam and climbing runs, the reference request and outputs; `G3/rx742/`:
+  the models, their validation and searches, `RESULTS.txt`), the `runG3k783` kill
+  check, the `runGnode-cf2414e` re-run of the four node kills, and `ledger-runG.tsv`, one line per mutant of the 1 848 (batch, base, the
+  outcome in each stage, the final status, the kill record or exemption).
 - **Command shape** (stage 1 of G6 shown; the others differ in package, files and
   targets as listed per batch):
 

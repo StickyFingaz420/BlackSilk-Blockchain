@@ -1882,8 +1882,10 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   id or D0 value changes; px/src/fingerprint.rs and its pin are unchanged. Record:
   docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs (`Revision: none`).
 - **Open:** the verdict samples are derived-`Debug` text, stable only under the
-  pinned toolchain (record item 12): a `rust-toolchain.toml` pinning 1.98.1 to match
-  CI (a separate change), and a stable explicit verdict encoding before the freeze.
+  pinned toolchain (record item 12). Follow-up: a stable explicit verdict encoding
+  before the freeze, which removes the toolchain dependence. No root
+  `rust-toolchain.toml` (ruled out in "Agent 45": it broke GNU-host machines, per
+  SX2); the pin stays in CI, Docker and the guests.
 - **Red team (internal, 2026-10-13):** merge with fixes; the fixes (docs F1 to F5,
   code H1 and H2, no manifest value or pin change) are applied as follow-up commits
   (record, Follow-up (red team)).

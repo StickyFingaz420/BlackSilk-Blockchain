@@ -4450,21 +4450,25 @@ the rules manifest, the identity manifest and every fingerprint pin change.
 12. **Open review points.**
     - The verdict samples are `format!("{:?}")` text of `Result<(), TxError>`; the
       derived `Debug` format is not guaranteed stable across Rust toolchains. CI pins
-      the toolchain (1.98.1, .github/workflows/ci.yml); the repository has no
-      `rust-toolchain` file, so a local build with another toolchain could print
-      other verdict text and other fingerprints. A toolchain bump must re-check the
-      pins. Open.
+      the toolchain (1.98.1, .github/workflows/ci.yml); the workspace root has no
+      `rust-toolchain.toml` (only `zkvm/guests/` has one, for the guest builds), by
+      decision (decisions "Agent 45": a root pin broke GNU-host machines, per SX2;
+      the pin stays in CI, Docker and the guests). So a local build with another
+      toolchain could print other verdict text and other fingerprints. A toolchain
+      bump must re-check the pins. Open.
     - Samples whose input is not cheaply re-derivable independently (the fixture
       variants) are bound by a hash of their encoding: the recompute checks the valid
       fixtures' hashes from the checked-in bytes, not each variant's.
     - Rules no sample reaches remain covered by `REVISIONS` and the build commit only
       (unchanged from fingerprint-v3).
     - Run G open item (a) (RandomX `superscalar.rs` 742:24) is unaffected.
-    - Follow-ups, not done here: a `rust-toolchain.toml` pinning 1.98.1, to match
-      `.github/workflows/ci.yml` (a separate change); and replacing the `Debug`-text
-      verdict samples with a stable explicit encoding before the freeze (the
-      weakness is older than this record, from RTFP3-4; the standard library
-      documents derived `Debug` output as unstable across Rust versions).
+    - Follow-up, not done here: replace the `Debug`-text verdict samples with a
+      stable explicit encoding before the freeze. That removes the dependence on
+      the toolchain, which a root `rust-toolchain.toml` would not (and one is ruled
+      out, decisions "Agent 45"). The weakness is older than this record (RTFP3-4);
+      the standard library documents derived `Debug` output as unstable across
+      Rust versions. (Corrected 2026-10-13: an earlier draft proposed a root
+      `rust-toolchain.toml`, against that decision.)
 13. **Identity impact.** The identity manifest gains `chain.initial_difficulty`, so
     every network's identity fingerprint changes, and with the rules change every
     rules and consensus fingerprint. No network id, genesis block, genesis id or D0
@@ -4494,5 +4498,5 @@ Applied as follow-up commits; no manifest value or pin changes.
 - **Docs:** STATUS.md's golden-PX row closed; the E84 note's line numbers corrected;
   item 14 says superseded; the exceptions of item 5 stated wherever the docs said
   every sample records its input; the mutant sweeps added to item 11.
-- **Open, not done here:** a `rust-toolchain.toml` pinning 1.98.1 (item 12); a stable
-  explicit verdict encoding before the freeze (item 12).
+- **Open, not done here:** a stable explicit verdict encoding before the freeze
+  (item 12); a root `rust-toolchain.toml` is ruled out (decisions "Agent 45").
