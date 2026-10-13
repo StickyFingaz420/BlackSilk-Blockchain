@@ -557,6 +557,20 @@ These are stated as open. None is exempt.
   give an invalid proof, since the witness is checked with the verifier's code before
   use. **Follow-up:** re-check `config.rs` 250:64 and 253:35 on the arm64 runner.
 
+- **(g) Verdict samples are derived-`Debug` text (fingerprint, outside this run's
+  survivors).** The rules fingerprint's verdict samples are `format!("{:?}")` text of
+  `Result<(), TxError>`, whose format the standard library does not guarantee across
+  Rust versions. Builds are pinned to 1.98.1 in CI, Docker and the guests; a root
+  `rust-toolchain.toml` is ruled out (decisions "Agent 45", per SX2). A local build
+  with another toolchain could therefore print another fingerprint (consensus itself
+  is unaffected). Follow-up before the freeze: a stable explicit verdict encoding.
+  Record: v3-consensus-changes.md#fingerprint-sample-inputs, item 12. OPEN.
+- **Line numbers.** The G7 mapping in this document gives the lines at `1a74131`;
+  after the red-team commits (`cb2f58a`) several sit 9 to 31 lines lower at `cf2414e`
+  (independent re-check at `cf2414e`: all 11 targeted mutants caught; sweep of the
+  changed lines 67 mutants, 66 caught, 1 unviable; internal record
+  `evidence-p1-cf2414e`).
+
 ## Reproduction
 
 - **Code:** a worktree of `rebuild/core` at each batch's base (table above); every
