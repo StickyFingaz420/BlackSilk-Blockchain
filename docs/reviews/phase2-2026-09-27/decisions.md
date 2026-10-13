@@ -1854,3 +1854,31 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
 - **After the freeze (planned):** the production stratum server, a pinned xmrig build for
   the testnet and the upstream pull request, all built against the frozen spec (see
   "Proof of work: SKC-1 research, the RandomX salt, the mining blob, xmrig").
+
+## Fingerprint sample inputs and D0 as identity (lead decision, 2026-10-13)
+
+- **Why:** mutation run G open item (b): the node's rules manifest recorded each rule
+  sample's output and not its input, so 8 sample mutants that change an input without
+  changing today's output survived every test, and 3 more were exempt only because no
+  plausible rule change told their inputs apart (E84, E85). The key-schedule samples
+  could not see a dropped `- 1` in `seed_height`. D0 was a rules entry, so measuring
+  the testnet D0 after the freeze (testnet-v3-genesis.md §5) would have changed the
+  rules fingerprint.
+- **Decision:** every rule sample records its input next to its output, built from
+  the same values (lists and bytes for scalar samples; for each transaction, PX and
+  deploy verdict variant a hash of its canonical encoding under the fingerprint-local
+  domain `node/fingerprint-sample-input/v1`, plus the chain-view, height or rules
+  change when the variant keeps the transaction). The key schedule gains the samples
+  L, L + 1, 2E + L, 2E + L + 1, 10E + L, 10E + L + 1 and `u64::MAX`. `D0`
+  (`chain.initial_difficulty`) moves from the rules to the identity manifest; it stays
+  in the genesis header. Testnet and mainnet then share one rules fingerprint.
+- **Rejected:** full transaction encodings in the manifest (kilobytes to megabytes);
+  one digest over all inputs (a mismatch would not name its sample); sample names
+  that spell their inputs (hand-typed, can drift); exempting the mutants; keeping D0
+  in the rules; dropping D0 from both manifests; a third manifest for tuning values.
+- **Scope:** node/src/fingerprint.rs and the pins of node/tests/deploy_configs.rs
+  (all three digests on all three networks). No validity rule, network id, genesis
+  id or D0 value changes; px/src/fingerprint.rs and its pin are unchanged. Record:
+  docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs (`Revision: none`).
+- **Open:** the verdict samples are derived-`Debug` text, stable only under the
+  pinned toolchain (record item 12). A red-team pass is owed before the merge.

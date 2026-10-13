@@ -157,6 +157,12 @@ the announcement; it is an input, not a constant of the tool. This is a genesis 
 (docs/STATUS.md). Under the v3 difficulty rule a `D0` 100 times too low takes about
 197 blocks to ramp up.
 
+`D0` is an identity value of the fingerprints
+(docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs): it is in the
+genesis header and in the identity manifest, not in the rules manifest. Setting the measured `D0` changes only the
+identity and consensus fingerprints; the rules fingerprint of the release candidate
+stays the same.
+
 ## 6. Steps
 
 0. **Preconditions** (each a gate; their status is in docs/STATUS.md, not here):
@@ -173,6 +179,8 @@ the announcement; it is an input, not a constant of the tool. This is a genesis 
    its full id on both channels): network id,
    `T_g`, `D0`, `H`, the derivation (this document), with the testnet's beacon
    still `None` (`TESTNET_BEACON`) and `--network testnet` refusing to start.
+   `T_g`, `D0` and the beacon change only the identity and consensus fingerprints
+   (§5); the rules fingerprint of the release candidate is final at the freeze.
 2. **Announce** ≥ 48 h before `H`'s expected time: this document, the values, the
    confirmation rule (block `H` once it has 6 confirmations) and the fallback (if a
    reorganization replaces `H` before 6 confirmations, use the new block at

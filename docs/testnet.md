@@ -171,8 +171,8 @@ Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
 (`--print-manifest` prints the domains):
 
 - The **rules fingerprint** covers every consensus constant: the `ChainParams`
-  fields that are not identity (block time, `D0`, the difficulty window and rule
-  id, the median-time window, the FTL, the RandomX key schedule), the activation
+  fields that are not identity (block time, the difficulty window and rule id,
+  the median-time window, the FTL, the RandomX key schedule), the activation
   table without its branch ids, `TxRules`, the header, transaction, block and
   emission constants, the RandomX configuration (read from the RandomX crate)
   and a pinned RandomX known answer, the consensus hash tags of the v1
@@ -191,9 +191,14 @@ Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
   the validation verdict of the transfer and of one variant per error class a
   transfer can reach), and the **rule-revision list**, one entry per reviewed
   rule change (each record in reviews/v3-consensus-changes.md carries a
-  `Revision:` line, and a test ties the two).
+  `Revision:` line, and a test ties the two). Every sample's **input** is
+  recorded next to its output (the sampled numbers and bytes, or a hash of a
+  sampled transaction's encoding, and what a variant changes in the chain view,
+  the height or the rules), so a changed input moves the fingerprint even when
+  the output stays the same (reviews/v3-consensus-changes.md#fingerprint-sample-inputs).
 - The **identity fingerprint** covers the network name and id, the genesis block
-  and id, and the branch ids.
+  and id, the starting difficulty `D0` (a per-chain value, not a rule: testnet
+  and mainnet have the same rules fingerprint) and the branch ids.
 - The **consensus fingerprint** is the hash of the two.
 
 `node/tests/deploy_configs.rs` pins all three per network, and
