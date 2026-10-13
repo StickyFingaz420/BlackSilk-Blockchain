@@ -40,6 +40,7 @@ they are never renamed. Index:
 - output-root (consensus header, tx, px, chain, rpc, miner, node, wallet; OMR)
 - bs-zk-4 (zk parameter set: 20 query grinding bits; px fingerprint, golden PX fixture; BS-ZK-4)
 - px-deploy-row-caps (tx deploy rule, px shape check, node samples; B2-CAPS)
+- fingerprint-sample-inputs (node fingerprint manifest: sample inputs, key-schedule samples, D0 as identity; lead decision 2026-10-13)
 
 New sections are appended at the end.
 
@@ -4240,3 +4241,258 @@ every budget and program table at its V12 cap (68.5 M weighted cells, FRI schedu
   about 3.70 / 3.78 MB by model) is not measured, so the proof-size bound remains a
   model; the example restates the V12 caps (px cannot depend on tx) and the
   restatement is not yet pinned against tx; one run on one runner class.
+
+---
+
+<a id="fingerprint-sample-inputs"></a>
+
+## fingerprint-sample-inputs: rule samples record their inputs; D0 is an identity entry
+
+Revision: none (the fingerprint is not a validity rule)
+
+Decision: "Fingerprint sample inputs and D0 as identity (lead decision, 2026-10-13)"
+(decisions.md), after mutation run G open item (b) and a research memo. Branch
+`consensus/fingerprint-sample-inputs`. Internal engineering work, not an audit. No
+consensus validity rule, network id, genesis block, genesis id or D0 value changes;
+the rules manifest, the identity manifest and every fingerprint pin change.
+
+1. **Problem.**
+   - Run G open item (b) (docs/evidence/mutation-runG-2026-10-12/README.md): the rules
+     manifest records each rule sample's **output** but not its **input**. A code
+     change that alters a sample's input without altering today's output (a different
+     difficulty history, another variant transaction, another branch id) leaves the
+     fingerprint unchanged, although the changed input no longer catches a plausible
+     rule change the original input catches (the open-sample criterion of run G).
+   - The key-schedule samples (`chain.seed_height samples`: heights 0, 1, E + L,
+     E + L + 1, 10E) cannot see a lone dropped `- 1` in `seed_height`
+     (consensus/src/pow.rs): `(h - L - 1) & !(E - 1)` and `(h - L) & !(E - 1)` differ
+     only where `h - L` is a multiple of E above E + L, the first such height being
+     2E + L = 4 160. None of the five heights is one.
+   - `chain.initial_difficulty` (D0) was a rules entry. D0 is a per-chain tuning value
+     (docs/testnet-v3-genesis.md §5: measured on the trial devices before launch), not
+     a rule: tuning it after the freeze would have changed the **rules** fingerprint,
+     which is meant to stay fixed from the release candidate to the final build, and
+     testnet and mainnet had different rules fingerprints only because of it.
+2. **Demonstrated failure.** Mutation run G, batch G7 (`90be46f`; line numbers at
+   `85a8753`, the base of this change): 8 open mutants of node/src/fingerprint.rs that
+   change a sample's input and no output: 318:28 `+ → -` (key-schedule height),
+   458:44 `- → +` (emission), 482:12 `-= → /=` (low-stamp difficulty), 1023:36 `^ → &`
+   (other branch id), 1194:47 `|= → &=` (PX `R` top bit), 1208:52 `+= → -=` (PX
+   `bridge_in + 1`), 1218:42 `/ → %` (truncated proof), 1251:51 `+= → -=` (unsupported
+   ABI); and 3 mutants exempt under E84 and E85 because no plausible rule change tells
+   their inputs apart: 480:48 `+ → *` (cumulative difficulties), 1007:58 `+ → -`
+   (`plus_g`), 1253:54 `^= → &=` (other salt). All 11 survived every node target in
+   `runG7s1node` and `runG7s2node`. A scratch mutation of `seed_height` (the dropped
+   `- 1`) leaves the five old key-schedule samples equal (`[0, 0, 0, 2048, 18432]`).
+3. **Prior art.** Checked at the source on 2026-10-13: Bitcoin Core
+   `kernel/chainparams.cpp` builds each chain's genesis with its own `nBits`
+   (mainnet `0x1d00ffff`, regtest `0x207fffff`) next to a separate `powLimit`, and
+   asserts the genesis hash per chain: the starting difficulty is part of the chain's
+   genesis, the limit a rule. Monero `difficulty.cpp`: `next_difficulty` returns 1 for
+   at most one timestamp; there is no separate D0 parameter. ZIP 200: a consensus
+   branch is "a block chain with a common consensus rule set" and its branch id a
+   "globally-unique non-zero 32-bit identifier", so the rule set is what two chains
+   share and the id what tells them apart. EIP-2124: the fork id is a CRC32 of the
+   genesis hash and the passed fork block numbers, so the genesis (and with it its
+   difficulty) is chain identity. Recording a test's inputs next to its expected
+   output is the known-answer-vector convention this project already follows
+   (tools/vectors). Not checked further: how other projects fingerprint rule
+   samples (no direct precedent found).
+4. **Alternatives.**
+   - Sample inputs: (i) record every input in full, including whole transactions:
+     rejected, the encodings of the fixture transactions are kilobytes (the golden PX
+     transaction 2.4 MB with its proof) and the manifest is printed; a hash of
+     the canonical encoding binds them as well. (ii) Hash all inputs into one digest
+     entry: rejected, a mismatch would no longer name the sample that moved.
+     (iii) Rename samples so that their names spell every input: rejected, names
+     are hand-typed literals that can drift from the computed values; inputs are
+     built from the same values the sample uses. (iv) Keep the layout and exempt the
+     mutants: rejected, they are real weaknesses under run G's criterion. **Chosen:**
+     one input entry per sample (lists and bytes for scalar samples; a fingerprint-
+     local hash of the canonical encoding for every sampled transaction variant; a
+     context entry when a variant changes the chain view, the height or the rules).
+   - D0: (a) keep D0 in the rules: rejected, measuring D0 after the freeze would
+     change the rules fingerprint. (b) Drop D0 from both manifests: rejected, the
+     identity manifest should name every per-chain value an operator compares
+     (it is also in the genesis bytes there, but as an explicit entry it is
+     readable without decoding the header). (c) A third manifest for tuning
+     values: rejected, one more digest for one value. **Chosen:** D0 is an explicit
+     identity entry; it also stays in the genesis header, so the identity and
+     consensus fingerprints move with it as before.
+5. **Affected components.** node/src/fingerprint.rs only (manifest construction and
+   its tests) and the pins in node/tests/deploy_configs.rs. New:
+   `SAMPLE_INPUT_DOMAIN = "node/fingerprint-sample-input/v1"` (under `BlackSilk/v1/`,
+   as the other fingerprint domains, which are local to this module and not hash tags
+   of `tags::ALL`) and `input_hash(encoding) = H64(SAMPLE_INPUT_DOMAIN, encoding)[..32]`.
+   - Every chain-side rule sample gains an entry `<sample> input` or
+     `<sample> input.<part>`: the key-schedule heights; the emission (height,
+     generated) pairs; per difficulty sample its timestamps, cumulative difficulties
+     and (T, N, D0); the clock-step and ancestor inputs; the median, MTP and FTL
+     stamps; the PoW hashes and difficulties; the block-id header bytes and network;
+     the Merkle leaves; the output-range leaves; the genesis-nonce beacon, network and
+     height; the signature-domain fields; the weight and fee shapes; the deploy-fee
+     program lengths, budget and output words; the PX tree leaves.
+   - **Exceptions** (no separate input entry): the samples whose input is already a
+     recorded entry or whose output is a hash of the input: `pow_blob`, `tx_root([])`, the `tx_hash` of the fixture transfer and coinbase, the fixture transfer's `signature_message`, `px.tx_hash`, `px.binding`, `px.signature_message`, `px.weight`, `px.encoded_len`, `deploy.tx_hash`, `deploy.contract_id` and `deploy.signature_message`.
+     Their inputs are bound elsewhere: `pow_blob` reads the block-id sample's
+     header and network (`input.header`, `input.network`); `tx_root([])` has the
+     empty input its name states; the fixture transfer is the valid transfer
+     verdict's `input`, and its signature domain the `input.fixture signature
+     domain`; the coinbase is in the weight sample's `input`; the golden PX
+     transaction and deploy are the valid stateless-PX and deploy verdicts'
+     `input`. The PX-side samples (px/src/fingerprint.rs, `px.sample.*`) are
+     unchanged.
+   - Every transfer, stateless PX and deploy verdict sample gains `<verdict> input`,
+     the `input_hash` of the sampled transaction's `Transaction::encode`; the four
+     transfer cases that keep the fixture transaction record what they change
+     (`input.spent key image`, `input.missing ring member`, `input.height`,
+     `input.signature domain`), and the fixture's shared context is recorded once
+     (`rules.sample.verdict input.fixture ...`: height, fee per weight, max block
+     weight, signature domain). The weight sample records the input hashes of its four
+     transactions.
+   - Key-schedule heights added: L, L + 1, 2E + L, 2E + L + 1, 10E + L, 10E + L + 1 and
+     `u64::MAX` (E = 2 048, L = 64), after the five kept heights; their keys, computed
+     by `seed_height` and checked by hand: 0, 0, 2 048, 4 096, 18 432, 20 480,
+     `(u64::MAX - 65) & !2047` = 18 446 744 073 709 549 568.
+   - `chain.initial_difficulty` moves from the rules manifest to the identity
+     manifest (after `chain.genesis_id`); `ChainParams` is destructured with
+     `initial_difficulty: _` under the identity fields.
+   - px/src/fingerprint.rs: unchanged (audited: its samples' inputs are constants of
+     the PX code or fixed literals whose outputs the PX pin holds; no sample there was
+     an open mutant).
+6. **Activation.** None: the fingerprint is not a validity rule. No block, transaction
+   or proof verdict changes.
+7. **Compatibility.** Only the manifests and digests change. The rule-by-rule diff of
+   `--print-manifest` before (`85a8753`) and after, release builds in separate target
+   directories, is in item 11: added input entries, the added key-schedule samples,
+   and D0 moved from the rules to the identity manifest; no other entry changes. Nodes
+   of different builds already compare fingerprints only as an operator check; no P2P
+   message carries them.
+8. **Reorg, wallet, mining, P2P.** None. Operators compare the new fingerprints
+   (`--version`, `/info`) against the release announcement as before. Testnet and
+   mainnet now have the same rules fingerprint; regtest's differs (its target block
+   time, 10 s instead of 120 s, the only rules entry that differs).
+9. **Vectors.** An independent standard-library Python recompute (item 11) decodes
+   both printed encodings, re-encodes them, hashes them per `Manifest::encode` and the
+   `H64` construction, and compares with the printed digests and the new pins on all
+   three networks; it also recomputes the PX-side digest over the PX window of the
+   rules manifest, the key-schedule outputs from their recorded inputs, and the input
+   hashes of the three valid fixture transactions from the checked-in fixture bytes.
+10. **Tests.** node/src/fingerprint.rs:
+    - `samples_are_the_golden_values` extended: the four difficulty inputs (87
+      stamps from 10^6 at T = 120, the oldest window stamp 1 300 s low, cumulative
+      difficulties (i + 1)·10^6, (T, N, D0)), the key-schedule heights and keys, the
+      emission inputs.
+    - New `every_verdict_variant_records_a_distinct_input`: every transfer, PX and
+      deploy variant has an input hash different from its valid case's, or keeps the
+      valid transaction and records a context entry different from the fixture's;
+      exactly the four view, height and rules cases are of the second kind; the
+      other-branch case records the other branch's signature domain; the valid input is
+      `input_hash` of the fixture transfer.
+    - `rules_fingerprint_excludes_identity` adapted (it encoded the old layout): the
+      identity manifest has 8 entries (was 7) and holds D0; no rules entry is D0;
+      testnet and mainnet rules manifests and fingerprints are equal (was: equal except
+      D0); regtest's rules differ.
+    - node/tests/deploy_configs.rs `consensus_fingerprints_are_pinned`: re-pinned on
+      all three networks (all three digests). px/tests/consensus_fingerprint.rs:
+      unchanged and passing.
+11. **Suite results** (2026-10-13, at `1a74131`, 4-core i7-6700, 16 GB, Windows 10,
+    toolchain 1.98.1; scratch records in the lead's scratch area, `C:/bszkeval/g11-scratch/fpsi/`):
+    - **Manifest diff**, entry by entry, of `blacksilk-node --print-manifest` at
+      `85a8753` and at `1a74131` (release builds from `git archive` copies in
+      separate target directories), on every network: identity 7 → 8 entries
+      (`chain.initial_difficulty` added, nothing else changed); rules 294 → 385:
+      `chain.initial_difficulty` removed, `chain.seed_height samples` extended (the
+      five old keys unchanged, seven appended), 92 `input` entries added; every
+      other entry is unchanged and the kept entries keep their order. The genesis
+      ids and D0 values are unchanged.
+    - **Pins** (`node/tests/deploy_configs.rs`, `[consensus, rules, identity]`):
+      testnet `f6d04adf…`, `68aff77a…`, `3ad61ec9…` → `77c9751b…`, `2a8e5466…`,
+      `fe014b57…`; regtest `a8669525…`, `a5fe7937…`, `93d0d09d…` → `4d1e5c1d…`,
+      `ba12487a…`, `bc72c2dc…`; mainnet `282d81ec…`, `bebfe3a7…`, `4e8f80d6…` →
+      `e7419968…`, `2a8e5466…`, `70718cc7…` (mainnet's rules value is the testnet's).
+      `px/tests/consensus_fingerprint.rs` (`9b67345e…`) unchanged.
+    - **Independent recompute** (standard-library Python, item 9) on the printed
+      manifests of all three networks: every check passes (both encodings decode to
+      the printed lines and re-encode byte-identically; the three digests equal the
+      printed ones and the pins; the PX-side digest over the 113 PX entries equals
+      the PX pin; the key-schedule keys equal `seed_height` of the recorded heights;
+      the valid transfer, PX and deploy input hashes equal the hash of the
+      checked-in fixture bytes; D0 is identity-only; testnet and mainnet rules
+      encodings are identical, regtest's differs). The script is not in the
+      repository: the tools/vectors convention is spec-derived `--check` scripts
+      over committed data, and this one needs a built node.
+    - **Mutation** (`runFPSI`, cargo-mutants 27.1.0, `--profile mutants --cap-lints
+      true --jobs 1`, anchored `--re`, oracle `--lib --test deploy_configs --test
+      px_fixture`): the 11 mutants of item 2, at their new lines (352:11, 500:36,
+      528:48, 530:12, 1216:58, 1259:36, 1481:47, 1495:52, 1505:42, 1543:51,
+      1545:54; mapping by function and expression in the run G evidence): **11 of 11
+      caught**, plus 3 unrequested `delete field` mutants (caught). The scratch
+      `seed_height` mutation (dropped `- 1`) fails `samples_are_the_golden_values`
+      (keys at 4 160 and 20 544 move to 4 096 and 20 480).
+    - Sweep of the new code's own mutants, cargo-mutants 27.1.0 (`--profile mutants --cap-lints
+      true --jobs 1`, oracle `--lib --test deploy_configs --test px_fixture`) over
+      every mutant on the lines of node/src/fingerprint.rs changed since `85a8753`:
+      the red team's sweep at `1b7191b`, 60 mutants, 59 caught, 1 unviable (1388:9
+      `Sampled::of -> Default`), 0 missed (internal record, not in the repository);
+      and, after the hardening of the red-team follow-up, the re-listed sweep at
+      `cb2f58a` (`--in-diff` of `85a8753..cb2f58a`, `runFPSIsweep`): 67 mutants, 66
+      caught, 1 unviable (1411:9 `Sampled::of -> Default`, the same mutant: the type
+      has no `Default`), 0 missed, 0 timeouts.
+    - `bash tools/fingerprint-mutations.sh`: 7 of 7 red-team mutations change the
+      rules fingerprint.
+    - `cargo test --locked --release -p blacksilk-node`: 137 passed, 0 failed,
+      3 ignored (the cost probe and the two fixture regenerators, ignored before);
+      `cargo test --release -p blacksilk-px --test consensus_fingerprint` 1 passed;
+      `cargo clippy --locked --release --all-targets -p blacksilk-node -p
+      blacksilk-px -- -D warnings` and `cargo fmt --all -- --check` clean;
+      doc-lint, unicode-scan and the consensus gate pass.
+12. **Open review points.**
+    - The verdict samples are `format!("{:?}")` text of `Result<(), TxError>`; the
+      derived `Debug` format is not guaranteed stable across Rust toolchains. CI pins
+      the toolchain (1.98.1, .github/workflows/ci.yml); the repository has no
+      `rust-toolchain` file, so a local build with another toolchain could print
+      other verdict text and other fingerprints. A toolchain bump must re-check the
+      pins. Open.
+    - Samples whose input is not cheaply re-derivable independently (the fixture
+      variants) are bound by a hash of their encoding: the recompute checks the valid
+      fixtures' hashes from the checked-in bytes, not each variant's.
+    - Rules no sample reaches remain covered by `REVISIONS` and the build commit only
+      (unchanged from fingerprint-v3).
+    - Run G open item (a) (RandomX `superscalar.rs` 742:24) is unaffected.
+    - Follow-ups, not done here: a `rust-toolchain.toml` pinning 1.98.1, to match
+      `.github/workflows/ci.yml` (a separate change); and replacing the `Debug`-text
+      verdict samples with a stable explicit encoding before the freeze (the
+      weakness is older than this record, from RTFP3-4; the standard library
+      documents derived `Debug` output as unstable across Rust versions).
+13. **Identity impact.** The identity manifest gains `chain.initial_difficulty`, so
+    every network's identity fingerprint changes, and with the rules change every
+    rules and consensus fingerprint. No network id, genesis block, genesis id or D0
+    value changes. A later change of D0 (testnet-v3-genesis.md §5) changes only the
+    identity and consensus fingerprints (D0 is in the genesis header and now in the
+    identity manifest), not the rules fingerprint.
+14. **Documentation.** docs/testnet.md (D0 leaves the rules list, input entries),
+    docs/STATUS.md, docs/testnet-v3-genesis.md §6, the run G evidence (open item (b)
+    closed), mutation-exemptions.md (E84, E85 superseded), decisions.md.
+15. **Review status.** Implemented and verified by the implementing agent under the
+    lead's decision; an internal red-team pass is owed before the merge.
+
+### Follow-up (red team, 2026-10-13)
+
+Internal red team on the branch at `1b7191b`: **merge with fixes**, nothing blocking.
+Applied as follow-up commits; no manifest value or pin changes.
+- **H1:** the deploy-fee sample builds its registrations from the recorded budget and
+  output-word variables (`b`, `out_words`) instead of re-reading the constants.
+- **H2:** the transfer and deploy verdicts take their context entries from one
+  function, `verdict_context`, which destructures `FixtureChain` and `TxRules`
+  exhaustively (a new field fails to compile until its context entry is written) and
+  asserts that every case reads the fixture's ring members; the deploy verdicts no
+  longer rely on a comment.
+- Proof that nothing moved: `consensus_fingerprints_are_pinned` passes with the pins
+  of item 11, and the release `--print-manifest` output of all three networks at
+  `cb2f58a` is byte-identical to the one at `1a74131`.
+- **Docs:** STATUS.md's golden-PX row closed; the E84 note's line numbers corrected;
+  item 14 says superseded; the exceptions of item 5 stated wherever the docs said
+  every sample records its input; the mutant sweeps added to item 11.
+- **Open, not done here:** a `rust-toolchain.toml` pinning 1.98.1 (item 12); a stable
+  explicit verdict encoding before the freeze (item 12).

@@ -1787,6 +1787,14 @@ Record: mutation run G, 2026-10-12.
 
 ## E84: a difficulty sample input shifted by a constant that the rule never reads (node/src/fingerprint.rs)
 
+**Superseded (2026-10-13, fingerprint-sample-inputs):** the manifest now records each
+difficulty sample's timestamps and cumulative difficulties, so the covered mutant
+(480:48 at `85a8753`, now 528:48 at `1a74131`) changes the rules fingerprint and is
+killed, as is the open 482:12 (now 530:12); E84 covers no mutant. Kill record: `runFPSI`
+([run G evidence](../evidence/mutation-runG-2026-10-12/README.md), § Open items (b));
+record docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs. The text below
+is kept as written.
+
 Decision: mutation run G, batch G7, for the Lead's review; narrowed in the run G
 revision (2026-10-13).
 
@@ -1822,6 +1830,14 @@ changed cap and a changed warm-up length.)
 Record: mutation run G, 2026-10-12; narrowed 2026-10-13.
 
 ## E85: transaction-sample variants changed by another amount, with the same verdict (node/src/fingerprint.rs)
+
+**Superseded (2026-10-13, fingerprint-sample-inputs):** every verdict variant now
+records the hash of its transaction's encoding (and the signature domain of the
+other-branch case), so both covered mutants (1007:58 `plus_g`, now 1216:58; 1253:54
+"other salt", now 1545:54) and the open 1023:36 and 1208:52 (now 1259:36 and 1495:52)
+change the rules fingerprint and are killed; E85 covers no mutant. Kill record:
+`runFPSI` ([run G evidence](../evidence/mutation-runG-2026-10-12/README.md), § Open
+items (b)). The text below is kept as written.
 
 Decision: mutation run G, batch G7, for the Lead's review; narrowed in the run G
 revision (2026-10-13).

@@ -7,16 +7,20 @@ The gate (decisions "Agent 42", "W4-MUT and RT-MUT", "RT-MUTD"): zero unexplaine
 missed mutants per completed file or function set. Every survivor is killed by a new
 test or explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md)
 (run G's entries: E65 to E86). **Run G does not meet the criterion yet:** one
-RandomX mutant (`superscalar.rs` 742:24) is neither killed nor shown equivalent, and
-eight fingerprint mutants show a structural weakness of the manifest that no test can
-kill (§ Open items). They are listed as open, not exempt.
+RandomX mutant (`superscalar.rs` 742:24) is neither killed nor shown equivalent
+(§ Open items (a)). It is listed as open, not exempt. The eight fingerprint mutants
+that showed a structural weakness of the manifest, and three exempt ones, are killed
+since the manifest records the sample inputs (§ Open items (b), closed).
 
 Revised 2026-10-13 after the red team's review: every kill re-run at the final commit
 (§ Kill confirmation), the open-sample criterion stated and applied (three G7 mutants
 moved from E84 and E85 to open), and the aarch64 limit of E69. Revised again on
 2026-10-13: the two `superscalar.rs` 783:42 mutants are killed by a new reference
 corpus line (`a2fbac1`, § G3), and the reachability research on 742:24 is stated in
-§ Open items (a).
+§ Open items (a). Revised again on 2026-10-13: the change fingerprint-sample-inputs
+(`1a74131`, branch `consensus/fingerprint-sample-inputs`) records the rule samples'
+inputs in the node manifest (the exceptions are listed in the record, item 5); it kills the eight open G7 mutants and the three G7
+mutants that E84 and E85 exempted (§ Kill confirmation, `runFPSI`).
 
 ## Scope
 
@@ -128,8 +132,11 @@ The 160 survivors:
 | G6 | 5 | 4 (E72) + 12 log-only (E73) | 0 (one low item on E73's warning, § Open items) |
 | G10 | 28 | 3 (E74, E75) | 0 |
 | G3 | 2 (R2) + 9 (R1) | 41 (E76 to E82) | 1 |
-| G7 | 5 | 9 (E83 to E86) | 8 |
-| **Total** | **69** | **82** | **9** |
+| G7 | 5 + 11 (fingerprint-sample-inputs) | 6 (E83, E86) | 0 |
+| **Total** | **80** | **79** | **1** |
+
+(Before fingerprint-sample-inputs: G7 5 killed, 9 exempt (E83 to E86), 8 open; total
+69, 82, 9.)
 
 - **Two security-critical test gaps** were found, each now killed: the RandomX
   IMUL_RCP power-of-two NOP rule (G3) and the store repair's handling of operator
@@ -145,7 +152,9 @@ The 160 survivors:
   change the program is now a reference corpus line, which kills them (§ G3).
 - No production line was changed by run G; the killing tests are merged in
   `rebuild/core` up to `dfed6a5`, and the 783:42 corpus line is `a2fbac1` (branch
-  `g11/rx783-vector`, tests and test data only).
+  `g11/rx783-vector`, tests and test data only). The fingerprint kills
+  (fingerprint-sample-inputs, `1a74131`) do change production code, the node's
+  manifest construction, not a validity rule, with a re-pin of every fingerprint.
 
 ## G1: consensus header and the post-run-E diff (05b2ef2)
 
@@ -380,8 +389,10 @@ targets and every node target (`runG7s2px`: 4 caught).
   788:17), `2e8410f` (node/tests/px_fixture.rs: `an_unknown_anchor_is_refused`, node
   868:9 `px_is_recent_root`; `a_bridge_out_above_the_pool_is_refused`, node 874:9
   `px_pool`).
-- Equivalent (9): E83 to E86.
-- **STRUCTURAL WEAKNESS (8, open):** § Open items (b).
+- Equivalent (9 at the run): E83 to E86; 6 after fingerprint-sample-inputs (E83,
+  E86; E84 and E85 are superseded).
+- **STRUCTURAL WEAKNESS (8, open at the run; killed by fingerprint-sample-inputs,
+  `1a74131`, together with the exempt 480:48, 1007:58 and 1253:54):** § Open items (b).
 - Timeout: px 553:11 `*=` (a const evaluation that never ends: a build timeout).
 
 ## Kill confirmation
@@ -411,6 +422,41 @@ both caught by `reference_corpus`, each with "1 of 10 reference answers differ" 
 run 742:24 `<=` was missed (all 4 `equivalence` tests pass), as expected; the
 unrequested `delete field` mutant `superscalar.rs:292:13` rode along (caught, not
 counted).
+
+**The fingerprint kills** have their own record, `runFPSI` (2026-10-13, at
+`1a74131`, cargo-mutants 27.1.0, `--profile mutants --cap-lints true --jobs 1`,
+`-p blacksilk-node -f node/src/fingerprint.rs`, anchored `--re`, oracle `--lib --test
+deploy_configs --test px_fixture`): **11 of 11 caught**, 0 missed, 0 timeouts. Line
+numbers moved with the change; the mapping (run G line at `85a8753` → line at
+`1a74131`, same function and expression) and the failing tests:
+
+| Run G | Now | Mutation | Caught by |
+|---|---|---|---|
+| 318:28 | 352:11 | `chain_entries`: `seed_epoch + seed_lag` (`e + l`), `+ → -` | `samples_are_the_golden_values` |
+| 458:44 | 500:36 | `chain_entries`: `MONEY_SUPPLY - COIN`, `- → +` | `samples_are_the_golden_values` |
+| 480:48 (E84) | 528:48 | `rule_samples`: `(i + 1) * 1_000_000`, `+ → *` | `samples_are_the_golden_values` |
+| 482:12 | 530:12 | `rule_samples`: `ts[11] -= 1_300`, `-= → /=` | `samples_are_the_golden_values` |
+| 1007:58 (E85) | 1216:58 | `compute_transaction_samples`: `plus_g`, `+ → -` | `consensus_fingerprints_are_pinned` |
+| 1023:36 | 1259:36 | `compute_transaction_samples`: `rules.branch_id ^ 1`, `^ → &` | `every_verdict_variant_records_a_distinct_input` |
+| 1194:47 | 1481:47 | `px_transaction_samples`: `ciphertexts[0][31] \|= 0x80`, `\|= → &=` | `consensus_fingerprints_are_pinned` |
+| 1208:52 | 1495:52 | `px_transaction_samples`: `bridge_in += 1`, `+= → -=` | `consensus_fingerprints_are_pinned` |
+| 1218:42 | 1505:42 | `px_transaction_samples`: `proof.len() / 2`, `/ → %` | `consensus_fingerprints_are_pinned` |
+| 1251:51 | 1543:51 | `px_transaction_samples`: `programs[0].abi += 1`, `+= → -=` | `consensus_fingerprints_are_pinned` |
+| 1253:54 (E85) | 1545:54 | `px_transaction_samples`: `salt[0] ^= 1`, `^= → &=` | `consensus_fingerprints_are_pinned` |
+
+Three unrequested `delete field` mutants rode along (1259:9 `branch_id`, 1327:21
+`spent`, 1339:21 `missing`): all caught, not counted. The new code's own mutants were
+swept too, over every mutant on the changed lines of node/src/fingerprint.rs (same
+tool, flags and oracle): the red team's sweep at `1b7191b`, 60 mutants, 59 caught,
+1 unviable (1388:9 `Sampled::of -> Default`), 0 missed (internal record, not in the
+repository); and after the red-team hardening, the re-listed sweep at `cb2f58a`
+(`runFPSIsweep`), 67 mutants, 66 caught, 1 unviable (1411:9, the same mutant), 0
+missed. A scratch mutation of
+consensus/src/pow.rs `seed_height` (the dropped `- 1`, never committed) fails
+`samples_are_the_golden_values`: the keys at 2E + L = 4 160 and 10E + L = 20 544 move
+from 2 048 and 18 432 to 4 096 and 20 480, while the five heights sampled before are
+unchanged. Internal records (`runFPSI`, `runFPSI-summary.txt`,
+`seed-minus1-mutation.txt`, `runFPSIsweep`) are in the lead's scratch area (`C:/bszkeval/g11-scratch/fpsi/`).
 
 Earlier kill checks, kept for the record: `runG4k1`, `runG6k1`, `runG6k2`, `runG10k`
 (and `runG10keq`, the equivalents' survival), `runG3a`, `runG3b`.
@@ -454,7 +500,13 @@ These are stated as open. None is exempt.
     runs, the reference request and output) are internal records in the lead's
     scratch area (`C:/bszkeval/g11-scratch/G3/rxreach/`), not in the repository.
 - **(b) The fingerprint manifest records sample outputs, not their inputs (8 G7
-  mutants).** **Criterion:** a sample mutant is open when the mutated sample input no
+  mutants). CLOSED (2026-10-13)** by fingerprint-sample-inputs (`1a74131`; record
+  docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs; decisions
+  "Fingerprint sample inputs and D0 as identity"): the rule samples record their inputs
+  next to their outputs (exceptions in the record, item 5), the key schedule is sampled at 2E + L and 10E + L, and D0 moved
+  to the identity manifest. All eight open mutants and the three exempt ones (480:48,
+  1007:58, 1253:54) are caught (`runFPSI`, § Kill confirmation). The analysis as
+  written at the run follows. **Criterion:** a sample mutant is open when the mutated sample input no
   longer catches a plausible rule change that the original input catches, even though
   today's rule gives the same verdict or output for both. It is exempt only when no
   plausible rule change tells the two inputs apart (E84, E85). The open ones, node
