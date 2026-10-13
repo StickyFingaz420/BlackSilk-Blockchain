@@ -130,5 +130,7 @@ The gate ran on one machine with one CPU (one Argon2 and AES code path in xmrig)
 with light-mode verification in the bridge and the node, and crossed one RandomX
 key switch. xmrig's fast mode agreeing byte for byte with BlackSilk's light mode is
 supporting evidence; it is not the full-mode comparison against the RandomX
-reference implementation. See the gate evidence for the counts and the open
-limits.
+reference implementation. That comparison was run separately on 2026-10-13, for
+stated inputs only, on one x86-64 machine, with BlackSilk's software-AES path not
+forced and not on aarch64 ([evidence](../evidence/randomx-full-reference-2026-10-13/README.md)).
+See the gate evidence for the counts and the open limits.
