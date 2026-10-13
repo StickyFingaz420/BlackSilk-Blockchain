@@ -824,7 +824,8 @@ fn info_reports_a_loaded_psk_and_never_the_key() {
             "the log holds the key ({name}):\n{log}"
         );
     }
-    // Nor where it is kept (JSON escapes a Windows path's backslashes).
+    // Nor where it is kept, in the response or the start-up log (JSON
+    // escapes a Windows path's backslashes).
     for p in [
         key_path.clone(),
         key_path.replace('\\', "\\\\"),
@@ -833,6 +834,10 @@ fn info_reports_a_loaded_psk_and_never_the_key() {
         assert!(
             !text.contains(&p),
             "/info holds the key file's path {p:?}:\n{text}"
+        );
+        assert!(
+            !log.contains(&p),
+            "the log holds the key file's path {p:?}:\n{log}"
         );
     }
     // The same members as without a key: nothing added about it.
