@@ -30,7 +30,7 @@ mutants that E84 and E85 exempted (§ Kill confirmation, `runFPSI`). Revised aga
 2026-10-13: the counts were recounted mutant by mutant from the raw cargo-mutants
 outcomes (a ledger of all 1 848 mutants, an internal record), the kill records were
 checked against the final commit `cf2414e`, and open item (a) states the research
-on 742:24, including a proof that removes every run with a throwaway from it.
+on 742:24, including a proof (R1) that removes every run with a throwaway from it.
 
 ## Scope
 
@@ -570,10 +570,19 @@ These are stated as open. None is exempt.
     This replaces the probabilistic argument of the earlier revision ("no throwaway
     in the whole program, otherwise at least 211 consecutive equal Blake2 outputs,
     about 2^-6700"). Only runs with no throwaway at all can tell the mutant apart.
-  - **R2 and R3 (proofs in the research record): necessary conditions for m1 with no
-    throwaway.** Every P1 slot of cycles 0 to 169 holds a multiplication uop (the
-    record's N1 and N4; it works with `L(d) = M(d) − d`, where M(c) is `mul_count`
-    at the start of decode cycle c, 738 and 844). The end of the program is forced into one of two
+  - **R2 and R3 (stated by the research, argument not written out or independently
+    reviewed): claimed necessary conditions for m1 with no throwaway.** The research
+    record gives each as a one-line result only; no written argument exists, so
+    neither is a verified proof; the search pruning and the descent lead below use
+    them as assumptions only. Only R0 and R1 are established (R1 checked line by line
+    by two reviewers). As stated: every P1 slot of the early cycles holds a
+    multiplication uop (the record's N1 and N4; it works with `L(d) = M(d) − d`,
+    where M(c) is `mul_count` at the start of decode cycle c, 738 and 844). The
+    record's one-line statement says cycles 0 to 169, but the models prune with N1
+    on cycles 0 to 168 only (`cycle <= 168` for a commit, `c <= 168` for the P1 slot
+    of a finished decode cycle: the record's `m742.rs` 740, 779 and 789, and its
+    other models alike); cycle 169 is left to the end windows below, and in case A
+    it is fully free. The end of the program is claimed to be forced into one of two
     windows (the record's end windows e = 166 and e = 167): (A) the forced decode
     configuration 3310, with cycle 169 fully free and M(169) = 169, or (B) the
     default configuration 493, with M(169) = 170 and ports P0 and P5 free at cycle
