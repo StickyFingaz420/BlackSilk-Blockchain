@@ -4386,7 +4386,48 @@ the rules manifest, the identity manifest and every fingerprint pin change.
     - node/tests/deploy_configs.rs `consensus_fingerprints_are_pinned`: re-pinned on
       all three networks (all three digests). px/tests/consensus_fingerprint.rs:
       unchanged and passing.
-11. **Suite results.** Recorded in the follow-up below (verification).
+11. **Suite results** (2026-10-13, at `1a74131`, 4-core i7-6700, 16 GB, Windows 10,
+    toolchain 1.98.1; scratch records in the lead's scratch area, `C:/bszkeval/g11-scratch/fpsi/`):
+    - **Manifest diff**, entry by entry, of `blacksilk-node --print-manifest` at
+      `85a8753` and at `1a74131` (release builds from `git archive` copies in
+      separate target directories), on every network: identity 7 → 8 entries
+      (`chain.initial_difficulty` added, nothing else changed); rules 294 → 385:
+      `chain.initial_difficulty` removed, `chain.seed_height samples` extended (the
+      five old keys unchanged, seven appended), 92 `input` entries added; every
+      other entry is unchanged and the kept entries keep their order. The genesis
+      ids and D0 values are unchanged.
+    - **Pins** (`node/tests/deploy_configs.rs`, `[consensus, rules, identity]`):
+      testnet `f6d04adf…`, `68aff77a…`, `3ad61ec9…` → `77c9751b…`, `2a8e5466…`,
+      `fe014b57…`; regtest `a8669525…`, `a5fe7937…`, `93d0d09d…` → `4d1e5c1d…`,
+      `ba12487a…`, `bc72c2dc…`; mainnet `282d81ec…`, `bebfe3a7…`, `4e8f80d6…` →
+      `e7419968…`, `2a8e5466…`, `70718cc7…` (mainnet's rules value is the testnet's).
+      `px/tests/consensus_fingerprint.rs` (`9b67345e…`) unchanged.
+    - **Independent recompute** (standard-library Python, item 9) on the printed
+      manifests of all three networks: every check passes (both encodings decode to
+      the printed lines and re-encode byte-identically; the three digests equal the
+      printed ones and the pins; the PX-side digest over the 113 PX entries equals
+      the PX pin; the key-schedule keys equal `seed_height` of the recorded heights;
+      the valid transfer, PX and deploy input hashes equal the hash of the
+      checked-in fixture bytes; D0 is identity-only; testnet and mainnet rules
+      encodings are identical, regtest's differs). The script is not in the
+      repository: the tools/vectors convention is spec-derived `--check` scripts
+      over committed data, and this one needs a built node.
+    - **Mutation** (`runFPSI`, cargo-mutants 27.1.0, `--profile mutants --cap-lints
+      true --jobs 1`, anchored `--re`, oracle `--lib --test deploy_configs --test
+      px_fixture`): the 11 mutants of item 2, at their new lines (352:11, 500:36,
+      528:48, 530:12, 1216:58, 1259:36, 1481:47, 1495:52, 1505:42, 1543:51,
+      1545:54; mapping by function and expression in the run G evidence): **11 of 11
+      caught**, plus 3 unrequested `delete field` mutants (caught). The scratch
+      `seed_height` mutation (dropped `- 1`) fails `samples_are_the_golden_values`
+      (keys at 4 160 and 20 544 move to 4 096 and 20 480).
+    - `bash tools/fingerprint-mutations.sh`: 7 of 7 red-team mutations change the
+      rules fingerprint.
+    - `cargo test --locked --release -p blacksilk-node`: 137 passed, 0 failed,
+      3 ignored (the cost probe and the two fixture regenerators, ignored before);
+      `cargo test --release -p blacksilk-px --test consensus_fingerprint` 1 passed;
+      `cargo clippy --locked --release --all-targets -p blacksilk-node -p
+      blacksilk-px -- -D warnings` and `cargo fmt --all -- --check` clean;
+      doc-lint, unicode-scan and the consensus gate pass.
 12. **Open review points.**
     - The verdict samples are `format!("{:?}")` text of `Result<(), TxError>`; the
       derived `Debug` format is not guaranteed stable across Rust toolchains. CI pins
