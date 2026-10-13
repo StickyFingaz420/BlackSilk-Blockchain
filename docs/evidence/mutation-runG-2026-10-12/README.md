@@ -344,7 +344,8 @@ part A at f7ccd19 (`runG3a`), part B with the two ignored full-mode tests
   that never ends: it cannot ship).
 - Equivalent: 38 shown from the code (E76 to E80); `706:28` (E81); 782:41 and 807:41
   by a probabilistic reachability argument (E82).
-- **Test gap, killed after the run:** 783:42 `throw_away_count += 1` → `-=` and `*=`
+- **Security-critical test gap, killed after the run** (the mutants change the PoW
+  hash, like 60:5 and 60:7): 783:42 `throw_away_count += 1` → `-=` and `*=`
   (the source-throwaway counter). Under the key `727872656163683119d820` followed by
   21 zero bytes ("rxreach1", 2152473 as a little-endian u64, 16 zero bytes),
   SuperscalarHash program 2 of 8 throws an IMUL_R away for want of a source; the next
@@ -433,8 +434,9 @@ These are stated as open. None is exempt.
     2^-6700); and decode cycle 169 in exactly one of two narrow port and buffer cases:
     (A) the forced decode configuration 3310, with cycle 169 fully free and M(169) =
     169, or (B) the default configuration 493, with M(169) = 170 and ports P0 and P5
-    free at cycle 169. (M(c) is the research report's notation for a scheduling
-    cycle at decode cycle c; its definition is in the report, an internal record.)
+    free at cycle 169. (M(c) is `mul_count` at the start of decode cycle c: the
+    number of multiplication instructions committed before it, superscalar.rs:738,
+    844; with no throwaway, M(c) ≥ c for every c.)
   - **No proof that m1 is unreachable.** Evidence only: 0 occurrences in 32 million
     real programs (4 million keys; only 272 programs had no throwaway, and the latest
     loop exit was at decode cycle 168); 0 in 1.5 million tilted states at decode
