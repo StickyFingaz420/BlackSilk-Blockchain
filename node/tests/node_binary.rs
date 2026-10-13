@@ -41,6 +41,15 @@ impl NodeProc {
     /// data directory: for a data directory whose parents the node itself
     /// must create (CI run 123: the log beside `a/b` needed `a` first).
     fn start_logged(data: &Path, log: Option<&Path>, extra: &[&str]) -> Self {
+        Self::launch(data, log, &["--no-p2p"], extra)
+    }
+
+    /// As [`start`](Self::start), with P2P on, given by `net` (P2P options).
+    fn start_net(data: &Path, net: &[&str], extra: &[&str]) -> Self {
+        Self::launch(data, None, net, extra)
+    }
+
+    fn launch(data: &Path, log: Option<&Path>, net: &[&str], extra: &[&str]) -> Self {
         let addr = free_port();
         let log = log.map_or_else(
             || data.with_extension(format!("{}.log", addr.port())),
@@ -50,12 +59,12 @@ impl NodeProc {
         let mut args = vec![
             "--network".to_string(),
             "regtest".into(),
-            "--no-p2p".into(),
             "--data-dir".into(),
             data.display().to_string(),
             "--rpc-bind".into(),
             addr.to_string(),
         ];
+        args.extend(net.iter().map(|s| s.to_string()));
         args.extend(extra.iter().map(|s| s.to_string()));
         let spawned = SystemTime::now();
         let child = Command::new(NODE)
@@ -499,13 +508,24 @@ fn run_until_exit(
     extra: &[&str],
     within: Duration,
 ) -> (Option<std::process::ExitStatus>, String) {
+    run_net_until_exit(data, &["--no-p2p"], extra, within)
+}
+
+/// As [`run_until_exit`], with the P2P options `net`.
+fn run_net_until_exit(
+    data: &Path,
+    net: &[&str],
+    extra: &[&str],
+    within: Duration,
+) -> (Option<std::process::ExitStatus>, String) {
     let addr = free_port();
     let log = data.with_extension(format!("{}.exit.log", addr.port()));
     let f = std::fs::File::create(&log).unwrap();
     let mut child = Command::new(NODE)
-        .args(["--network", "regtest", "--no-p2p", "--data-dir"])
+        .args(["--network", "regtest", "--data-dir"])
         .arg(data)
         .args(["--rpc-bind", &addr.to_string()])
+        .args(net)
         .args(extra)
         .env("RUST_LOG", "info")
         .stdout(Stdio::from(f.try_clone().unwrap()))
@@ -613,6 +633,278 @@ fn info_shows_the_psk_state_overrides_and_verdicts() {
     let body = info_body(&n);
     assert!(body.contains(&format!("\"block\":\"{tip}\"")), "{body}");
     assert!(body.contains("\"overrides\":[]"), "{body}");
+}
+
+/// A fixed random network key for the tests below (`openssl rand -hex 32`).
+const TEST_PSK: [u8; 32] = [
+    0x6a, 0x4d, 0xec, 0xc9, 0x8b, 0x98, 0x15, 0x7a, 0xff, 0xd0, 0xbf, 0x4d, 0x23, 0x88, 0x40, 0x61,
+    0x5a, 0xf5, 0x4c, 0x90, 0xa8, 0xd1, 0x64, 0xc8, 0xd8, 0xe6, 0x7e, 0xad, 0xca, 0xe4, 0x08, 0x89,
+];
+
+/// RFC 4648 base64 of `data` with the `alphabet`, padded or not.
+fn base64(data: &[u8], alphabet: &[u8; 64], pad: bool) -> String {
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..=chunk.len() {
+            out.push(alphabet[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+        if pad {
+            out.extend(std::iter::repeat_n('=', 3 - chunk.len()));
+        }
+    }
+    out
+}
+
+/// Every encoding of `key` that `/info` or the log must not hold: its raw
+/// bytes, hex in either case, base64 in the standard and URL-safe alphabets
+/// with and without padding, and every 8-byte window of the raw bytes and of
+/// the hex (a truncated key is still a leak).
+fn key_encodings(key: &[u8; 32]) -> Vec<(String, Vec<u8>)> {
+    const STD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    // RFC 4648 §10 test vectors, and the URL-safe characters.
+    assert_eq!(base64(b"fooba", STD, true), "Zm9vYmE=");
+    assert_eq!(base64(b"foob", STD, false), "Zm9vYg");
+    assert_eq!(base64(&[0xfb, 0xff], STD, true), "+/8=");
+    assert_eq!(base64(&[0xfb, 0xff], URL, false), "-_8");
+    let lower = hex::encode(key);
+    let mut v: Vec<(String, Vec<u8>)> = vec![
+        ("raw".into(), key.to_vec()),
+        ("hex".into(), lower.clone().into_bytes()),
+        ("HEX".into(), lower.to_uppercase().into_bytes()),
+    ];
+    for (name, alphabet) in [("base64", STD), ("base64url", URL)] {
+        for pad in [true, false] {
+            v.push((
+                format!("{name} pad={pad}"),
+                base64(key, alphabet, pad).into_bytes(),
+            ));
+        }
+    }
+    for (i, w) in key.windows(8).enumerate() {
+        v.push((format!("raw[{i}..{}]", i + 8), w.to_vec()));
+        let h = hex::encode(w);
+        v.push((format!("hex[{i}..{}]", i + 8), h.clone().into_bytes()));
+        v.push((
+            format!("HEX[{i}..{}]", i + 8),
+            h.to_uppercase().into_bytes(),
+        ));
+    }
+    v
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// The whole `/info` response of a running node (status line, headers and
+/// body), as raw bytes.
+fn info_response(n: &NodeProc) -> Vec<u8> {
+    let token = std::fs::read_to_string(n.cookie()).unwrap();
+    let mut s = TcpStream::connect(n.addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    let req = format!(
+        "GET /info HTTP/1.1\r\nHost: {}\r\n{}Connection: close\r\n\r\n",
+        n.addr,
+        bearer(&token)
+    );
+    s.write_all(req.as_bytes()).unwrap();
+    let mut resp = Vec::new();
+    s.read_to_end(&mut resp).unwrap();
+    assert!(
+        resp.starts_with(b"HTTP/1.1 200 "),
+        "{}",
+        String::from_utf8_lossy(&resp)
+    );
+    resp
+}
+
+/// The names of a JSON object's top-level members, in order.
+fn top_level_keys(json: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    let mut current = String::new();
+    let mut last_str: Option<String> = None;
+    for c in json.trim().chars() {
+        if in_str {
+            match (esc, c) {
+                (true, _) => {
+                    esc = false;
+                    current.push(c);
+                }
+                (false, '\\') => esc = true,
+                (false, '"') => {
+                    in_str = false;
+                    last_str = Some(std::mem::take(&mut current));
+                }
+                (false, _) => current.push(c),
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => depth -= 1,
+            ':' if depth == 1 => keys.extend(last_str.take()),
+            _ => {}
+        }
+        if c != '"' && c != ':' && !c.is_whitespace() {
+            last_str = None;
+        }
+    }
+    keys
+}
+
+/// The P2P options of a regtest node that dials nobody: a loopback
+/// listener, no seeds.
+fn quiet_p2p(bind: &str) -> Vec<&str> {
+    vec!["--p2p-bind", bind, "--no-builtin-seeds"]
+}
+
+/// TM2-2, F48-9, docs/testnet.md §12.3: with a network pre-shared key
+/// loaded, `/info` reports `"network_psk_loaded": true` and nothing of the
+/// key: not its bytes in any common encoding (nor an 8-byte piece of them),
+/// not the key file's path or name, no member that a node without a key
+/// does not have; the other members read the same. The start-up log says
+/// the key is loaded, without the key. (`--no-p2p` ignores the key file:
+/// the key is P2P configuration, so P2P is on here.)
+#[test]
+fn info_reports_a_loaded_psk_and_never_the_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    let key_file = dir.path().join("trial-network-key.psk");
+    // As `openssl rand -hex 32` writes it.
+    std::fs::write(&key_file, format!("{}\n", hex::encode(TEST_PSK))).unwrap();
+    let key_path = key_file.display().to_string();
+    let bind = free_port().to_string();
+    let info = |n: &NodeProc| {
+        blacksilk_rpc::Client::new(&n.addr.to_string())
+            .with_cookie_file(&n.cookie())
+            .unwrap()
+            .info()
+            .unwrap()
+    };
+
+    // The same node, P2P on, without and then with the key.
+    let n = NodeProc::start_net(&data, &quiet_p2p(&bind), &[]);
+    let without = String::from_utf8(info_response(&n)).unwrap();
+    let info_without = info(&n);
+    drop(n);
+    let mut net = quiet_p2p(&bind);
+    net.extend(["--network-psk-file", &key_path]);
+    let n = NodeProc::start_net(&data, &net, &[]);
+    let raw = info_response(&n);
+    let info_with = info(&n);
+    let log = n.log_text();
+    drop(n);
+
+    let text = String::from_utf8(raw.clone()).expect("a UTF-8 response");
+    let (_, body) = text.split_once("\r\n\r\n").unwrap();
+    let (_, body_without) = without.split_once("\r\n\r\n").unwrap();
+    assert!(body.contains("\"network_psk_loaded\":true"), "{body}");
+    assert!(!body.contains("\"network_psk_loaded\":false"), "{body}");
+    assert!(
+        body_without.contains("\"network_psk_loaded\":false"),
+        "{body_without}"
+    );
+    // The key in no encoding, in the response or the log.
+    for (name, needle) in key_encodings(&TEST_PSK) {
+        assert!(
+            !find(&raw, &needle),
+            "/info holds the key ({name}):\n{text}"
+        );
+        assert!(
+            !find(log.as_bytes(), &needle),
+            "the log holds the key ({name}):\n{log}"
+        );
+    }
+    // Nor where it is kept (JSON escapes a Windows path's backslashes).
+    for p in [
+        key_path.clone(),
+        key_path.replace('\\', "\\\\"),
+        "trial-network-key".into(),
+    ] {
+        assert!(
+            !text.contains(&p),
+            "/info holds the key file's path {p:?}:\n{text}"
+        );
+    }
+    // The same members as without a key: nothing added about it.
+    let keys = top_level_keys(body);
+    assert_eq!(keys, top_level_keys(body_without), "{body}");
+    assert!(keys.iter().any(|k| k == "network_psk_loaded"), "{keys:?}");
+    assert!(keys.iter().any(|k| k == "overrides"), "{keys:?}");
+    assert!(body.contains("\"overrides\":[]"), "{body}");
+    assert!(body.contains("\"operator_verdicts\":[]"), "{body}");
+    assert_eq!(info_with.network, info_without.network);
+    assert_eq!(info_with.height, info_without.height);
+    assert_eq!(info_with.tip, info_without.tip);
+    assert_eq!(info_with.network_id, info_without.network_id);
+    assert_eq!(info_with.genesis_id, info_without.genesis_id);
+    assert_eq!((info_with.peers, info_without.peers), (0, 0));
+    assert!(
+        log.contains("P2P: network pre-shared key loaded; only nodes with it can connect"),
+        "{log}"
+    );
+}
+
+/// docs/testnet.md §12.3, `NetworkPsk::load`: a missing key file, or one
+/// that is not 64 hexadecimal characters of a non-zero key (truncated, all
+/// zero, UTF-16 as Windows PowerShell 5.1's `>` writes it), stops the node
+/// at start-up with exit status 1, before its RPC opens; the error names the
+/// file and never echoes its contents.
+#[test]
+fn a_bad_network_psk_file_stops_the_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    let lower = hex::encode(TEST_PSK);
+    let utf16: Vec<u8> = std::iter::once(0xfeffu16)
+        .chain(lower.encode_utf16())
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let cases: [(&str, Option<Vec<u8>>, &str); 4] = [
+        ("missing", None, "cannot read the network key file"),
+        (
+            "truncated",
+            Some(lower.as_bytes()[..62].to_vec()),
+            "64 hexadecimal",
+        ),
+        ("zero", Some([b'0'; 64].to_vec()), "not all zero"),
+        ("utf16", Some(utf16), "64 hexadecimal"),
+    ];
+    for (name, contents, reason) in cases {
+        let path = dir.path().join(format!("{name}.psk"));
+        if let Some(c) = &contents {
+            std::fs::write(&path, c).unwrap();
+        }
+        let shown = path.display().to_string();
+        let bind = free_port().to_string();
+        let mut net = quiet_p2p(&bind);
+        net.extend(["--network-psk-file", &shown]);
+        let (status, log) = run_net_until_exit(&data, &net, &[], Duration::from_secs(120));
+        let status = status.unwrap_or_else(|| panic!("{name}: the node started; log:\n{log}"));
+        assert_eq!(status.code(), Some(1), "{name}; log:\n{log}");
+        assert!(
+            log.contains(&format!("network PSK file {shown}: ")),
+            "{name}; log:\n{log}"
+        );
+        assert!(log.contains(reason), "{name}; log:\n{log}");
+        assert!(!log.contains("RPC listening"), "{name}; log:\n{log}");
+        assert!(!data.join(blacksilk_rpc::COOKIE_FILE).exists(), "{name}");
+        // Not even a piece of what the file held.
+        for (what, needle) in key_encodings(&TEST_PSK) {
+            assert!(
+                !find(log.as_bytes(), &needle),
+                "{name}: the log holds {what}:\n{log}"
+            );
+        }
+    }
 }
 
 /// TM2-5 (decisions "Agent 01"): a block store whose stored proof-of-work
