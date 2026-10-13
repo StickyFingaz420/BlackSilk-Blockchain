@@ -7,9 +7,13 @@ The gate (decisions "Agent 42", "W4-MUT and RT-MUT", "RT-MUTD"): zero unexplaine
 missed mutants per completed file or function set. Every survivor is killed by a new
 test or explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md)
 (run G's entries: E65 to E86). **Run G does not meet the criterion yet:** three
-RandomX mutants at two sites are neither killed nor shown equivalent, and five
+RandomX mutants at two sites are neither killed nor shown equivalent, and eight
 fingerprint mutants show a structural weakness of the manifest that no test can
 kill (§ Open items). They are listed as open, not exempt.
+
+Revised 2026-10-13 after the red team's review: every kill re-run at the final commit
+(§ Kill confirmation), the open-sample criterion stated and applied (three G7 mutants
+moved from E84 and E85 to open), and the aarch64 limit of E69.
 
 ## Scope
 
@@ -106,7 +110,7 @@ records).
 | **Total** | | **1 848** | **117** | **1 731** | **1 534** | **37** | **160** | **90.8%** | **88.6%** |
 
 G3 together: 768 mutants, 732 viable, 662 caught, 17 timeouts, 53 missed: 92.8% and
-90.4%; 97.8% excluding the 38 equivalents proven from the code (E76 to E80), 98.3%
+90.4%; 97.8% excluding the 38 equivalents shown from the code (E76 to E80), 98.3%
 excluding all 41 (with E81 and E82).
 
 The 160 survivors:
@@ -116,20 +120,24 @@ The 160 survivors:
 | G1 | 2 | 0 | 0 |
 | G9 | 3 | 1 (E65) | 0 |
 | G2 | 0 | 1 (E66) | 0 |
-| G5 | 13 | 10 (E67 to E70) | 0 |
+| G5 | 13 | 10 (E67 to E70; E69 on width-1 builds only) | 0 |
 | G4 | 2 | 1 (E71) | 0 |
 | G6 | 5 | 4 (E72) + 12 log-only (E73) | 0 (one low item on E73's warning, § Open items) |
 | G10 | 28 | 3 (E74, E75) | 0 |
 | G3 | 2 (R2) + 7 (R1) | 41 (E76 to E82) | 3 |
-| G7 | 5 | 12 (E83 to E86) | 5 |
-| **Total** | **67** | **85** | **8** |
+| G7 | 5 | 9 (E83 to E86) | 8 |
+| **Total** | **67** | **82** | **11** |
 
 - **Two security-critical test gaps** were found, each now killed: the RandomX
   IMUL_RCP power-of-two NOP rule (G3) and the store repair's handling of operator
   verdicts past a damaged length field (G6). Neither was a bug in the shipped code:
   the code was right and no test held it.
 - **No survivor lets a verifier accept an invalid proof or block**, changes a pinned
-  soundness parameter unnoticed, or changes today's fingerprint (per batch below).
+  soundness parameter unnoticed, or changes today's fingerprint (per batch below),
+  **except possibly the 3 open RandomX mutants** (`superscalar.rs` 742:24, 783:42 ×2):
+  if their state is reachable, they generate a different SuperscalarHash program, so
+  a different PoW hash, and a node built with them would disagree with reference
+  RandomX on which blocks are valid (§ Open items (a)).
 - No production line was changed by run G; the killing tests are merged in
   `rebuild/core` up to `dfed6a5`.
 
@@ -210,8 +218,8 @@ limit).
     security figures): `the_security_figures_are_computed_on_the_committed_domain`.
 - `lib.rs:637:21` (`num_periodic_columns`) is caught by the existing px
   `proof_limits` (stage 2b; checked by the lead).
-- Equivalent (10): E67, E68, E69 (on this build only: the BabyBear packing width,
-  § Open items), E70.
+- Equivalent (10): E67, E68, E69 (width-1 builds only, not aarch64: the BabyBear
+  packing width, § Open items (f)), E70.
 - Timeouts (8, still timeouts alone, `runG5t`): `smallest_pow_witness` scans of the
   whole field or endless loops (250:64 `*`, 254:26 `==`, `>`, 254:63 `|`, `^`, 258:15
   `*=`), `VerifierConfig::for_statement` → `Default` (infinite recursion), and the
@@ -284,8 +292,9 @@ caught).
   - `program.rs` `validate`: the code word limit (173:33; 173:52 `==` and `>=`), the
     code end against the stack region (176:96 `+`, `/`), the data segment count
     (183:28 `==`, `>=`), the data byte limit (192:19, 195:18 `==`, `>=`);
-  - `exec.rs`: `check_addr` at its boundaries (179:17, 182:26: the executor was
-    stricter than the AIR by one address; the AIR, `air/cpu.rs` 319 to 342, enforces
+  - `exec.rs`: `check_addr` at its boundaries (179:17, 182:26: under the mutant the
+    executor would refuse one address at the boundary that the AIR accepts; the AIR,
+    `air/cpu.rs` 319 to 342, enforces
     `addr ≥ 0x1000` and a store address `≥ CODE_END`, and proving and verifying at
     both boundaries shows they agree), the input word limit (433:20 `==`, `>=`).
   - The `>=` mutants at a limit and the `check_addr` ones only refuse honest inputs at
@@ -327,7 +336,7 @@ part A at f7ccd19 (`runG3a`), part B with the two ignored full-mode tests
   `the_dataset_check_rejects_another_cache` kill `self_test.rs` 295:5 and 356:5. The
   R2 timeout, `config.rs:35:11` `+=` → `*=`, is a build timeout (a const evaluation
   that never ends: it cannot ship).
-- Equivalent: 38 proven from the code (E76 to E80); `706:28` (E81); 782:41 and 807:41
+- Equivalent: 38 shown from the code (E76 to E80); `706:28` (E81); 782:41 and 807:41
   by a probabilistic reachability argument (E82).
 - **OPEN (3 mutants at 2 sites):** § Open items (a).
 - Timeouts (R1: 16 still time out alone at 300 s, `runG3t`, where 5 others were
@@ -350,17 +359,32 @@ targets and every node target (`runG7s2px`: 4 caught).
   788:17), `2e8410f` (node/tests/px_fixture.rs: `an_unknown_anchor_is_refused`, node
   868:9 `px_is_recent_root`; `a_bridge_out_above_the_pool_is_refused`, node 874:9
   `px_pool`).
-- Equivalent (12): E83 to E86.
-- **STRUCTURAL WEAKNESS (5, open):** § Open items (b).
+- Equivalent (9): E83 to E86.
+- **STRUCTURAL WEAKNESS (8, open):** § Open items (b).
 - Timeout: px 553:11 `*=` (a const evaluation that never ends: a build timeout).
 
 ## Kill confirmation
 
-Kills confirmed by a cargo-mutants re-run on the final tests: G4 (`runG4k1`), G6
-(`runG6k1`, `runG6k2`), G10 (`runG10k`; the equivalents' survival `runG10keq`), R2
-(`runG3a`, `runG3b`). For the other kills (G1, G9, G2, G5, G3 R1, G7, R2's two
-full-mode ones), the batch reports state that each new test fails under its mutant;
-the lead checked the reports, and there is no re-run record of them.
+**Every one of the 67 killed mutants has a re-run record at the final commit.** The
+confirmation run (`runGconf`, at `dfed6a5`, 2026-10-12 16:15 to 2026-10-13 01:17,
+9 h 02) re-ran all 67, one package at a time (consensus, miner, node, px, chain, zk,
+randomx, zkvm), against each batch's union oracle plus the new targets: **67 of 67
+caught**, 0 missed, 0 timeouts. The environment-failure scan was clean, and the memory
+guard (which this time also watched `rustc` and would abort below 1 GB free) stopped
+nothing. The per-mutant outcomes and failing test names are in `runGconf-summary.txt`.
+
+- 8 unrequested `delete field` mutants rode along (node 1023:9, 1091:21, 1103:21; px
+  `prove.rs:104:5`; zk `lib.rs` 635:21, 636:21, 637:21; randomx `superscalar.rs:292:13`):
+  all caught, not counted.
+- Cross-package runs used `--baseline skip`, with each catch confirmed by the failing
+  test's name.
+- cargo stops at the first failing test binary, so a later killing target is not
+  always reached: for example the randomx 60:x mutants failed in the lib tests before
+  the `equivalence` corpus test ran. The record names the tests that did fail.
+- zk doctests were not run; no killing test is a doctest.
+
+Earlier kill checks, kept for the record: `runG4k1`, `runG6k1`, `runG6k2`, `runG10k`
+(and `runG10keq`, the equivalents' survival), `runG3a`, `runG3b`.
 
 ## Open items
 
@@ -374,15 +398,38 @@ These are stated as open. None is exempt.
   `generate()`; in a probe over 1 million keys and 8 million programs neither ever
   changed a program (the loop never ended by its cycle count; the chained-multiply
   choice after a source throwaway never differed). No proof of unreachability is
-  known, and no direct test exists without restructuring production code. They are
-  the reason the gate's criterion is not met.
-- **(b) The fingerprint manifest records sample outputs, not their inputs (5 G7
-  mutants).** node `fingerprint.rs` 318:28 (a key-schedule sample height: a compound
-  off-by-one switching the RandomX key one block early), 458:44 (an emission sample:
-  a change of the tail floor), 1194:47 (the PX `R` top-bit sample), 1218:42 (the
-  truncated-proof sample), 1251:51 (the unsupported-ABI sample). Each replaces a sample
-  input with another giving the same output, so a future rule bug that only the
-  original input exercises would not move the fingerprint. No test can kill them; the
+  known, and no direct test exists without restructuring production code.
+  **Consequence if reachable:** `generate()` would produce a different SuperscalarHash
+  program for some key, so the dataset items and every PoW hash under that key would
+  differ, and a node built with the mutant would disagree with reference RandomX on
+  which blocks are valid (a consensus split, not a forged proof). They are the main
+  reason the gate's criterion is not met.
+- **(b) The fingerprint manifest records sample outputs, not their inputs (8 G7
+  mutants).** **Criterion:** a sample mutant is open when the mutated sample input no
+  longer catches a plausible rule change that the original input catches, even though
+  today's rule gives the same verdict or output for both. It is exempt only when no
+  plausible rule change tells the two inputs apart (E84, E85). The open ones, node
+  `fingerprint.rs`:
+  - 318:28 (a key-schedule sample height: a compound off-by-one switching the RandomX
+    key one block early);
+  - 458:44 (an emission sample: a change of the tail floor);
+  - 1194:47 (the PX `R` top-bit sample);
+  - 1218:42 (the truncated-proof sample);
+  - 1251:51 (the unsupported-ABI sample: the original `abi = 2` catches a relaxation
+    to "refuse only `abi < ABI_VERSION`", accepting newer ABIs; the mutated `abi = 0`
+    does not);
+  - 482:12 (the low-stamp difficulty sample, `ts[11] = 770` instead of `1_000_020`:
+    both are lifted by the warm-up or capped at `6T` today, but a rule that leaves a
+    stamp unlifted when it lies at most some tolerance low, for a tolerance between
+    1 240 s and about 10^6 s, for example 7 200 s, moves only the original sample;
+    E84 has the analysis);
+  - 1023:36 (the other-branch sample: the original `BRANCH_ID_V3 ^ 1` is `"BSv2"`, so
+    it catches a rule accepting the previous version's branch id; the mutated 1 does
+    not);
+  - 1208:52 (the PX `bridge_in + 1` sample becomes `− 1`: a balance check relaxed to
+    an inequality in one direction is caught by only one of them).
+
+  No test can kill them; the
   fix is to encode the sample inputs in the manifest, a manifest and encoding change
   with a re-pin. Related: the key-schedule samples cannot see a lone dropped `-1` in
   `seed_height` (the consensus property tests do). **Pre-freeze decision**, together
@@ -399,10 +446,15 @@ These are stated as open. None is exempt.
   killed by a light test.
 - **(e) The pool tests have no internal deadline (G9):** a deadlock hangs the run
   instead of failing a test.
-- **(f) The BabyBear packing-width caveat (G5).** E69 holds on this build, whose
-  BabyBear packing has width 1 (x86_64 without AVX2 or AVX-512 target features; the
-  repository sets none). On a NEON, AVX2 or AVX-512 build those two mutants would
-  panic the prover (never an invalid proof); a run on such a build would kill them.
+- **(f) The BabyBear packing-width caveat (G5).** E69 holds only where the BabyBear
+  packing has width 1: x86_64 without AVX2 or AVX-512 (the repository sets no target
+  feature), as in this run. **It does not hold on a target the project already
+  builds:** NEON is a default target feature on aarch64, where `p3-monty-31` 0.7.0
+  uses `PackedMontyField31Neon` (width 4), and CI builds on `ubuntu-24.04-arm`. There
+  (and on opt-in AVX2 or AVX-512 builds) the two mutants make the prover panic, at an
+  underflow or at `grind`'s assertion of the verifier's `check_witness`; they never
+  give an invalid proof, since the witness is checked with the verifier's code before
+  use. **Follow-up:** re-check `config.rs` 250:64 and 253:35 on the arm64 runner.
 
 ## Reproduction
 
@@ -410,7 +462,10 @@ These are stated as open. None is exempt.
   killing test is merged in `rebuild/core` up to `dfed6a5`. No production line
   changed between the bases and `dfed6a5`: the only source changes are the appended
   test modules, so the cited line numbers hold at `dfed6a5`.
-- **Evidence files are not in the repository.** The run scripts, `--re` argument
+- **Evidence files are not in the repository.** The confirmation run's
+  `runGconf-<package>` directories, `runGconf-summary.txt` and its scripts
+  (`runGconf.sh`, `seqGconf.sh`, `memguardconf.ps1`) are internal records, as are the
+  run scripts, `--re` argument
   files, mutant lists (`lists/`), diffs (`diffs/`), memory-guard logs and each run's
   `outcomes.json` and logs (`runG1`, `runR2`, `runR2t`, `runG9s1`, `runG9m`,
   `runG9s2`, `runG9s2t`, `runG2s1m`, `runG2s1d`, `runG2s2`, `runG5s1`, `runG5s2a`,
@@ -418,8 +473,7 @@ These are stated as open. None is exempt.
   `runG6s1`, `runG6s2`, `runG6t`, `runG6v`, `runG6k1`, `runG6k2`, `runG10s1`,
   `runG10s2`, `runG10s3`, `runG10k`, `runG10keq`, `runG3a`, `runG3b`, `runG3s1`,
   `runG3t`, `runG3s2`, `runG3s2b`, `runG7s1node`, `runG7s1px`, `runG7s2node`,
-  `runG7s2px`) are internal records in the lead's scratch area, with the lead's batch
-  summary. The RandomX reachability probe (8 million programs) and the reference
+  `runG7s2px`), all in the lead's scratch area with the lead's batch summary. The RandomX reachability probe (8 million programs) and the reference
   RandomX comparison are internal records there too.
 - **Command shape** (stage 1 of G6 shown; the others differ in package, files and
   targets as listed per batch):

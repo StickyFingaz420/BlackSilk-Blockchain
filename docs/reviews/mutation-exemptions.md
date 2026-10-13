@@ -1352,28 +1352,45 @@ Record: mutation run G, 2026-10-12.
 ## E69: `start - l` for `start + l` in `smallest_pow_witness`, at packing width 1 (zk/src/config.rs)
 
 Decision: mutation run G, batch G5, for the Lead's review. **Conditional on the build
-target** (§ Open items (f) of the run G evidence).
+target: it does not hold on aarch64, which the project builds** (§ Open items (f) of
+the run G evidence).
 
 **Code.** As E68: the lane values `start + l as u64` (250:64) and the candidate
-`start + l as u64` (253:35).
+`start + l as u64` (253:35). `<BabyBear as Field>::Packing` is chosen by
+`p3-monty-31` 0.7.0 (`monty_31.rs`): `PackedMontyField31Neon` (width 4) when
+`target_arch = "aarch64"` and `target_feature = "neon"`, the AVX2 or AVX-512 packings
+on x86_64 with those features, and the field itself (width 1) otherwise.
 
 **Mutants covered:** 250:64 `replace + with -`, 253:35 `replace + with -`
-(cargo-mutants).
+(cargo-mutants), **on width-1 builds only**.
 
-**Argument.** On this build `<BabyBear as Field>::Packing` has width 1 (x86_64 with no
-AVX2 or AVX-512 target feature; `.cargo/config.toml` sets none), so `l` is always 0
-and `start - 0 = start + 0`: the same function. On a build with a wider packing (NEON,
-AVX2, AVX-512) the mutants are not equivalent: a lane's value and its candidate no
-longer match, or `start - l` underflows; either way `grind`'s
-`assert!(self.inner.check_witness(…))` or the overflow check panics the prover. No
-invalid proof results, since the witness is checked with the verifier's code before
-use. A census on such a build would kill them; until then this entry holds for
-width-1 builds only.
+**Argument.** On x86_64 without AVX2 or AVX-512 (the repository sets no target feature
+and no `target-cpu`; this run's x86_64-pc-windows-msvc build), the width is 1, so `l`
+is always 0 and `start - 0 = start + 0`: the same function.
+
+The width is not 1 everywhere the project builds. NEON is a default target feature of
+aarch64, so an aarch64 build (CI's `ubuntu-24.04-arm` leg) uses width 4, and there the
+mutants are live:
+
+- 250:64 puts `start - l` into lane `l` while the candidate stays `start + l`; at
+  `start = 0` the subtraction underflows (a panic under overflow checks; in a release
+  build it wraps and is clamped to `order - 1`);
+- 253:35 keeps the lane values and names the candidate `start - l` (the same
+  underflow at `start = 0`; a wrapped candidate fails `candidate < order` and is
+  skipped).
+
+Either way the returned witness is no longer the one whose sample was tested. `grind`
+then runs the verifier's own `check_witness` on it and asserts the result: the prover
+panics, or, if the returned value happens to pass the verifier's check, it is a valid
+proof-of-work witness. So no invalid proof results; on aarch64 these are prover
+failures, not equivalents. A census on the arm64 runner would kill them (follow-up:
+re-check the two mutants there).
 
 **Evidence.** Missed in `runG5s1`, `runG5s2a`, `runG5s2b`, `runG5s3`, on
 x86_64-pc-windows-msvc.
 
-Record: mutation run G, 2026-10-12.
+Record: mutation run G, 2026-10-12; narrowed to width-1 builds in the run G revision,
+2026-10-13.
 
 ## E70: `VerifierConfig::setup` as `Default::default()` (zk/src/config.rs)
 
@@ -1768,67 +1785,77 @@ node target).
 
 Record: mutation run G, 2026-10-12.
 
-## E84: difficulty sample inputs whose change cancels in the rule (node/src/fingerprint.rs)
+## E84: a difficulty sample input shifted by a constant that the rule never reads (node/src/fingerprint.rs)
 
-Decision: mutation run G, batch G7, for the Lead's review.
+Decision: mutation run G, batch G7, for the Lead's review; narrowed in the run G
+revision (2026-10-13).
 
 **Code.** `rule_samples`: `ts = 1_000_000 + i · 120` and `cd = (i + 1) · 10^6` for `i`
-in 0 to 86; `ts[11] -= 1_300`; samples `next_difficulty(&ts, &cd, …)`,
-`next_difficulty(&ts[11..], &cd[11..], …)` and the genesis-only case. In
+in 0 to 86; samples `next_difficulty(&ts, &cd, …)`, `next_difficulty(&ts[11..],
+&cd[11..], …)` and the genesis-only case `(&ts[..1], &cd[..1], …, 777)`. In
 `next_difficulty` (consensus/src/difficulty.rs) the cumulative difficulties enter only
-as differences `cumulative[w0 + i] − cumulative[w0 + i − 1]`; the counted clock is
-`prev = max(ts, prev + step)` over the warm-up (`DIFFICULTY_WARMUP = 11`) and the
-window; each solve time is `min(this − prev, 6T)`.
+as differences `cumulative[w0 + i] − cumulative[w0 + i − 1]`, and the genesis-only
+case returns `initial` before reading them.
 
-**Mutants covered:** 480:48 `replace + with *` (`cd = i · 10^6`); 482:12 `replace -=
-with /=` (`ts[11] = 1_001_320 / 1_300 = 770` instead of `1_000_020`) (cargo-mutants).
+**Mutant covered:** 480:48 `replace + with *` (`cd = i · 10^6`) (cargo-mutants).
 
-**Argument.**
+**Argument.** The mutant shifts every cumulative difficulty by the same `10^6`, and the
+rule reads only differences of them: the same samples through the same computation.
+A rule change would have to start reading absolute cumulative values to tell the two
+inputs apart, and then both inputs move the sample.
 
-- **480:48** shifts every cumulative difficulty by the same `10^6`; only differences
-  are read (the genesis-only sample reads none). The same samples, on the same path.
-- **482:12.** With the full history (`w0 = 11`, warm-up from index 0), the clock
-  reaches `1_001_200 + 60` at index 11, above both `1_000_020` and `770`, so `prev`
-  is the same and the stamp is lifted in both. With `ts[11..]` (no warm-up), `prev =
-  ts[11]` and the first solve time is `1_420` or `1_000_670`, both capped at `6T =
-  720`; from there `prev = ts[12]` in both. The same outputs, through the same rules
-  (the warm-up's lift and the 6T cap) as the original input.
+**Not covered (moved to open):** 482:12 `replace -= with /=` (`ts[11] = 770` instead of
+`1_000_020`). Under today's rule both inputs give the same outputs (the warm-up lifts
+the stamp to the counted clock, `1_001_260`, in the full sample; the first solve time
+of the window-only sample is capped at `6T = 720` in both). But the original stamp lies
+1 240 s below the counted clock and the mutated one about 1 000 490 s below it, so a
+rule change that treats a low stamp by how far below it lies, with a tolerance
+between those two (for example "count a stamp as given if it lies at most
+`MAX_FUTURE_TIME_LIMIT` = 7 200 s low, lift it otherwise"), moves the original sample
+and not the mutated one. Under the criterion of the run G evidence (§ Open items (b))
+that is a weakening, so 482:12 is open, not exempt. (Tolerances up to 1 240 s, among
+them the future time limit of 360 s and `6T`, treat both inputs alike, as do a
+changed cap and a changed warm-up length.)
 
 **Evidence.** Missed in `runG7s1node` and `runG7s2node` (every node target).
 
-Record: mutation run G, 2026-10-12.
+Record: mutation run G, 2026-10-12; narrowed 2026-10-13.
 
 ## E85: transaction-sample variants changed by another amount, with the same verdict (node/src/fingerprint.rs)
 
-Decision: mutation run G, batch G7, for the Lead's review.
+Decision: mutation run G, batch G7, for the Lead's review; narrowed in the run G
+revision (2026-10-13).
 
 **Mutants covered** (cargo-mutants): 1007:58 `replace + with -` (`plus_g` adds `−G`
-instead of `G`); 1023:36 `replace ^ with &` (the "other branch id" rules:
-`branch_id & 1` instead of `branch_id ^ 1`); 1208:52 `replace += with -=` (the PX
-"bridge_in + 1" variant becomes `− 1`); 1253:54 `replace ^= with &=` (the "other
-salt" variant: `salt[0] & 1` instead of `salt[0] ^ 1`).
+instead of `G`); 1253:54 `replace ^= with &=` (the "other salt" variant: `salt[0] & 1`
+instead of `salt[0] ^ 1`).
 
 **Argument.** Each variant still changes the same field so that the same rule refuses
-it, and the sample records that verdict:
+it, and no plausible rule change tells the original input from the mutated one:
 
-- `−G` instead of `+G`: a pseudo-output shifted alone leaves the transfer unbalanced;
-  a pseudo-output and an output commitment shifted together keep it balanced and break
-  the output's range proof. The same two verdicts.
-- `branch_id & 1` is 1 for `BRANCH_ID_V3` (`"BSv3"`, odd and above 1), so the rules
-  still name another branch than the fixture's.
-- `bridge_in − 1` breaks the PX balance by one unit, as `+ 1` does (the fixture's
-  `bridge_in` is nonzero: under the mutants profile's overflow checks the mutant would
-  otherwise panic and be caught).
+- `−G` instead of `+G` (`G` is the blinding generator, not the value generator): a
+  pseudo-output shifted alone leaves the commitments unbalanced; a pseudo-output and
+  an output commitment shifted together keep them balanced and break the output's
+  range proof. The balance is an equality of points, and a blinding-only difference
+  has no sign a rule could treat differently.
 - `salt[0] & 1` changes the salt, as `^ 1` does, since the golden deploy's `salt[0]`
   is above 1 (otherwise the variant would be the valid deploy and its pinned verdict
-  would differ).
+  would differ). Both give another contract id from the same derivation.
 
-These differ from the open sample mutants (run G evidence, § Open items (b)): there,
-the mutated input reaches the same output through another rule.
+**Not covered (moved to open, § Open items (b) of the run G evidence):**
+
+- 1023:36 `replace ^ with &`: the "other branch id" sample uses `BRANCH_ID_V3 ^ 1`,
+  which is `"BSv2"`, the previous version's tag; the mutant uses 1. Today both are
+  refused alike, but a rule change that accepted the previous version's branch id
+  (a replay-protection relaxation) moves only the original sample.
+- 1208:52 `replace += with -=`: the PX "bridge_in + 1" variant becomes `− 1`. Today
+  both break the PX balance, but a relaxation of the balance equality to an
+  inequality in one direction is caught by `+ 1` only, and in the other by `− 1`
+  only: the mutant swaps the direction the sample holds.
 
 **Evidence.** Missed in `runG7s1node` and `runG7s2node`.
 
-Record: mutation run G, 2026-10-12.
+Record: mutation run G, 2026-10-12; narrowed 2026-10-13.
 
 ## E86: `FixtureChain` answers the samples never use (node/src/fingerprint.rs)
 
