@@ -78,6 +78,17 @@ fn targeted_cases() -> Vec<Case> {
         // the VM must execute as a NOP. A VM that multiplies by a reciprocal
         // there instead hashes e7ebcd8c...
         (&b"test key 000"[..], &b"G3 rcp probe 26476422"[..]),
+        // IMUL_R source throwaway then a chained-multiply destination choice
+        // (superscalar program 2, mutation run G 783:42): program 2 of 8
+        // throws an IMUL_R away for want of a source, so the next IMUL_R may
+        // chain a multiply (`throw_away_count > 0`) and has r0 and r5 as
+        // candidate destinations. A generator that miscounts the throwaway
+        // offers only r0, and the hash becomes 5640debc... The key is
+        // "rxreach1", 2152473 as a little-endian u64 and 16 zero bytes.
+        (
+            &b"rxreach1\x19\xd8\x20\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"[..],
+            &b"This is a test"[..],
+        ),
     ]
     .into_iter()
     .map(|(key, input)| Case {
