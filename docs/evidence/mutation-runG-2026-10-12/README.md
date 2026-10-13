@@ -6,14 +6,17 @@ the tests notice; it does not show that the code is correct or secure.
 The gate (decisions "Agent 42", "W4-MUT and RT-MUT", "RT-MUTD"): zero unexplained
 missed mutants per completed file or function set. Every survivor is killed by a new
 test or explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md)
-(run G's entries: E65 to E86). **Run G does not meet the criterion yet:** three
-RandomX mutants at two sites are neither killed nor shown equivalent, and eight
-fingerprint mutants show a structural weakness of the manifest that no test can
+(run G's entries: E65 to E86). **Run G does not meet the criterion yet:** one
+RandomX mutant (`superscalar.rs` 742:24) is neither killed nor shown equivalent, and
+eight fingerprint mutants show a structural weakness of the manifest that no test can
 kill (§ Open items). They are listed as open, not exempt.
 
 Revised 2026-10-13 after the red team's review: every kill re-run at the final commit
 (§ Kill confirmation), the open-sample criterion stated and applied (three G7 mutants
-moved from E84 and E85 to open), and the aarch64 limit of E69.
+moved from E84 and E85 to open), and the aarch64 limit of E69. Revised again on
+2026-10-13: the two `superscalar.rs` 783:42 mutants are killed by a new reference
+corpus line (`a2fbac1`, § G3), and the reachability research on 742:24 is stated in
+§ Open items (a).
 
 ## Scope
 
@@ -124,9 +127,9 @@ The 160 survivors:
 | G4 | 2 | 1 (E71) | 0 |
 | G6 | 5 | 4 (E72) + 12 log-only (E73) | 0 (one low item on E73's warning, § Open items) |
 | G10 | 28 | 3 (E74, E75) | 0 |
-| G3 | 2 (R2) + 7 (R1) | 41 (E76 to E82) | 3 |
+| G3 | 2 (R2) + 9 (R1) | 41 (E76 to E82) | 1 |
 | G7 | 5 | 9 (E83 to E86) | 8 |
-| **Total** | **67** | **82** | **11** |
+| **Total** | **69** | **82** | **9** |
 
 - **Two security-critical test gaps** were found, each now killed: the RandomX
   IMUL_RCP power-of-two NOP rule (G3) and the store repair's handling of operator
@@ -134,12 +137,15 @@ The 160 survivors:
   the code was right and no test held it.
 - **No survivor lets a verifier accept an invalid proof or block**, changes a pinned
   soundness parameter unnoticed, or changes today's fingerprint (per batch below),
-  **except possibly the 3 open RandomX mutants** (`superscalar.rs` 742:24, 783:42 ×2):
-  if their state is reachable, they generate a different SuperscalarHash program, so
-  a different PoW hash, and a node built with them would disagree with reference
-  RandomX on which blocks are valid (§ Open items (a)).
+  **except possibly the open RandomX mutant** (`superscalar.rs` 742:24): if its state
+  is reachable, it generates a different SuperscalarHash program, so a different PoW
+  hash, and a node built with it would disagree with reference RandomX on which blocks
+  are valid (§ Open items (a)). The shipped code has the reference's loop bound there.
+  The two 783:42 mutants, open before, do reach such a state: a key on which they
+  change the program is now a reference corpus line, which kills them (§ G3).
 - No production line was changed by run G; the killing tests are merged in
-  `rebuild/core` up to `dfed6a5`.
+  `rebuild/core` up to `dfed6a5`, and the 783:42 corpus line is `a2fbac1` (branch
+  `g11/rx783-vector`, tests and test data only).
 
 ## G1: consensus header and the post-run-E diff (05b2ef2)
 
@@ -338,7 +344,21 @@ part A at f7ccd19 (`runG3a`), part B with the two ignored full-mode tests
   that never ends: it cannot ship).
 - Equivalent: 38 shown from the code (E76 to E80); `706:28` (E81); 782:41 and 807:41
   by a probabilistic reachability argument (E82).
-- **OPEN (3 mutants at 2 sites):** § Open items (a).
+- **Test gap, killed after the run:** 783:42 `throw_away_count += 1` → `-=` and `*=`
+  (the source-throwaway counter). Under the key `727872656163683119d820` followed by
+  21 zero bytes ("rxreach1", 2152473 as a little-endian u64, 16 zero bytes),
+  SuperscalarHash program 2 of 8 throws an IMUL_R away for want of a source; the next
+  IMUL_R may then chain a multiply (`throw_away_count > 0`), so its candidate
+  destinations are r0 and r5, and under either mutant r0 only. One `u32` draw fewer
+  shifts the generator's stream, and programs 2 to 7 differ. "This is a test" hashes
+  to `95a05dbf…034a` here and in the reference (tevador/RandomX v1.2.3 with
+  BlackSilk's salt, `kat-corpus` driver; interpreter, JIT and auto modes alike,
+  re-run 2026-10-13), and to `5640debc…22a1` under both mutants. The key came from a
+  search over 4 million keys (32 million programs: 17 IMUL_R source throwaways, 1 of
+  them changing the program under the mutants). Killed by corpus line 26 (`a2fbac1`,
+  the second entry of `targeted_cases()` in `randomx/tests/equivalence.rs`); kill
+  check `runG3k783` (§ Kill confirmation).
+- **OPEN (1 mutant):** 742:24, § Open items (a).
 - Timeouts (R1: 16 still time out alone at 300 s, `runG3t`, where 5 others were
   caught): the generator (`superscalar.rs` 34:9, 36:20, 41:9 ×2), 60:5 → `true` (the
   IMUL_RCP immediate loop never ends), the cycle counters (684:15, 716:15, 804:29 ×2),
@@ -383,6 +403,14 @@ nothing. The per-mutant outcomes and failing test names are in `runGconf-summary
   the `equivalence` corpus test ran. The record names the tests that did fail.
 - zk doctests were not run; no killing test is a doctest.
 
+**The two kills added after it** (783:42 `-=` and `*=`) have their own record,
+`runG3k783` (2026-10-13, at `a2fbac1`, `--jobs 1`, oracle `--test=equivalence`):
+both caught by `reference_corpus`, each with "1 of 10 reference answers differ" and
+`reference=95a05dbf…034a ours=5640debc…22a1` for the new corpus line. In the same
+run 742:24 `<=` was missed (all 4 `equivalence` tests pass), as expected; the
+unrequested `delete field` mutant `superscalar.rs:292:13` rode along (caught, not
+counted).
+
 Earlier kill checks, kept for the record: `runG4k1`, `runG6k1`, `runG6k2`, `runG10k`
 (and `runG10keq`, the equivalents' survival), `runG3a`, `runG3b`.
 
@@ -390,20 +418,39 @@ Earlier kill checks, kept for the record: `runG4k1`, `runG6k1`, `runG6k2`, `runG
 
 These are stated as open. None is exempt.
 
-- **(a) RandomX `superscalar.rs:742:24` and `783:42` (3 mutants), unkilled, not
-  equivalent.** 742:24 `decode_cycle < SUPERSCALAR_LATENCY` → `<=` runs one more decode
-  cycle when the loop ends by its cycle count rather than by saturated ports; 783:42
-  `throw_away_count += 1` → `-=` and `*=` after a source throwaway changes
-  `allow_chained_mul` for the next destination choice. Both are local state of
-  `generate()`; in a probe over 1 million keys and 8 million programs neither ever
-  changed a program (the loop never ended by its cycle count; the chained-multiply
-  choice after a source throwaway never differed). No proof of unreachability is
-  known, and no direct test exists without restructuring production code.
-  **Consequence if reachable:** `generate()` would produce a different SuperscalarHash
-  program for some key, so the dataset items and every PoW hash under that key would
-  differ, and a node built with the mutant would disagree with reference RandomX on
-  which blocks are valid (a consensus split, not a forged proof). They are the main
-  reason the gate's criterion is not met.
+- **(a) RandomX `superscalar.rs:742:24` (1 mutant), unkilled, not shown equivalent.
+  OPEN.** `decode_cycle < SUPERSCALAR_LATENCY` → `<=` runs one more decode cycle when
+  the loop reaches its cycle limit before the ports saturate. (The two 783:42 mutants
+  listed here before are killed, § G3.)
+  - **The shipped code agrees with the reference here.** The reference
+    `superscalar.cpp` (tevador/RandomX v1.2.3, line 678) has the identical loop bound,
+    `decodeCycle < RANDOMX_SUPERSCALAR_LATENCY && !portsSaturated && programSize <
+    SuperscalarMaxSize`, and the same loop body. The mutant differs from both only in
+    one state, m1: the top of the loop at decode cycle 170, ports unsaturated, fewer
+    than 512 instructions.
+  - **Necessary conditions for m1, shown from the code:** no throwaway in the whole
+    program (otherwise at least 211 consecutive equal Blake2 `u32` outputs, about
+    2^-6700); and decode cycle 169 in exactly one of two narrow port and buffer cases:
+    (A) the forced decode configuration 3310, with cycle 169 fully free and M(169) =
+    169, or (B) the default configuration 493, with M(169) = 170 and ports P0 and P5
+    free at cycle 169. (M(c) is the research report's notation for a scheduling
+    cycle at decode cycle c; its definition is in the report, an internal record.)
+  - **No proof that m1 is unreachable.** Evidence only: 0 occurrences in 32 million
+    real programs (4 million keys; only 272 programs had no throwaway, and the latest
+    loop exit was at decode cycle 168); 0 in 1.5 million tilted states at decode
+    cycle 169 (importance sampling over an abstract model of the scheduler, 20 million
+    tilted programs; neither case's port pattern ever occurred); a beam search and hill
+    climbing never reached it. A heuristic estimate puts it far below 10^-13 per
+    program; that is not a rigorous bound.
+  - **Status: open, a test-adequacy gap, not a known consensus risk:** the shipped
+    code is the reference's. If m1 were reachable, a node built with the *mutant*
+    would compute a different SuperscalarHash program for that key, so different
+    dataset items and PoW hashes, and disagree with reference RandomX (a consensus
+    split, not a forged proof); the shipped code would not. No direct test exists
+    without restructuring production code.
+  - The research artefacts (the instrumented copy, the sampling, beam and climbing
+    runs, the reference request and output) are internal records in the lead's
+    scratch area (`C:/bszkeval/g11-scratch/G3/rxreach/`), not in the repository.
 - **(b) The fingerprint manifest records sample outputs, not their inputs (8 G7
   mutants).** **Criterion:** a sample mutant is open when the mutated sample input no
   longer catches a plausible rule change that the original input catches, even though
@@ -459,9 +506,10 @@ These are stated as open. None is exempt.
 ## Reproduction
 
 - **Code:** a worktree of `rebuild/core` at each batch's base (table above); every
-  killing test is merged in `rebuild/core` up to `dfed6a5`. No production line
-  changed between the bases and `dfed6a5`: the only source changes are the appended
-  test modules, so the cited line numbers hold at `dfed6a5`.
+  killing test is merged in `rebuild/core` up to `dfed6a5`, except the 783:42 corpus
+  line (`a2fbac1`). No production line changed between the bases and `dfed6a5` or
+  `a2fbac1`: the only changes are appended test modules and test data, so the cited
+  line numbers hold there.
 - **Evidence files are not in the repository.** The confirmation run's
   `runGconf-<package>` directories, `runGconf-summary.txt` and its scripts
   (`runGconf.sh`, `seqGconf.sh`, `memguardconf.ps1`) are internal records, as are the
@@ -474,7 +522,10 @@ These are stated as open. None is exempt.
   `runG10s2`, `runG10s3`, `runG10k`, `runG10keq`, `runG3a`, `runG3b`, `runG3s1`,
   `runG3t`, `runG3s2`, `runG3s2b`, `runG7s1node`, `runG7s1px`, `runG7s2node`,
   `runG7s2px`), all in the lead's scratch area with the lead's batch summary. The RandomX reachability probe (8 million programs) and the reference
-  RandomX comparison are internal records there too.
+  RandomX comparison are internal records there too, as are the later reachability
+  research on 783:42 and 742:24 (`G3/rxreach/`: 32 million programs, the tilted
+  sampling, beam and climbing runs, the reference request and outputs) and the
+  `runG3k783` kill check.
 - **Command shape** (stage 1 of G6 shown; the others differ in package, files and
   targets as listed per batch):
 
