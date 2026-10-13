@@ -116,10 +116,10 @@ What this does **not** cover:
 - The comparison with the reference is small: the 6 official hashes above (3 keys),
   bs-1a to bs-1f, one known answer in BlackSilk's PoW shape
   (`randomx_known_answer_on_a_mining_blob` in `consensus/tests/golden.rs`), and the
-  equivalence corpus (24 answers committed, 256 more through the large digest), over
-  22 keys in all. In light mode; the 6 official hashes, bs-1a to bs-1f, the
-  mining-blob answer and the committed corpus lines were also compared in full mode
-  on one x86-64 machine (2026-10-13, link above).
+  equivalence corpus (26 answers committed over 12 keys, 256 more through the large
+  digest over 8 others), over 23 keys in all. In light mode; the 6 official hashes,
+  bs-1a to bs-1f, the mining-blob answer and the committed corpus lines were also
+  compared in full mode on one x86-64 machine (2026-10-13, link above).
 - The equivalence harness compares whole hashes only: the VM state after one program
   or iteration is private to `vm.rs`, so a divergence is located to a (key, input)
   pair, not to an instruction.
