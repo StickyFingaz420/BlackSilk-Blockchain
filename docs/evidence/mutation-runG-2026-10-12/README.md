@@ -552,7 +552,13 @@ These are stated as open. None is exempt.
        later, and 837 to 838 would have saturated the ports. It did not end at 753 to
        754 either (that needs saturation or 512 instructions, R0), nor at 767 to 769
        or 820 to 822 (both saturate). So it ended at 787 to 788 or 812 to 813, the
-       null break after 256 consecutive throwaways, with `current` the NOP.
+       null break after 256 consecutive throwaways, with `current` the NOP. This
+       holds too when the first throwaway falls inside the pass of decode cycle 169
+       (`cycle ≥ 169` at its start, so `≥ 173` after it): a commit that fills the
+       buffer ends the pass, so it comes after that throwaway and starts from
+       `top_cycle ≥ 173` (750; the `continue` skipped 840, and 840 never resets
+       below a later `top_cycle`), and `schedule_mop` never returns a cycle below
+       its start (689 to 719, 662 to 687), so 837 to 838 or 767 to 769 saturate.
     3. The extra pass: `fetch_next(None, 170, mul_count, gen)` (746; 400 to 420)
        returns `BUF_4444` without a draw (409 to 410), since `mul_count ≤ 170`: each
        multiplication (IMUL_R, IMULH_R, ISMULH_R, IMUL_RCP; 343, 351 to 353) commits
