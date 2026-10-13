@@ -1865,7 +1865,8 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   the testnet D0 after the freeze (testnet-v3-genesis.md §5) would have changed the
   rules fingerprint.
 - **Decision:** every rule sample records its input next to its output, built from
-  the same values (lists and bytes for scalar samples; for each transaction, PX and
+  the same values (except the samples whose input is already a recorded entry or
+  whose output is a hash of the input: `pow_blob`, `tx_root([])`, the `tx_hash` of the fixture transfer and coinbase, the fixture transfer's `signature_message`, `px.tx_hash`, `px.binding`, `px.signature_message`, `px.weight`, `px.encoded_len`, `deploy.tx_hash`, `deploy.contract_id` and `deploy.signature_message`) (lists and bytes for scalar samples; for each transaction, PX and
   deploy verdict variant a hash of its canonical encoding under the fingerprint-local
   domain `node/fingerprint-sample-input/v1`, plus the chain-view, height or rules
   change when the variant keeps the transaction). The key schedule gains the samples
@@ -1881,4 +1882,8 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   id or D0 value changes; px/src/fingerprint.rs and its pin are unchanged. Record:
   docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs (`Revision: none`).
 - **Open:** the verdict samples are derived-`Debug` text, stable only under the
-  pinned toolchain (record item 12). A red-team pass is owed before the merge.
+  pinned toolchain (record item 12): a `rust-toolchain.toml` pinning 1.98.1 to match
+  CI (a separate change), and a stable explicit verdict encoding before the freeze.
+- **Red team (internal, 2026-10-13):** merge with fixes; the fixes (docs F1 to F5,
+  code H1 and H2, no manifest value or pin change) are applied as follow-up commits
+  (record, Follow-up (red team)).

@@ -4332,6 +4332,16 @@ the rules manifest, the identity manifest and every fingerprint pin change.
      the Merkle leaves; the output-range leaves; the genesis-nonce beacon, network and
      height; the signature-domain fields; the weight and fee shapes; the deploy-fee
      program lengths, budget and output words; the PX tree leaves.
+   - **Exceptions** (no separate input entry): the samples whose input is already a
+     recorded entry or whose output is a hash of the input: `pow_blob`, `tx_root([])`, the `tx_hash` of the fixture transfer and coinbase, the fixture transfer's `signature_message`, `px.tx_hash`, `px.binding`, `px.signature_message`, `px.weight`, `px.encoded_len`, `deploy.tx_hash`, `deploy.contract_id` and `deploy.signature_message`.
+     Their inputs are bound elsewhere: `pow_blob` reads the block-id sample's
+     header and network (`input.header`, `input.network`); `tx_root([])` has the
+     empty input its name states; the fixture transfer is the valid transfer
+     verdict's `input`, and its signature domain the `input.fixture signature
+     domain`; the coinbase is in the weight sample's `input`; the golden PX
+     transaction and deploy are the valid stateless-PX and deploy verdicts'
+     `input`. The PX-side samples (px/src/fingerprint.rs, `px.sample.*`) are
+     unchanged.
    - Every transfer, stateless PX and deploy verdict sample gains `<verdict> input`,
      the `input_hash` of the sampled transaction's `Transaction::encode`; the four
      transfer cases that keep the fixture transaction record what they change
@@ -4420,6 +4430,15 @@ the rules manifest, the identity manifest and every fingerprint pin change.
       caught**, plus 3 unrequested `delete field` mutants (caught). The scratch
       `seed_height` mutation (dropped `- 1`) fails `samples_are_the_golden_values`
       (keys at 4 160 and 20 544 move to 4 096 and 20 480).
+    - Sweep of the new code's own mutants, cargo-mutants 27.1.0 (`--profile mutants --cap-lints
+      true --jobs 1`, oracle `--lib --test deploy_configs --test px_fixture`) over
+      every mutant on the lines of node/src/fingerprint.rs changed since `85a8753`:
+      the red team's sweep at `1b7191b`, 60 mutants, 59 caught, 1 unviable (1388:9
+      `Sampled::of -> Default`), 0 missed (internal record, not in the repository);
+      and, after the hardening of the red-team follow-up, the re-listed sweep at
+      `cb2f58a` (`--in-diff` of `85a8753..cb2f58a`, `runFPSIsweep`): 67 mutants, 66
+      caught, 1 unviable (1411:9 `Sampled::of -> Default`, the same mutant: the type
+      has no `Default`), 0 missed, 0 timeouts.
     - `bash tools/fingerprint-mutations.sh`: 7 of 7 red-team mutations change the
       rules fingerprint.
     - `cargo test --locked --release -p blacksilk-node`: 137 passed, 0 failed,
@@ -4441,6 +4460,11 @@ the rules manifest, the identity manifest and every fingerprint pin change.
     - Rules no sample reaches remain covered by `REVISIONS` and the build commit only
       (unchanged from fingerprint-v3).
     - Run G open item (a) (RandomX `superscalar.rs` 742:24) is unaffected.
+    - Follow-ups, not done here: a `rust-toolchain.toml` pinning 1.98.1, to match
+      `.github/workflows/ci.yml` (a separate change); and replacing the `Debug`-text
+      verdict samples with a stable explicit encoding before the freeze (the
+      weakness is older than this record, from RTFP3-4; the standard library
+      documents derived `Debug` output as unstable across Rust versions).
 13. **Identity impact.** The identity manifest gains `chain.initial_difficulty`, so
     every network's identity fingerprint changes, and with the rules change every
     rules and consensus fingerprint. No network id, genesis block, genesis id or D0
@@ -4449,6 +4473,26 @@ the rules manifest, the identity manifest and every fingerprint pin change.
     identity manifest), not the rules fingerprint.
 14. **Documentation.** docs/testnet.md (D0 leaves the rules list, input entries),
     docs/STATUS.md, docs/testnet-v3-genesis.md §6, the run G evidence (open item (b)
-    closed), mutation-exemptions.md (E84, E85 narrowed), decisions.md.
+    closed), mutation-exemptions.md (E84, E85 superseded), decisions.md.
 15. **Review status.** Implemented and verified by the implementing agent under the
     lead's decision; an internal red-team pass is owed before the merge.
+
+### Follow-up (red team, 2026-10-13)
+
+Internal red team on the branch at `1b7191b`: **merge with fixes**, nothing blocking.
+Applied as follow-up commits; no manifest value or pin changes.
+- **H1:** the deploy-fee sample builds its registrations from the recorded budget and
+  output-word variables (`b`, `out_words`) instead of re-reading the constants.
+- **H2:** the transfer and deploy verdicts take their context entries from one
+  function, `verdict_context`, which destructures `FixtureChain` and `TxRules`
+  exhaustively (a new field fails to compile until its context entry is written) and
+  asserts that every case reads the fixture's ring members; the deploy verdicts no
+  longer rely on a comment.
+- Proof that nothing moved: `consensus_fingerprints_are_pinned` passes with the pins
+  of item 11, and the release `--print-manifest` output of all three networks at
+  `cb2f58a` is byte-identical to the one at `1a74131`.
+- **Docs:** STATUS.md's golden-PX row closed; the E84 note's line numbers corrected;
+  item 14 says superseded; the exceptions of item 5 stated wherever the docs said
+  every sample records its input; the mutant sweeps added to item 11.
+- **Open, not done here:** a `rust-toolchain.toml` pinning 1.98.1 (item 12); a stable
+  explicit verdict encoding before the freeze (item 12).

@@ -1789,8 +1789,8 @@ Record: mutation run G, 2026-10-12.
 
 **Superseded (2026-10-13, fingerprint-sample-inputs):** the manifest now records each
 difficulty sample's timestamps and cumulative difficulties, so the covered mutant
-(480:48, at `85a8753` line 528:48) changes the rules fingerprint and is killed, as is
-the open 482:12 (now 530:12); E84 covers no mutant. Kill record: `runFPSI`
+(480:48 at `85a8753`, now 528:48 at `1a74131`) changes the rules fingerprint and is
+killed, as is the open 482:12 (now 530:12); E84 covers no mutant. Kill record: `runFPSI`
 ([run G evidence](../evidence/mutation-runG-2026-10-12/README.md), § Open items (b));
 record docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs. The text below
 is kept as written.

@@ -10,7 +10,7 @@ test or explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.
 RandomX mutant (`superscalar.rs` 742:24) is neither killed nor shown equivalent
 (§ Open items (a)). It is listed as open, not exempt. The eight fingerprint mutants
 that showed a structural weakness of the manifest, and three exempt ones, are killed
-since the manifest records each sample's input (§ Open items (b), closed).
+since the manifest records the sample inputs (§ Open items (b), closed).
 
 Revised 2026-10-13 after the red team's review: every kill re-run at the final commit
 (§ Kill confirmation), the open-sample criterion stated and applied (three G7 mutants
@@ -18,8 +18,8 @@ moved from E84 and E85 to open), and the aarch64 limit of E69. Revised again on
 2026-10-13: the two `superscalar.rs` 783:42 mutants are killed by a new reference
 corpus line (`a2fbac1`, § G3), and the reachability research on 742:24 is stated in
 § Open items (a). Revised again on 2026-10-13: the change fingerprint-sample-inputs
-(`1a74131`, branch `consensus/fingerprint-sample-inputs`) records every rule sample's
-input in the node manifest; it kills the eight open G7 mutants and the three G7
+(`1a74131`, branch `consensus/fingerprint-sample-inputs`) records the rule samples'
+inputs in the node manifest (the exceptions are listed in the record, item 5); it kills the eight open G7 mutants and the three G7
 mutants that E84 and E85 exempted (§ Kill confirmation, `runFPSI`).
 
 ## Scope
@@ -445,12 +445,18 @@ numbers moved with the change; the mapping (run G line at `85a8753` → line at
 | 1253:54 (E85) | 1545:54 | `px_transaction_samples`: `salt[0] ^= 1`, `^= → &=` | `consensus_fingerprints_are_pinned` |
 
 Three unrequested `delete field` mutants rode along (1259:9 `branch_id`, 1327:21
-`spent`, 1339:21 `missing`): all caught, not counted. A scratch mutation of
+`spent`, 1339:21 `missing`): all caught, not counted. The new code's own mutants were
+swept too, over every mutant on the changed lines of node/src/fingerprint.rs (same
+tool, flags and oracle): the red team's sweep at `1b7191b`, 60 mutants, 59 caught,
+1 unviable (1388:9 `Sampled::of -> Default`), 0 missed (internal record, not in the
+repository); and after the red-team hardening, the re-listed sweep at `cb2f58a`
+(`runFPSIsweep`), 67 mutants, 66 caught, 1 unviable (1411:9, the same mutant), 0
+missed. A scratch mutation of
 consensus/src/pow.rs `seed_height` (the dropped `- 1`, never committed) fails
 `samples_are_the_golden_values`: the keys at 2E + L = 4 160 and 10E + L = 20 544 move
 from 2 048 and 18 432 to 4 096 and 20 480, while the five heights sampled before are
 unchanged. Internal records (`runFPSI`, `runFPSI-summary.txt`,
-`seed-minus1-mutation.txt`) are in the lead's scratch area (`C:/bszkeval/g11-scratch/fpsi/`).
+`seed-minus1-mutation.txt`, `runFPSIsweep`) are in the lead's scratch area (`C:/bszkeval/g11-scratch/fpsi/`).
 
 Earlier kill checks, kept for the record: `runG4k1`, `runG6k1`, `runG6k2`, `runG10k`
 (and `runG10keq`, the equivalents' survival), `runG3a`, `runG3b`.
@@ -496,8 +502,8 @@ These are stated as open. None is exempt.
 - **(b) The fingerprint manifest records sample outputs, not their inputs (8 G7
   mutants). CLOSED (2026-10-13)** by fingerprint-sample-inputs (`1a74131`; record
   docs/reviews/v3-consensus-changes.md#fingerprint-sample-inputs; decisions
-  "Fingerprint sample inputs and D0 as identity"): every rule sample records its input
-  next to its output, the key schedule is sampled at 2E + L and 10E + L, and D0 moved
+  "Fingerprint sample inputs and D0 as identity"): the rule samples record their inputs
+  next to their outputs (exceptions in the record, item 5), the key schedule is sampled at 2E + L and 10E + L, and D0 moved
   to the identity manifest. All eight open mutants and the three exempt ones (480:48,
   1007:58, 1253:54) are caught (`runFPSI`, § Kill confirmation). The analysis as
   written at the run follows. **Criterion:** a sample mutant is open when the mutated sample input no

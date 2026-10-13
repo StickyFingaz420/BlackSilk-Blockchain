@@ -191,11 +191,16 @@ Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
   the validation verdict of the transfer and of one variant per error class a
   transfer can reach), and the **rule-revision list**, one entry per reviewed
   rule change (each record in reviews/v3-consensus-changes.md carries a
-  `Revision:` line, and a test ties the two). Every sample's **input** is
+  `Revision:` line, and a test ties the two). Each sample's **input** is
   recorded next to its output (the sampled numbers and bytes, or a hash of a
   sampled transaction's encoding, and what a variant changes in the chain view,
   the height or the rules), so a changed input moves the fingerprint even when
-  the output stays the same (reviews/v3-consensus-changes.md#fingerprint-sample-inputs).
+  the output stays the same. The exceptions carry no separate input entry: the
+  samples whose input is already a recorded entry or whose output is a hash of
+  the input (the PoW blob, the empty Merkle root, the fixture transactions' ids
+  and signature messages, the golden PX transaction's id, binding, signature
+  message, weight and size, and the golden deploy's id, contract id and signature
+  message; reviews/v3-consensus-changes.md#fingerprint-sample-inputs).
 - The **identity fingerprint** covers the network name and id, the genesis block
   and id, the starting difficulty `D0` (a per-chain value, not a rule: testnet
   and mainnet have the same rules fingerprint) and the branch ids.
