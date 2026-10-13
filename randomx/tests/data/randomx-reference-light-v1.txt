@@ -45,3 +45,10 @@ bdf5f5b5a405b114c0e081ad5b5ec9c5d66e41653d099441def3243db89de164d8cfe95836d1abf5
 # IMUL_RCP (opcode 78, instruction 107) with imm32 = 0x200, which must be a NOP.
 # Reference output (interp, jit and auto modes alike), 2026-10-12.
 74657374206b657920303030 4733207263702070726f6265203236343736343232 344e12551fd2c74bef690027a37b3924520828a6aa62b085573c98bc053f187b
+# Line 26: IMUL_R source throwaway then a chained-multiply destination choice
+# (superscalar program 2), mutation run G 783:42: key "rxreach1" || LE64 2152473
+# || 16 zero bytes, input "This is a test". Program 2 of 8 throws an IMUL_R away
+# for want of a source; the throwaway count then lets the next IMUL_R chain a
+# multiply, so r5 is one of its two candidate destinations (with a wrong count,
+# only r0 is). Reference output (interp, jit and auto modes alike), 2026-10-13.
+727872656163683119d820000000000000000000000000000000000000000000 5468697320697320612074657374 95a05dbf5a7cc171eaba3cf9da8fbf07bbc57f6a6539e35a8d4d34d95471034a
