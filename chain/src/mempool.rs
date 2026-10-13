@@ -94,6 +94,29 @@ pub const MEMPOOL_MAX_BYTES: usize = 50_000_000;
 pub const MEMPOOL_MAX_PX_BYTES: usize = 64 * 1024 * 1024;
 /// Weight reserved for the coinbase in block templates.
 pub const COINBASE_RESERVE: u64 = 3_000;
+// F11-10: every valid transaction fits in a block template next to the
+// coinbase. The weight of a transfer, and of the v1 part of a PX or deploy
+// transaction, is at most `max_weight(n, k)` for its shape (`n ≤ MAX_INPUTS`
+// inputs, `k ≤ MAX_OUTPUTS` outputs; `Transfer::weight`,
+// `Transaction::weight`); the largest of these bounds stays below the block
+// weight limit less the coinbase reserve.
+const _: () = {
+    use blacksilk_tx::params::{max_weight, MAX_BLOCK_WEIGHT, MAX_INPUTS, MAX_OUTPUTS};
+    let mut largest = 0;
+    let mut n = 0;
+    while n <= MAX_INPUTS {
+        let mut k = 0;
+        while k <= MAX_OUTPUTS {
+            let w = max_weight(n, k);
+            if w > largest {
+                largest = w;
+            }
+            k += 1;
+        }
+        n += 1;
+    }
+    assert!(largest <= MAX_BLOCK_WEIGHT - COINBASE_RESERVE);
+};
 /// A pooled transaction expires once the next block's height reaches its
 /// admission height plus this many blocks (about 3 days at 120 s, Monero's
 /// `CRYPTONOTE_MEMPOOL_TX_LIVETIME`). The same value for every kind, deploys
