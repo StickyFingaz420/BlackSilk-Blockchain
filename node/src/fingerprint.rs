@@ -759,14 +759,8 @@ fn rule_samples(network: Network) -> Manifest {
     .list(&format!("{name} input (inputs, outputs)"), pairs(&shapes));
     let (ins, outs) = (1, 2);
     let lens = [1, 4_096, tx::MAX_PROGRAM_BYTES];
-    let b = blacksilk_px::vault::BUDGET;
-    let registration = |len: usize| {
-        Registration::new(
-            vec![0; len],
-            blacksilk_px::vault::BUDGET,
-            blacksilk_px::vault::OUT_WORDS,
-        )
-    };
+    let (b, out_words) = (blacksilk_px::vault::BUDGET, blacksilk_px::vault::OUT_WORDS);
+    let registration = |len: usize| Registration::new(vec![0; len], b, out_words);
     let name = "rules.sample.deploy_fee (1 in, 2 out; 1, 4 096, MAX_PROGRAM_BYTES)";
     m.list(
         name,
@@ -787,10 +781,7 @@ fn rule_samples(network: Network) -> Manifest {
         ]
         .map(|w| w as u64),
     )
-    .u(
-        &format!("{name} input.out_words"),
-        blacksilk_px::vault::OUT_WORDS,
-    );
+    .u(&format!("{name} input.out_words"), out_words);
     m.extend(transaction_samples().clone());
     m
 }
@@ -1220,35 +1211,13 @@ fn compute_transaction_samples() -> Manifest {
         spent: None,
     };
     // The verdict, the input hash of the transfer, and what the case changes
-    // besides the transfer: the chain view, the height or the rules.
-    let verdict = |tx: &Transfer, chain: &FixtureChain, height: u64, case_rules: &TxRules| {
-        let mut context = Manifest::new();
-        if let Some(k) = chain.spent {
-            context.bytes("spent key image", k.bytes());
-        }
-        if let Some(i) = chain.missing {
-            context.u("missing ring member", i);
-        }
-        if height != f.height {
-            context.u("height", height);
-        }
-        if case_rules.domain() != rules.domain() {
-            context.bytes("signature domain", &case_rules.domain().bytes());
-        }
-        if (case_rules.fee_per_weight, case_rules.max_block_weight)
-            != (rules.fee_per_weight, rules.max_block_weight)
-        {
-            context.list(
-                "fees (fee per weight, max block weight)",
-                [case_rules.fee_per_weight, case_rules.max_block_weight],
-            );
-        }
-        Sampled {
+    // besides the transfer ([`verdict_context`]).
+    let verdict =
+        |tx: &Transfer, chain: &FixtureChain, height: u64, case_rules: &TxRules| Sampled {
             verdict: format!("{:?}", validate_transfer(tx, chain, height, case_rules)),
             input: input_hash(&Transaction::from(tx.clone()).encode()),
-            context,
-        }
-    };
+            context: verdict_context(chain, height, case_rules),
+        };
     let variant = |change: &dyn Fn(&mut Transfer)| {
         let mut v = t.clone();
         change(&mut v);
@@ -1372,6 +1341,59 @@ fn compute_transaction_samples() -> Manifest {
     m
 }
 
+/// The context entries of a verdict case validated on `chain` at `height`
+/// under `rules`: what differs from the fixture's context (the full fixture
+/// view, the fixture's height and [`fixture_rules`]); empty for a case in the
+/// fixture's context. `FixtureChain` and `TxRules` are destructured, so a new
+/// field fails to compile here until its context entry is written.
+fn verdict_context(chain: &FixtureChain, height: u64, rules: &TxRules) -> Manifest {
+    let f = Fixture::get();
+    let FixtureChain {
+        outputs,
+        missing,
+        spent,
+    } = chain;
+    let TxRules {
+        network_id,
+        branch_id,
+        genesis_id,
+        fee_per_weight,
+        max_block_weight,
+    } = *rules;
+    let fixture = fixture_rules();
+    // Every case reads the fixture's ring members; a case that removes one
+    // says so in `missing`.
+    assert!(
+        std::ptr::eq(*outputs, &f.outputs),
+        "a verdict case reads other outputs than the fixture's"
+    );
+    let mut context = Manifest::new();
+    if let Some(k) = spent {
+        context.bytes("spent key image", k.bytes());
+    }
+    if let Some(i) = missing {
+        context.u("missing ring member", *i);
+    }
+    if height != f.height {
+        context.u("height", height);
+    }
+    let domain = SigDomain {
+        network_id,
+        branch_id,
+        genesis_id,
+    };
+    if domain != fixture.domain() {
+        context.bytes("signature domain", &domain.bytes());
+    }
+    if (fee_per_weight, max_block_weight) != (fixture.fee_per_weight, fixture.max_block_weight) {
+        context.list(
+            "fees (fee per weight, max block weight)",
+            [fee_per_weight, max_block_weight],
+        );
+    }
+    context
+}
+
 /// A sampled verdict and its input (fingerprint-sample-inputs): the
 /// [`input_hash`] of the sampled transaction's encoding, and the context
 /// entries of a case that changes the chain view, the height or the rules
@@ -1383,7 +1405,8 @@ struct Sampled {
 }
 
 impl Sampled {
-    /// A stateless or fixture-context verdict of `tx` (no context entry).
+    /// A stateless verdict of `tx` (no chain view, height or rules: no
+    /// context entry).
     fn of(verdict: String, tx: &Transaction) -> Self {
         Sampled {
             verdict,
@@ -1525,16 +1548,19 @@ fn px_transaction_samples(m: &mut Manifest) {
         &d.signature_message(rules.domain()),
     );
     let chain = FixtureChain::new(&f.outputs);
+    // Every deploy case is validated in the fixture's context (the transfer
+    // verdicts' `input.fixture` entries), so its context is empty; it is
+    // computed by the same `verdict_context`, which fails to compile when
+    // `FixtureChain` or `TxRules` gains a field.
     let deploy_verdict = |change: &dyn Fn(&mut PxDeploy)| {
         let mut v = d.clone();
         change(&mut v);
-        Sampled::of(
-            format!("{:?}", validate_deploy(&v, &chain, f.height, &rules)),
-            &Transaction::PxDeploy(Box::new(v)),
-        )
+        Sampled {
+            verdict: format!("{:?}", validate_deploy(&v, &chain, f.height, &rules)),
+            input: input_hash(&Transaction::PxDeploy(Box::new(v)).encode()),
+            context: verdict_context(&chain, f.height, &rules),
+        }
     };
-    // Every deploy case is validated in the fixture's context (the transfer
-    // verdicts' `input.fixture` entries).
     let deploy_cases: [(&str, Sampled); 5] = [
         ("valid", deploy_verdict(&|_| {})),
         ("fee + 1", deploy_verdict(&|v| v.fee += 1)),
