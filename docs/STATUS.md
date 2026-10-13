@@ -206,10 +206,34 @@ row says otherwise.
 | `D0` measured on the trial hardware (a genesis gate; an identity value since `cf2414e`) | Not implemented (owner task): `D0` is a placeholder (§1) | §1, `D0` row; decisions "Fingerprint sample inputs and D0 as identity" |
 | Labnet campaign | Partially implemented: W4-LAB (honest network to equilibrium, unequal partitions, a withholding miner, late-joiner discovery and address relay) on one machine; runs 3–4 have an undetermined build and are superseded by the quiet-window reruns, not yet run (ring topology, address relay, late joiner) | [labnet-w4 evidence](evidence/labnet-w4-2026-09-30/README.md); decisions "W4-LAB and RT-LAB", "W4-GUARD" |
 | Labnet reruns on the current tree (ring topology, address relay, late joiner, guarded binaries) | Not implemented: the last labnet runs are of 2026-09-29 (`64d89d4`, `9b04827`), before the v3 consensus changes | [labnet-w4 evidence](evidence/labnet-w4-2026-09-30/README.md) |
-| Supply audit with a PX pool, a multi-machine 72-hour run | Not implemented | [testnet.md](testnet.md) §7, §7.1 |
+| Supply audit with a PX pool, a multi-machine 72-hour run | Not implemented (owner-dependent: needs several machines; §5.1) | [testnet.md](testnet.md) §7, §7.1 |
 | Second threat-model round (consensus, network and operations, privacy; cross-check) | Partially implemented: the four internal reports are written; no consensus-rule bug was found; their P0 items are the open rows of this file | decisions "Threat model round 2" |
-| Genesis rehearsal | Not implemented | [waves.md](reviews/phase2-2026-09-27/waves.md) |
+| Genesis rehearsal | Not implemented (owner-dependent; §5.1) | [waves.md](reviews/phase2-2026-09-27/waves.md) |
 | CI on the release commit, all jobs green on GitHub | Not verified here: CI results live on GitHub, not in the repository | `.github/workflows/ci.yml` |
+
+### 5.1 Open owner decisions and owner tasks
+
+A consolidated list; each item's row holds its status and evidence, and this list
+adds nothing to them. None is decided or done.
+
+1. **RandomX `superscalar.rs` 742:24:** formally accept it as a documented
+   test-adequacy residual, or fund further research (the descent argument). §5,
+   row "Mutation-testing freeze gate"; [run G](evidence/mutation-runG-2026-10-12/README.md),
+   § Open items (a).
+2. **G8, the supply audit's mutation batch:** run it before the trial, or record a
+   decision that defers it. §5, row "Mutation-testing freeze gate".
+3. **`D0` measured on the trial hardware** (a genesis gate). §5, row "`D0` measured
+   on the trial hardware"; §1, row "Testnet `D0` measured on reference hardware".
+4. **Supply audit with a PX pool, a multi-machine 72-hour run** (needs the
+   machines). §5, row "Supply audit with a PX pool".
+5. **Genesis rehearsal.** §5, row "Genesis rehearsal".
+6. **Branch protection, required checks and CODEOWNERS** on GitHub. §1, row
+   "CODEOWNERS and branch protection".
+7. **Release signing:** the owner's signing key, signed tags and the second channel
+   for the release announcement (the trial uses the two-channel commit id). §1, row
+   "Release signing".
+8. **Authorizing the seven-device trial**, after the protocol freeze and the v3
+   genesis. §1, row "Seven-device trial".
 
 ## 6. Accepted limitations
 
