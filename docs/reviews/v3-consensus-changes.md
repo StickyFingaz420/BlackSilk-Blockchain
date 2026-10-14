@@ -41,6 +41,7 @@ they are never renamed. Index:
 - bs-zk-4 (zk parameter set: 20 query grinding bits; px fingerprint, golden PX fixture; BS-ZK-4)
 - px-deploy-row-caps (tx deploy rule, px shape check, node samples; B2-CAPS)
 - fingerprint-sample-inputs (node fingerprint manifest: sample inputs, key-schedule samples, D0 as identity; lead decision 2026-10-13)
+- fingerprint-stable-verdicts (tx `TxError::fingerprint_text`, node verdict samples: stable verdict text, no manifest value changes; lead decision 2026-10-14)
 
 New sections are appended at the end.
 
@@ -4500,3 +4501,16 @@ Applied as follow-up commits; no manifest value or pin changes.
   every sample records its input; the mutant sweeps added to item 11.
 - **Open, not done here:** a stable explicit verdict encoding before the freeze
   (item 12); a root `rust-toolchain.toml` is ruled out (decisions "Agent 45").
+
+## fingerprint-stable-verdicts: the verdict samples use a stable, hand-written text, not `Debug`
+
+Revision: none (the fingerprint is not a validity rule; no manifest value changes)
+
+Decision: "Stable verdict text for the fingerprint (lead decision, 2026-10-14)"
+(decisions.md), option (c′) of the lead's design memo, step 2 of the owner-approved
+freeze-gate plan. Branch `consensus/fingerprint-stable-verdicts` (from `b3f0529`).
+Internal engineering work, not an audit. No validity rule, validation order, manifest
+entry name or order, `Manifest` encoding or tag, `REVISIONS` entry, network id,
+genesis or D0 changes; every manifest value and every fingerprint pin stays the same.
+
+Work in progress: the evidence items are completed in a later commit of this branch.
