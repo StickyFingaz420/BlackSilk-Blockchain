@@ -415,8 +415,8 @@ impl PxTx {
     }
 
     /// `h_tx`: the binding of the PX proof (zk.md §5.2). It covers the whole
-    /// transaction except the prunable part (range proof, signatures, the
-    /// proof itself; so the validity window too), and the signature domain (network, branch and genesis
+    /// transaction, the validity window included, except the prunable part
+    /// (range proof, signatures, the proof itself), and the signature domain (network, branch and genesis
     /// ids, RT-14), so a proof is valid for exactly one transaction on one
     /// chain in one epoch. It is a public input of the proof, so the domain
     /// does not change the kernel.
