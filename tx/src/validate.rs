@@ -1828,6 +1828,17 @@ mod tests {
         }
     }
 
+    /// The runtime twin of the const assertion after `impl TxError`: `ALL`
+    /// lists every variant once, in `variant_index` order (a weakened const
+    /// loop would otherwise pass unnoticed).
+    #[test]
+    fn all_lists_every_variant_in_index_order() {
+        for (i, e) in TxError::ALL.iter().enumerate() {
+            assert_eq!(e.variant_index(), i);
+        }
+        assert_eq!(TxError::ALL.len(), GOLDEN.len());
+    }
+
     #[test]
     fn fingerprint_texts_are_distinct_and_well_formed() {
         let texts: Vec<String> = TxError::ALL.iter().map(TxError::fingerprint_text).collect();
