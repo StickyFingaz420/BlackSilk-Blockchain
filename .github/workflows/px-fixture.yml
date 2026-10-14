@@ -1,0 +1,104 @@
+name: PX fixture determinism
+
+# Regenerates both PX fixtures from their fixed seeds on a Linux runner and
+# compares them with the committed files (decisions, "Two-function PX
+# fixture: test-pinned, CI regenerates and compares hashes, never commits"):
+#
+# - the golden transfer fixture, node/src/px_fixture.{bin,txt}
+#   (node/tests/px_fixture.rs, regenerate_the_golden_px_fixture;
+#   consensus-pinned through the rules fingerprint);
+# - the two-function fixture, node/tests/fixtures/px_fixture_2fn.{bin,txt}
+#   (node/tests/px_fixture_2fn.rs, regenerate_the_two_function_px_fixture;
+#   test-pinned).
+#
+# Each generator writes into a temporary directory (PX_FIXTURE_OUT), never
+# into the checkout; the job prints the SHA-256 of every regenerated file next
+# to the committed file's and fails on any difference. Nothing is uploaded or
+# committed. Manual only: two PX proofs, the two-function one about 6.4 GB
+# peak, so the Guard step refuses a runner with less than 15 GB (15,360 MiB)
+# of MemTotal. The generators run one after the other, one test thread each.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # `shell: bash` runs every step as `bash -eo pipefail`, so a failing
+    # generator piped into tee fails its step.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Guard (runner RAM)
+        run: |
+          total=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
+          echo "MemTotal: $total MiB"
+          nproc
+          if [ "$total" -lt 15360 ]; then
+            echo "::error::runner has $total MiB of RAM, below 15,360 MiB: use a 16 GB runner"
+            exit 1
+          fi
+      - name: Build
+        run: cargo test --locked --release -p blacksilk-node --test px_fixture --test px_fixture_2fn --no-run
+      - name: Regenerate the transfer fixture
+        env:
+          PX_FIXTURE_OUT: ${{ runner.temp }}/px-fixture
+        run: |
+          /usr/bin/time -v -o "$RUNNER_TEMP/time-transfer.txt" \
+            cargo test --locked --release -p blacksilk-node --test px_fixture -- \
+            --ignored --exact regenerate_the_golden_px_fixture --nocapture --test-threads=1 | tee "$RUNNER_TEMP/transfer.log"
+          grep -q '^test result: ok\. 1 passed; 0 failed' "$RUNNER_TEMP/transfer.log" || {
+            echo "::error title=px-fixture::the transfer generator did not run exactly one passing test"
+            exit 1
+          }
+          grep -E 'Maximum resident set size|Elapsed \(wall clock\)' "$RUNNER_TEMP/time-transfer.txt"
+      - name: Regenerate the two-function fixture
+        env:
+          PX_FIXTURE_OUT: ${{ runner.temp }}/px-fixture
+        run: |
+          /usr/bin/time -v -o "$RUNNER_TEMP/time-2fn.txt" \
+            cargo test --locked --release -p blacksilk-node --test px_fixture_2fn -- \
+            --ignored --exact regenerate_the_two_function_px_fixture --nocapture --test-threads=1 | tee "$RUNNER_TEMP/2fn.log"
+          grep -q '^test result: ok\. 1 passed; 0 failed' "$RUNNER_TEMP/2fn.log" || {
+            echo "::error title=px-fixture::the two-function generator did not run exactly one passing test"
+            exit 1
+          }
+          grep -E 'Maximum resident set size|Elapsed \(wall clock\)' "$RUNNER_TEMP/time-2fn.txt"
+      - name: Compare with the committed files
+        run: |
+          out="$RUNNER_TEMP/px-fixture"
+          report="$RUNNER_TEMP/report.md"
+          bad=0
+          # The loop runs in this shell (not in a pipeline), so `bad` survives it.
+          echo "## PX fixture determinism ($(git rev-parse HEAD))" > "$report"
+          echo '```' >> "$report"
+          for pair in \
+            "node/src/px_fixture.bin px_fixture.bin" \
+            "node/src/px_fixture.txt px_fixture.txt" \
+            "node/tests/fixtures/px_fixture_2fn.bin px_fixture_2fn.bin" \
+            "node/tests/fixtures/px_fixture_2fn.txt px_fixture_2fn.txt"; do
+            read -r committed_path name <<< "$pair"
+            committed=$(sha256sum "$committed_path" | cut -d' ' -f1)
+            regenerated=$(sha256sum "$out/$name" | cut -d' ' -f1)
+            if [ "$committed" = "$regenerated" ]; then verdict=same; else verdict=DIFFERENT; bad=1; fi
+            echo "$committed_path committed $committed regenerated $regenerated ($(stat -c %s "$out/$name") bytes): $verdict" >> "$report"
+          done
+          echo '```' >> "$report"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$report"
+          if [ "$bad" != 0 ]; then
+            echo "::error title=px-fixture::a regenerated fixture differs from the committed file"
+            exit 1
+          fi
