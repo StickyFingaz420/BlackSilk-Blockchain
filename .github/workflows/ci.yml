@@ -293,8 +293,20 @@ jobs:
           toolchain: "1.98.1"
       - name: Build
         run: cargo test --locked --release -p blacksilk-node --test px_tamper --no-run
+      # `--exact` with the test's full path, and exactly one test must pass: a
+      # renamed test would otherwise run nothing and pass.
       - name: Full tamper sweep of the golden PX proof
-        run: cargo test --locked --release -p blacksilk-node --test px_tamper -- --ignored --nocapture --test-threads=1 full_px_proof_tamper_sweep
+        shell: bash
+        env:
+          ANNOTATE_TIMEOUT: 60m
+        run: |
+          set -o pipefail
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-node --test px_tamper -- \
+            --ignored --exact full_px_proof_tamper_sweep --nocapture --test-threads=1 | tee px-tamper.log
+          grep -q '^test result: ok\. 1 passed; 0 failed' px-tamper.log || {
+            echo "::error title=px-tamper::the full sweep did not run exactly one passing test"
+            exit 1
+          }
 
   # The consensus-pinned guest programs rebuild from source to their pinned
   # program ids and to the committed bytes (zkvm/guests/README.md), on Windows,
