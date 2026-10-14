@@ -179,25 +179,15 @@ const FIELDS: [Field; 8] = [
     ("poseidon", |b| &mut b.poseidon),
 ];
 
-/// The per-function maxima of the B2 research (V12), pinned: a cap or
-/// kernel-budget change shows up here. The vault fits with room on every
-/// field.
+/// The per-function maxima of the B2 research (V12): the caps consensus
+/// applies (`blacksilk_tx::params`) give, by this file's own computation,
+/// the table the B2 measurements use (`blacksilk_px::deploy_caps::
+/// largest_budget`, whose unit tests pin it numerically, record
+/// `v12-caps-single-definition`). The vault fits with room on every field.
 #[test]
 fn the_largest_allowed_budget_is_the_v12_table() {
     let top = largest_allowed();
-    assert_eq!(
-        [
-            top.cycles,
-            top.keys,
-            top.add,
-            top.bit,
-            top.lt,
-            top.shift,
-            top.mul,
-            top.poseidon
-        ],
-        [32_768, 16_384, 20_168, 7_192, 22_493, 7_367, 7_367, 948]
-    );
+    assert_eq!(top, blacksilk_px::deploy_caps::largest_budget());
     for (name, field) in FIELDS {
         let (mut a, mut b) = (VAULT_BUDGET, top);
         assert!(*field(&mut a) < *field(&mut b), "vault {name}");
@@ -325,7 +315,13 @@ fn program_and_image_caps() {
     assert!(!program_is_provable(&image_over), "image 2^14 + 1");
     let height_over = load((1 << 14) + 1);
     assert_eq!(program::height(&height_over, MIN_HEIGHT), 1 << 15);
-    assert!(!program_is_provable(&height_over), "program height 2^15");
+    // Its image is above 2^14 words too: the image clause refuses it. The
+    // program-table clause follows from the image clause for every program
+    // and cannot be tested alone (record `v12-caps-single-definition`, item 12).
+    assert!(
+        !program_is_provable(&height_over),
+        "program height 2^15 (refused by the image clause, which it implies)"
+    );
     assert!(program_is_provable(&Program::from_elf(VAULT_ELF).unwrap()));
     assert!(program_is_provable(
         &Program::from_elf(&other_elf()).unwrap()

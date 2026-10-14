@@ -39,7 +39,9 @@ source "$here/gate-range.sh"
 # lockfile waiver file and tools/tpgate (waived likewise, and only within the
 # waiver horizon, gate-range.sh). RT-TPGATE3 added every .gitattributes (it
 # decides how git and GitHub show third_party/ changes) and the cargo
-# configuration pins.
+# configuration pins. v12-caps-single-definition added px/src/deploy_caps.rs,
+# the single definition of the deploy-time row caps and the deploy rules on
+# them (tx re-exports them).
 is_consensus_path() {
   case "$1" in
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
@@ -53,6 +55,7 @@ is_consensus_path() {
     chain/src/block.rs | chain/src/emission.rs | chain/src/manager/*) return 0 ;;
     px/*.elf | px/*.id) return 0 ;;
     px/src/prove.rs | px/src/state.rs | px/src/tree.rs) return 0 ;;
+    px/src/deploy_caps.rs) return 0 ;; # the V12 deploy caps and rules
     crypto/* | randomx/* | third_party/*) return 0 ;;
     .github/scripts/consensus-gate.sh | .github/scripts/gate-range.sh) return 0 ;;
     .github/scripts/lockfile-gate.sh | .github/scripts/third-party-gate.sh) return 0 ;;

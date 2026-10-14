@@ -8,6 +8,8 @@
 //! - [`wallet`]: keys from the wallet seed, record creation, witnesses;
 //! - [`delivery`]: hybrid (Ristretto + ML-KEM-768) record encryption;
 //! - [`prove`]: proving and verifying transfers with the kernel program;
+//! - [`deploy_caps`]: the deploy-time row caps of a registered function
+//!   (record `px-deploy-row-caps`) and the deploy rules on them;
 //! - [`vault`]: the reference private contract (a hash-locked vault), host
 //!   side;
 //! - [`share`]: sharing a record's opening off chain, sealed to an address;
@@ -19,6 +21,7 @@
 #![forbid(unsafe_code)]
 
 pub mod delivery;
+pub mod deploy_caps;
 pub mod fingerprint;
 pub mod perm;
 pub mod prove;

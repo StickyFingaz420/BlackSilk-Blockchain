@@ -850,48 +850,17 @@ pub fn check_px_balance(tx: &PxTx) -> Result<(), TxError> {
     }
 }
 
-/// Whether a function with budget `b` is within the deploy-time row caps
-/// (record `px-deploy-row-caps`, freeze gate B2; replaces R7-5's
-/// "provable alone" rule):
-/// - its own tables: `cycles ≤ 2^PX_FN_LOG_CYCLES`, `keys ≤ 2^PX_FN_LOG_KEYS`;
-/// - the tables shared with the kernel (ALU and Poseidon2): with the kernel's
-///   budget for the most functions, `K = kernel_budget(MAX_FN)`,
-///   `K.x + MAX_FN·b.x ≤ 2^cap` in checked arithmetic.
-///
-/// So any `MAX_FN` registered functions fit together with the kernel, every
-/// PX table stays at or below 2^16 rows, and the widest PX proof stays below
-/// 3.8 MB (about 3.70 MB expected, 3.78 MB worst over the query positions,
-/// by the B2 model). The function's program and image are capped separately
-/// ([`program_is_provable`]).
-pub fn budget_is_provable(b: &Budget) -> bool {
-    let k = blacksilk_px::prove::kernel_budget(blacksilk_px_core::call::MAX_FN);
-    let within = |x: usize, kx: usize, log: u32| {
-        x.checked_mul(blacksilk_px_core::call::MAX_FN)
-            .and_then(|s| s.checked_add(kx))
-            .is_some_and(|s| s <= 1usize << log)
-    };
-    b.cycles <= 1usize << PX_FN_LOG_CYCLES
-        && b.keys <= 1usize << PX_FN_LOG_KEYS
-        && within(b.add, k.add, PX_LOG_ADD)
-        && within(b.bit, k.bit, PX_LOG_BIT)
-        && within(b.lt, k.lt, PX_LOG_LT)
-        && within(b.shift, k.shift, PX_LOG_SHIFT)
-        && within(b.mul, k.mul, PX_LOG_MUL)
-        && within(b.poseidon, k.poseidon, PX_LOG_POSEIDON)
-}
-
-/// Whether a registered program's own fixed tables are within the deploy
-/// caps (record `px-deploy-row-caps`): its program table
-/// (`program::height`) at most `2^PX_FN_LOG_PROGRAM` rows and its image
-/// table (the initial image, code words, data and registers, padded to a
-/// power of two) at most `2^PX_FN_LOG_IMAGE` rows. The image holds every
-/// code word, so in practice the image bound is the tighter one.
-pub fn program_is_provable(p: &blacksilk_zkvm::Program) -> bool {
-    use blacksilk_zkvm::air::{program, trace, MIN_HEIGHT};
-    let image = trace::image(p).len().max(MIN_HEIGHT).next_power_of_two();
-    program::height(p, MIN_HEIGHT) <= 1usize << PX_FN_LOG_PROGRAM
-        && image <= 1usize << PX_FN_LOG_IMAGE
-}
+/// The deploy rules on a function's budget and program (record
+/// `px-deploy-row-caps`, freeze gate B2; replaces R7-5's "provable alone"
+/// rule): defined once, in `blacksilk_px::deploy_caps` with the caps they
+/// apply (record `v12-caps-single-definition`).
+/// - `budget_is_provable`: its own tables (`cycles ≤ 2^PX_FN_LOG_CYCLES`,
+///   `keys ≤ 2^PX_FN_LOG_KEYS`) and, for the tables shared with the kernel,
+///   `K.x + MAX_FN·b.x ≤ 2^cap` with `K = kernel_budget(MAX_FN)`, in checked
+///   arithmetic;
+/// - `program_is_provable`: its program table at most `2^PX_FN_LOG_PROGRAM`
+///   rows and its padded image at most `2^PX_FN_LOG_IMAGE` rows.
+pub use blacksilk_px::deploy_caps::{budget_is_provable, program_is_provable};
 
 /// Structure of a deploy: the transfer rules on its v1 part, the exact fee
 /// ([`deploy_fee`]), supported ABIs, provable budgets, and loadable, distinct

@@ -1917,3 +1917,30 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
 - **Red team:** internal red team (2026-10-14): merge with fixes (F1 wording: a
   variant left out of `ALL` still compiles, so `ALL` is complete by convention; F2
   status), applied; merged into rebuild/core after this review.
+
+## V12 caps: one definition (lead decision, 2026-10-14)
+
+- **Why:** the V12 deploy caps (record `px-deploy-row-caps`) had several copies that
+  nothing tied together: the ten constants in tx/src/params.rs, the cycles cap again as
+  `px::prove::FN_RUN_LOG_CYCLES`, and in the B2 measurement example the ten caps, both
+  deploy rules and the largest-budget table restated (px cannot depend on tx), with the
+  table repeated as a literal in tx/tests/deploy_rules.rs. A tx cap change would have
+  left the example measuring the old caps with every test passing (STATUS, freeze gate
+  B2 row). Step 3 of the owner-approved freeze-gate plan.
+- **Decision:** one definition in `blacksilk_px::deploy_caps` (px/src/deploy_caps.rs):
+  the ten caps, `budget_is_provable` and `program_is_provable` (moved verbatim from
+  tx/src/px.rs) and `largest_budget()`. tx re-exports them under their old paths,
+  `prove::FN_RUN_LOG_CYCLES` is the cycles cap itself, and the example imports them.
+  One numeric golden pin of the caps and the table, in the module's unit tests; the tx
+  test compares its own computation with the shared table. px/src/deploy_caps.rs
+  becomes a consensus path of the commit gate.
+- **Rejected:** a cross-crate pin of the restated copy (two definitions remain, and
+  the pin could live only in tx); the caps in `blacksilk-px-core` (the rules need
+  `kernel_budget` and zkvm helpers, which the `no_std` guest crate must not take); a
+  new crate (new dependency edges).
+- **Scope:** no cap value, rule, verdict, proof, manifest value or pin changes; no new
+  dependency edge. Record: docs/reviews/v3-consensus-changes.md#v12-caps-single-definition
+  (`Revision: none (no rule or value change)`).
+- **Red team:** internal red team (2026-10-14): merge with fixes (F1 status wording,
+  F2 test message, F3 recorded as open), applied; merged into rebuild/core after this
+  review.
