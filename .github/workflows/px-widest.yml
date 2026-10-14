@@ -108,7 +108,7 @@ jobs:
           total=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
           echo "MemTotal: $total MiB"
           if [ "$total" -lt 15360 ]; then
-            echo "::error::runner has $total MiB of RAM, below 15,360 MiB: an OOM here would not measure v12mem; use a 16 GB runner"
+            echo "::error::runner has $total MiB of RAM, below 15,360 MiB: an OOM here would not measure the $CONFIG shape; use a 16 GB runner"
             exit 1
           fi
           if [ "$COUNT" = 0 ] && [[ "$CONFIG" == v12* ]]; then
@@ -168,7 +168,7 @@ jobs:
             awk '/Maximum resident set size/ {printf "peak RSS %d MiB\n", $NF / 1024}' out/time.txt || true
             cat out/status.txt 2>/dev/null || echo "prover exit status: not recorded (the step was cut off or the runner died)"
             echo '```'
-            echo "Notes: memory in MiB (base peak 6,446 MB; v12mem model 10,410 to 13,060 MiB, measured 10,585 MiB; v12size model L 5,285 MiB)."
+            echo "Notes: memory in MiB (base peak 6,446 MB; v12mem model 10,410 to 13,060 MiB, measured 10,585 MiB; v12size model L 5,285 MB, model units)."
             echo "An OOM that kills the runner agent may leave no report and no oom line, so"
             echo "\"no OOM lines\" is conclusive only when the prover exit status above was recorded."
           } | tee -a "$GITHUB_STEP_SUMMARY"
