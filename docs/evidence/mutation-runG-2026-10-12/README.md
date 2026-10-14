@@ -710,8 +710,8 @@ These are stated as open. None is exempt.
   (and on opt-in AVX2 or AVX-512 builds) the two mutants make the prover panic, at an
   underflow or at `grind`'s assertion of the verifier's `check_witness`; they never
   give an invalid proof, since the witness is checked with the verifier's code before
-  use. **Closed 2026-10-14:** on the arm64 runner both mutants are killed (CI job
-  `arm64`, run 38521517518 at `16d4fe9`; each fails
+  use. **Resolved for aarch64 (2026-10-14):** on the arm64 runner both mutants are
+  killed (CI job `arm64`, run 38521517518 at `16d4fe9`; each fails
   `the_prover_grinds_the_smallest_valid_nonce` and the other four non-ignored
   grinding tests). The width-1 exemption stands for x86_64 builds only; opt-in
   AVX2/AVX-512 x86_64 builds are not run in CI.
