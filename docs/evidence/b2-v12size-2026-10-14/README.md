@@ -15,8 +15,10 @@ not the size-widest shape. This run proves and verifies the size-widest shape tw
 3,700,725 bytes (sd 5,092) for this shape, so the measurements lie +0.09 % and -0.17 %
 from it, and both are below the 3.8 MB budget (by 95,969 and 105,409 bytes) and below
 the 4 MiB `MAX_PROOF_BYTES`. The size model reproduces both proofs byte-exactly.** Peak
-RSS 5,410 MiB, no swap, no OOM. The 3,780,959-byte worst case over the query positions
-remains a model figure: it is a bound over positions no two draws can test.
+RSS 5,410 MiB, no swap, no OOM. The measured height set is the widest any two-function
+statement can reach (32 possible sets, all reached and ranked; see "Why"), so what
+remains a model figure is only the query-draw variation: the 3,780,959-byte worst case
+over the query positions is a bound no two draws can test.
 
 ## Run
 
@@ -72,11 +74,34 @@ outweigh the sibling values the finer folding saves: the non-digest bytes of v12
 (3,306,469) are 9,640 bytes **fewer** than v12mem's (3,316,109), and the proof is larger
 through its digests (12,423 and 12,128 digests against about 11,180).
 
-The kernel fixes heights 2^8 (output, blind), 2^12 (program, image), 2^13 (memory
-init) and 2^16 (byte, CPU). The missing heights are 2^9, 2^10, 2^11, 2^14 and 2^15. The
-vault's own tables cannot go below 2^11, so 2^9 and 2^10 need a smaller program.
+**The widest set over every program, not only the echo search.** In every two-function
+statement the kernel's tables are fixed: 2^8 (output; and the blind table), 2^12
+(program, image), 2^13 (memory init, the fixed `kernel_budget(2)` keys) and 2^16 (byte,
+and the CPU table at 35,600 cycles). No table is below 2^8 (`MIN_HEIGHT`) or above 2^16
+(the PX5 shape check). Only 2^9, 2^10, 2^11, 2^14 and 2^15 are free, so there are
+exactly 2^5 = 32 possible height sets, whatever the programs and budgets; the search
+reached all 32 and ranked them by expected size (the full set first, "Shape" below).
+The proof bytes depend on the height set only, apart from the pruned-digest variation
+of the query draw:
+- the table widths are fixed per table kind (the kernel and two function slots always
+  give the same 23 tables);
+- field elements encode in a fixed 4 bytes (Plonky3 0.7.0 `MontyField31` serializes
+  non-human-readable formats as `[u8; 4]`, not as a postcard varint);
+- the quotient chunk count of a table follows from its constraint degree, not its
+  height (the same counts appear at every height in the "Shape and admission" lines of
+  both v12mem and v12size, e.g. 16 for a function CPU table at 2^15 and at 2^8);
+- the hidden codewords are pinned (`NUM_RANDOM_CODEWORDS` = 8 per committed matrix) and
+  the FRI schedule is pinned to `honest_fri_schedule` of the degree bits (R4-02);
+- and, as a check of all of this, the size model, which takes a 2026-10-04 vault-pair
+  proof and changes only its degree bits, schedule and digest counts, reproduces both
+  measured v12size proofs byte-exactly.
 
-**Programs.** Both functions run a synthetic **echo program** (13 instructions, and 14
+So the measured shape has the widest height set any program can reach under V12; only
+the query-draw variation remains a model bound. (Statements with fewer functions have
+fewer tables, and so fewer opened values, from the same height range.) The vault's own
+tables cannot go below 2^11, so 2^9 and 2^10 need a smaller program than the vault.
+
+**Programs.** Both functions run a synthetic **echo program** (13 code words, and 14
 with one padding NOP for a distinct program id): it reads a word count and that many
 private-input words, writes each to its public output and halts with exit code 0. It
 is fed the kernel's function prefix, so it is a valid function with no contract logic:
@@ -156,7 +181,11 @@ has the searched heights.
 - **Exactness.** With the budget-cap study's base proof (the `914b74f` vault pair) and
   the measured degree bits, schedule and digest counts, the size model's `synth`
   reproduces both measured lengths byte-exactly (`freeze_b2_b3 model` on the two
-  `b2.csv` rows: "size model exact on 2 real two-function proofs"); its expectation from
+  `b2.csv` rows: "size model exact on 2 real two-function proofs"). This check was a
+  **local run** on the development machine, not part of the CI run; its output, the
+  base proof's path and sha256 (`2a9eaefe…`, the `base.bin` entry of the 2026-10-04
+  `proofs.sha256`) and the CSV's sha256 are in
+  [model-local-2026-10-14.txt](model-local-2026-10-14.txt). Its expectation from
   that base equals the one computed from the new proofs (3,700,725 bytes) and the
   worst case is the study's figure to the byte. The digest counts agree with uniform
   query positions (12,275.5 mean of the two against 12,321.6 modelled, sd 158.8; two
@@ -181,12 +210,13 @@ the B2 size quantity is **measured on one runner, one run (two proofs)**.
 
 - **One run, one runner, two proofs.** Two query draws of one shape. The proof length
   varies with the query positions (sd about 5 KB); the worst case is a model bound.
-- **The size-widest claim rests on the size model.** That the full height set is the
-  widest is a model result (exact on every measured two-function proof, now including
-  these two) plus the search: the full set has the longest possible schedule, and the
-  ranking of the 32 reachable sets puts it first. Other realizations of the same set
-  (other programs, other tables at the same heights) have the same length by the model;
-  none was measured.
+- **What is a model and what is not.** That the measured height set is the widest is
+  an enumeration (32 possible sets, all reached and ranked) plus the argument in "Why"
+  that the bytes depend on the height set only; the ranking itself uses the size
+  model's expectation over query draws, which is exact for given digest counts. Other
+  realizations of the same set (other programs, other tables at the same heights) have
+  the same non-digest bytes by that argument; none was measured. The worst case over
+  the query positions (3,780,959 bytes) is a bound, not a measurement.
 - **The echo program is synthetic.** It is admitted by the V12 cap rules; the rest of a
   deploy (ELF form, ABI version, fee) was not exercised for it, and a real contract
   would carry logic. It is the cheapest statement with this height set, not a

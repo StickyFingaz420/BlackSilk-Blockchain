@@ -84,29 +84,29 @@ Prove and verify (one process, one proof at a time)| prover exit status: 0
 
 === Report: /usr/bin/time -v, b2.csv, OOM check, memory samples [log lines 783-857]
 Report| --- /usr/bin/time -v
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
-Report| 
+Report| 	Command being timed: "target/release/examples/freeze_b2_b3 b2 v12size 2 out"
+Report| 	User time (seconds): 1158.55
+Report| 	System time (seconds): 4.82
+Report| 	Percent of CPU this job got: 383%
+Report| 	Elapsed (wall clock) time (h:mm:ss or m:ss): 5:03.21
+Report| 	Average shared text size (kbytes): 0
+Report| 	Average unshared data size (kbytes): 0
+Report| 	Average stack size (kbytes): 0
+Report| 	Average total size (kbytes): 0
+Report| 	Maximum resident set size (kbytes): 5540524
+Report| 	Average resident set size (kbytes): 0
+Report| 	Major (requiring I/O) page faults: 0
+Report| 	Minor (reclaiming a frame) page faults: 569152
+Report| 	Voluntary context switches: 38818
+Report| 	Involuntary context switches: 239748
+Report| 	Swaps: 0
+Report| 	File system inputs: 0
+Report| 	File system outputs: 7256
+Report| 	Socket messages sent: 0
+Report| 	Socket messages received: 0
+Report| 	Signals delivered: 0
+Report| 	Page size (bytes): 4096
+Report| 	Exit status: 0
 Report| --- b2.csv
 Report| kind,n_fn,class,index,total,nondigest,batch_digests,step_arity,step_digests,degree_bits,prove_s,verify_ms
 Report| b2,2,v12size,0,3704031,3306469,1344;1344;1344;1344,1;1;1;1;1;1;1;1;3,1236;1128;1020;912;804;696;588;480;183,17;13;13;14;17;16;15;16;12;12;9;9;9;9;10;9;9;9;9;11;9;9;9,148.00,364.3;364.6;364.7

@@ -1040,7 +1040,9 @@ px-deploy-row-caps, merged in f2b7fbd) bring the widest shape to about 3.70 MB b
 (3.78 MB worst over the query positions); 2 such proofs fit in a block. Prover
 memory is modelled at 10.4–13.1 GB (docs/evidence/budget-cap-2026-10-04/) and measured
 at 10,585 MiB for the memory-widest pair, one run on one 16 GB runner
-(docs/evidence/b2-v12mem-2026-10-10/); the size-widest shape is not measured.
+(docs/evidence/b2-v12mem-2026-10-10/); the size-widest shape measured 3.69–3.70 MB
+(two proofs, one run, docs/evidence/b2-v12size-2026-10-14/), its worst case over the
+query positions 3.78 MB by model.
 
 ## 11. Security notes for operators
 
