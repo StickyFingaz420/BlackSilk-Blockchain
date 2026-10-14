@@ -1941,3 +1941,6 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
 - **Scope:** no cap value, rule, verdict, proof, manifest value or pin changes; no new
   dependency edge. Record: docs/reviews/v3-consensus-changes.md#v12-caps-single-definition
   (`Revision: none (no rule or value change)`).
+- **Red team:** internal red team (2026-10-14): merge with fixes (F1 status wording,
+  F2 test message, F3 recorded as open), applied; merged into rebuild/core after this
+  review.

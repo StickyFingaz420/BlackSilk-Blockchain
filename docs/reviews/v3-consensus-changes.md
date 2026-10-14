@@ -4875,8 +4875,20 @@ deploy verdict, proof, manifest entry name, order or value, fingerprint pin,
     - tx/tests/deploy_rules.rs keeps two literal checks of single values
       (`(PX_FN_LOG_PROGRAM, PX_FN_LOG_IMAGE) == (14, 14)` and the Poseidon2 boundary
       948/949) next to the shared pin; they predate this change.
+    - The tests' 2^15-row program (px `program_rule_boundaries`, tx
+      `program_and_image_caps`) is refused by the image clause, since its image is
+      above 2^14 words as well; the program-table clause cannot be tested alone
+      (red team F2: the assertion messages say so).
+    - Gate gap (red team F3, not changed here): px/src/lib.rs (its `pub mod` lines)
+      and px/Cargo.toml are not consensus-gated paths, so a `#[path]` attribute on a
+      module line or a dependency change could redirect a gated module
+      (px/src/deploy_caps.rs, and likewise prove.rs, state.rs, tree.rs) without a
+      `Consensus-Change` trailer. Follow-up: consider gating px/src/lib.rs and the
+      crate manifests of the consensus crates.
 13. **Identity impact.** None: no identity entry, network id, genesis or D0 changes.
 14. **Documentation.** This section; decisions.md; docs/STATUS.md (the
     px-deploy-row-caps row and the freeze gate B2 row).
 15. **Review status.** Implemented and verified by the implementing agent under the
-    lead's decision; internal red team pending. Not merged.
+    lead's decision; internal red team (2026-10-14): merge with fixes (F1 status
+    wording, F2 test message, F3 recorded as open), applied; merged into rebuild/core
+    after this review.
