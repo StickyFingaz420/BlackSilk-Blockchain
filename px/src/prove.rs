@@ -80,17 +80,17 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
 }
 
 /// The tallest table of any PX statement, log2 (record `px-deploy-row-caps`):
-/// the byte table's height, which the deploy-time caps (`blacksilk-tx`
-/// params `PX_FN_LOG_*`, `PX_LOG_*`) keep every other table within.
+/// the byte table's height, which the deploy-time caps
+/// ([`crate::deploy_caps`]) keep every other table within.
 /// `check_shape_bits` refuses a statement with a taller table.
 pub const PX_MAX_LOG_HEIGHT: usize = 16;
 
 /// log2 of the deploy cap on a registered function's cycles (record
-/// `px-deploy-row-caps`; `blacksilk-tx` params `PX_FN_LOG_CYCLES`, which a
-/// compile-time `const` assertion in `tx/src/params.rs` requires to be equal):
-/// [`prove`] runs a function at most one cycle past
-/// `max(budget.cycles, 2^FN_RUN_LOG_CYCLES)`. Prover-side only.
-pub const FN_RUN_LOG_CYCLES: u32 = 15;
+/// `px-deploy-row-caps`): [`crate::deploy_caps::PX_FN_LOG_CYCLES`] itself
+/// (record `v12-caps-single-definition`), which `blacksilk-tx` re-exports as
+/// `params::PX_FN_LOG_CYCLES`. [`prove`] runs a function at most one cycle
+/// past `max(budget.cycles, 2^FN_RUN_LOG_CYCLES)`. Prover-side only.
+pub const FN_RUN_LOG_CYCLES: u32 = crate::deploy_caps::PX_FN_LOG_CYCLES;
 
 /// The proof decoder's limits for PX statements (RT-FUZZ-1,
 /// `blacksilk_zk::bounds`): the envelope's, with the table count of the
