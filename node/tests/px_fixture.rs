@@ -20,14 +20,17 @@
 //! which rewrites both files from fixed seeds. Since the `p3-batch-stark`
 //! patch (third_party/README.md, PXDET-1) the PX transaction is reproducible
 //! too: two regenerations at different thread counts gave identical bytes.
-//! The checked-in fixture was made before that patch, so a regeneration
-//! gives a different, equally valid transaction. Never regenerate in CI. A regenerated
-//! fixture changes the rules fingerprint and needs the re-pin procedure
-//! (docs/reviews/v3-consensus-changes.md#fingerprint-v3).
+//! The checked-in fixture was regenerated after that patch (commit `ee0e96f`,
+//! BS-ZK-4, after the PXDET-1 merge `451505e`; two runs gave identical
+//! bytes then). A regeneration from today's code is expected to reproduce it
+//! byte for byte, but that has not been re-checked since. Never regenerate in
+//! CI. A regenerated fixture with other bytes changes the rules fingerprint and needs the
+//! re-pin procedure (docs/reviews/v3-consensus-changes.md#fingerprint-v3).
 //!
 //! The other tests verify the checked-in proof (no proving): the full
 //! verdicts (PX5 included) on the transaction and on its ciphertext `R`
-//! variants.
+//! variants. `tests/px_tamper.rs` sweeps single-byte changes of the proof
+//! and of its statement (`h_tx`, the public words).
 
 use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
