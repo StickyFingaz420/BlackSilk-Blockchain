@@ -4456,7 +4456,8 @@ the rules manifest, the identity manifest and every fingerprint pin change.
       decision (decisions "Agent 45": a root pin broke GNU-host machines, per SX2;
       the pin stays in CI, Docker and the guests). So a local build with another
       toolchain could print other verdict text and other fingerprints. A toolchain
-      bump must re-check the pins. Open.
+      bump must re-check the pins. Open. (Closed 2026-10-14 by
+      `fingerprint-stable-verdicts`: the verdict text is written by hand.)
     - Samples whose input is not cheaply re-derivable independently (the fixture
       variants) are bound by a hash of their encoding: the recompute checks the valid
       fixtures' hashes from the checked-in bytes, not each variant's.
@@ -4513,4 +4514,167 @@ Internal engineering work, not an audit. No validity rule, validation order, man
 entry name or order, `Manifest` encoding or tag, `REVISIONS` entry, network id,
 genesis or D0 changes; every manifest value and every fingerprint pin stays the same.
 
-Work in progress: the evidence items are completed in a later commit of this branch.
+1. **Problem.** The rules fingerprint pins 36 verdict samples (21 transfer, 10
+   stateless PX, 5 deploy) as text. Until this change that text was
+   `format!("{:?}", result)` of `Result<(), TxError>` (node/src/fingerprint.rs at
+   `b3f0529`, lines 1217, 1474-1481 and 1559), that is, the **derived `Debug`** of
+   `TxError` and the standard library's `Debug` of `Result`. The standard library does
+   not keep that output stable across Rust versions (item 3). The rules fingerprint
+   therefore depended on the toolchain: a build with another compiler could print
+   other verdict text and other fingerprints although no rule changed, and an operator
+   comparing fingerprints would see a false mismatch. Consensus itself (block and
+   transaction validity) was never affected. Open since RTFP3-4; open item of
+   `fingerprint-sample-inputs` (item 12) and of mutation run G (§ Open items (g)).
+2. **Demonstrated failure.** In a scratch copy of `b3f0529` (`git archive`), `TxError`'s
+   derived `Debug` was replaced by a hand-written `Debug` impl that differs from the
+   derived one only in spacing (no space between a struct variant's name and `{`). No
+   rule, validation order or manifest entry changed. Release build, then
+   `--print-manifest` on every network: the 19 verdict entries whose error is a struct
+   variant changed (11 transfer, 4 stateless PX, 4 deploy), and with them
+   `rules_encoding`, `rules_fingerprint` and `consensus_fingerprint` (testnet and
+   mainnet rules `2a8e5466…` → `3d93d9c2…`, regtest `ba12487a…` → `7b72c2be…`); no
+   identity entry changed. `cargo test --locked --release -p blacksilk-node --test
+   deploy_configs` failed there (`consensus_fingerprints_are_pinned`: "Testnet:
+   [consensus, rules, identity] changed"). The **same scratch change on this branch**
+   (`06e183b`): the three manifest bodies are byte-identical to the unmodified
+   branch's and `deploy_configs` passes, 15 of 15: the `Debug` impl no longer reaches
+   the fingerprint. A toolchain whose derived `Debug` actually differs was not
+   available; the spacing change stands in for one.
+3. **Prior art.** The documentation of `std::fmt::Debug`, read in the installed
+   toolchain's documentation (`share/doc/rust/html/std/fmt/trait.Debug.html` of
+   `stable-x86_64-pc-windows-gnu`, rustc 1.98.1; the `rust-src` component is not
+   installed, so the library source was not read), section "Stability": "Derived
+   `Debug` formats are not stable, and so may change with future Rust versions.
+   Additionally, `Debug` implementations of types provided by the standard library
+   (`std`, `core`, `alloc`, etc.) are not stable, and may also change with future
+   Rust versions." The second sentence covers `Result`'s `Ok(..)` and `Err(..)` too,
+   so `verdict_text` writes those by hand as well. In this repository: `KERNEL_ERRORS`
+   and `kernel_error_index` in px/src/fingerprint.rs (RTFP3-12), an exhaustive index
+   match and a const assertion that the list agrees with it, the pattern followed
+   here. Not checked: how other chains print error verdicts in their consensus test
+   vectors.
+4. **Alternatives.**
+   - (a) Numeric verdict codes (the variant index and the fields as integers):
+     rejected, every verdict entry and every pin would move (a re-pin for no gain in
+     what the samples catch), and the entries would lose their readable names.
+   - (b) A new `Value::Verdict` manifest tag: rejected, it changes the `Manifest`
+     encoding (px/src/fingerprint.rs), the independent recompute and every pin.
+   - A root `rust-toolchain.toml`: ruled out (decisions "Agent 45": a root pin broke
+     GNU-host machines, per SX2); it would also only pin the toolchain, not keep the
+     text across a later bump.
+   - Status quo (derived `Debug`, toolchain pinned in CI, Docker and the guests):
+     rejected, the fingerprint must not depend on the compiler.
+   - **Chosen (c′):** a hand-written, exhaustive formatter that reproduces today's
+     text byte for byte, so no manifest value and no pin changes.
+5. **Affected components.**
+   - tx/src/validate.rs: `TxError::fingerprint_text(&self) -> String`, one arm per
+     variant (44, no wildcard), literal variant names, fields as unsigned decimal via
+     integer `Display`, the grammar `Name`, `Name(d)`, `Name { f1: d1, f2: d2 }`; its
+     doc comment states the grammar and that it is fingerprint-pinned and never
+     derived from `Debug`. `const fn variant_index(&self) -> usize` (exhaustive) and
+     `const ALL: [TxError; 44]` (every variant once; field `k` of variant `i` is
+     `1000 + 10·i + k`, so all field values in the list differ), tied by a const
+     assertion (`ALL[i].variant_index() == i`). `#[derive(Debug)]` stays, for
+     diagnostics only.
+   - node/src/fingerprint.rs: `verdict_text(Result<(), TxError>) -> String`
+     (`Ok(())` or `Err(<fingerprint_text>)`) replaces the three `format!("{:?}")`
+     calls; the `transaction_samples` doc comment says so.
+   - Unchanged: every validity rule and validation order, every manifest entry name
+     and order, the `Manifest` encoding and tags, `REVISIONS`, the network ids,
+     genesis, D0, px/src/fingerprint.rs.
+6. **Activation.** None: the fingerprint is not a validity rule and no manifest value
+   changes.
+7. **Compatibility.** Nothing changes for operators. The release `--print-manifest`
+   bodies (every line after the first, which names the build commit) at `b3f0529` and
+   at `06e183b`, built in separate target directories, are byte-identical on all three
+   networks (item 11), so builds before and after this change print the same
+   fingerprints.
+8. **Reorg, wallet, mining, P2P.** None. A later toolchain bump no longer moves the
+   fingerprints through the verdict samples.
+9. **Vectors.** No new vector. The texts of all 44 variants are a written-out table in
+   the tx tests; the 36 manifest verdicts are written out in the node test. The
+   independent standard-library recompute of `fingerprint-sample-inputs` (item 9) was
+   rerun on the new manifests (item 11).
+10. **Tests.**
+    - tx/src/validate.rs (`--lib`): `fingerprint_texts_are_the_golden_values` (the
+      exact text of every `ALL` entry, written out);
+      `all_lists_every_variant_in_index_order` (the run-time twin of the const
+      assertion); `fingerprint_texts_are_distinct_and_well_formed` (all texts
+      distinct, none `Ok(())`, every name `[A-Za-z]+` and pairwise distinct).
+    - node/src/fingerprint.rs: `samples_are_the_golden_values` checks all 36 verdict
+      entries by their full text (was `Ok(())` and an `Err(<class>` prefix) and that
+      the manifest has exactly 36 verdict entries.
+    - No permanent test compares `fingerprint_text` with `format!("{:?}")`: it would
+      bring the toolchain dependence back. That comparison was run **once**, as
+      implementation evidence (a scratch test, not committed), on rustc 1.98.1: for
+      all 44 `ALL` entries `fingerprint_text` equals `{:?}` of the error and
+      `Err(<fingerprint_text>)` equals `{:?}` of `Err(e)`, and `{:?}` of `Ok(())` is
+      `Ok(())`: all equal.
+11. **Suite results** (2026-10-14, 4-core i7-6700, 16 GB, Windows 10, toolchain
+    1.98.1; scratch records in the lead's scratch area, `C:/bszkeval/g11-scratch/sv/`):
+    - **Byte identity:** `blacksilk-node --print-manifest` at `b3f0529` (release build
+      of a `git archive` copy, own target directory) and at `06e183b` (release build of
+      the branch, own target directory): bodies byte-identical on testnet, regtest and
+      mainnet. The `b3f0529` bodies also equal the manifests of the
+      `fingerprint-sample-inputs` verification (item 11 there). The later commit
+      `b3ae3b2` adds a test only; the pins and the full suites below pass there.
+    - **Pins unchanged:** `cargo test --locked --release -p blacksilk-node --test
+      deploy_configs`: 15 passed with the pins untouched (testnet `77c9751b…`,
+      `2a8e5466…`, `fe014b57…`; regtest `4d1e5c1d…`, `ba12487a…`, `bc72c2dc…`;
+      mainnet `e7419968…`, `2a8e5466…`, `70718cc7…`). The PX pin
+      (`px/tests/consensus_fingerprint.rs`, `9b67345e…`) is unchanged; `cargo test --locked --release -p blacksilk-px --test consensus_fingerprint`: 1
+      passed.
+    - **Independent recompute** (the standard-library Python script of
+      `fingerprint-sample-inputs`) on the new manifests: ALL OK (both encodings decode
+      and re-encode byte-identically on all three networks, the digests equal the
+      printed ones and the pins, the PX-side digest over 113 entries equals the PX
+      pin).
+    - **Demonstrated failure:** item 2.
+    - **Mutation:** cargo-mutants 27.1.0, `--in-diff` of `b3f0529..b3ae3b2` per
+      file, `--profile mutants --cap-lints true --jobs 2`:
+      - tx/src/validate.rs (oracle tx `--lib`, `runSVtx`): 9 mutants, 2 caught
+        (`fingerprint_text` → `String::new()` and → `"xyzzy"`), 4 unviable
+        (`variant_index` → 0 and → 1 fail the const assertion; 592:13 `< → <=`
+        indexes past `ALL` and 594:11 `+= → -=` underflows, both at compile time),
+        2 missed and 1 timeout, all three in the compile-time assertion block: 592:13
+        `< → ==` and `< → >` skip the loop, which emits no run-time code (the same
+        property is tested at run time by `all_lists_every_variant_in_index_order`);
+        594:11 `+= → *=` never ends const evaluation, a deny-by-default lint error
+        in a normal build, a warning under `--cap-lints` (build timeout 900 s).
+        Exempt as E87 (mutation-exemptions.md), the argument of E83 for px's
+        `KERNEL_ERRORS`.
+      - node/src/fingerprint.rs (oracle `--lib --test deploy_configs --test
+        px_fixture`, `runSVnode`): 4 mutants, 4 caught (`verdict_text` →
+        `String::new()` and → `"xyzzy"`, `compute_transaction_samples` → `Default`,
+        `px_transaction_samples` → `()`).
+      - cargo-mutants deletes match arms only next to a wildcard; `fingerprint_text`
+        and `verdict_text` have none, so their arms are covered by the golden-text
+        tests, not by arm-deletion mutants.
+    - `bash tools/fingerprint-mutations.sh`: 7 of 7 red-team mutations change the rules fingerprint (at `b3ae3b2`).
+    - `cargo test --locked --release -p blacksilk-tx -p blacksilk-node` at `b3ae3b2`:
+      358 passed, 0 failed, 3 ignored (the fingerprint cost probe and the two fixture
+      regenerators, ignored before), 50 test binaries; `cargo clippy --locked
+      --release --all-targets -p blacksilk-tx -p blacksilk-node -p blacksilk-px --
+      -D warnings` and `cargo fmt --all -- --check` clean; doc-lint, unicode-scan
+      and the consensus gate pass.
+12. **Open review points.**
+    - The text of every existing variant must never change. A new `TxError` variant
+      fails to compile until it has a text, an index and an `ALL` entry, but nothing
+      forces a new verdict sample for it (as before).
+    - The texts were shown equal to the derived `Debug` on rustc 1.98.1 only; from now
+      on the toolchain's `Debug` does not reach the fingerprint.
+    - No other hashed manifest value is `Debug`-derived: every text entry is a
+      literal or a constant string (checked by reading every `.text(` call in
+      node/src/fingerprint.rs and px/src/fingerprint.rs). The **printed** manifest
+      still renders text and list values with `{:?}` (`Value`'s `Display`,
+      px/src/fingerprint.rs), and the header lines quote the domains with `{:?}`:
+      that is the human-readable rendering, not hashed, so the digests do not
+      depend on it, but a toolchain that renders strings differently would change
+      how `--print-manifest` looks and could fail the line-by-line check of the
+      recompute script. Not changed here (it moves no fingerprint); open.
+13. **Identity impact.** None: no identity entry, network id, genesis or D0 changes.
+14. **Documentation.** docs/STATUS.md (the stable-verdict-encoding row and the
+    fingerprint row's open item), the run G evidence (§ Open items (g) closed),
+    decisions.md, mutation-exemptions.md (E87).
+15. **Review status.** Implemented and verified by the implementing agent under the
+    lead's decision; an internal red-team pass is owed before the merge.
