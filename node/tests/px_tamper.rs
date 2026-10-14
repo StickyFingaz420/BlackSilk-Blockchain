@@ -51,15 +51,27 @@
 //! (the prunable part), so changing them leaves `check_px_proof` `Ok` (the
 //! CLSAGs sign them, and the proof bytes, instead).
 //!
-//! **Limits.** Each case flips bit 0 of one byte, so a verifier that lost a
-//! higher bit of a value (say a limb masked to 15 bits) would not show; the
-//! large vectors are sampled, not exhaustive; and a verifier that accepted
-//! any query grinding witness would not show either, since the witness is
-//! still observed and a changed one moves the query positions (a throwaway
-//! mutant confirmed it). Throwaway mutants that drop bit 0 of an `h_tx` byte,
-//! skip one FRI input batch's or one commit-phase round's Merkle check, or
-//! drop the canonical-zero rule of the commit-phase grinding witnesses each
-//! make the full sweep report a verifying case (docs/STATUS.md).
+//! **What it tests, and what it does not.** The sweep tests that every proof
+//! byte and every statement input is bound: decoded strictly, observed by
+//! the transcript, or checked. It does not test the verifier's soundness
+//! checks that only a coordinated prover-side forgery can get past: a
+//! skipped out-of-domain constraint check or an accepted bad grinding
+//! witness is invisible to single-byte flips, because a flipped byte still
+//! moves the transcript and the proof fails elsewhere. Those need forged
+//! proofs (zk/tests/query_pow.rs builds one for the query grinding witness);
+//! AIR soundness is covered by the BVM-1 AIR mutation census
+//! (docs/evidence/mutation-air-2026-10-02), not here. Most
+//! cases are decode refusals: in the full sweep 2,626 of 32,210 cases (8%)
+//! reach the verifier call. Each case flips bit 0 of one byte, so a verifier
+//! that lost a higher bit of a value (say a limb masked to 15 bits) would not
+//! show, and the large vectors are sampled, not exhaustive.
+//!
+//! Throwaway mutants that drop bit 0 of an `h_tx` byte, skip one FRI input
+//! batch's or one commit-phase round's Merkle check, or drop the
+//! canonical-zero rule of the commit-phase grinding witnesses each make the
+//! full sweep report a verifying case; a verifier accepting any query
+//! grinding witness does not (it is killed by zk/tests/query_pow.rs instead;
+//! docs/STATUS.md).
 //!
 //! The smoke subset (the first and last value and the first length or tag of
 //! every field) runs with the suite; the full sweep is ignored by default
@@ -863,6 +875,11 @@ fn row_width_resyncs(l: &Layout, region: usize) -> bool {
         first -= 1;
     }
     let count = &rs[first - 1];
+    // The row count is read as one raw byte: a one-byte varint.
+    assert!(
+        l.bytes[count.start] < 0x80 && count.end - count.start == 1,
+        "a query with 128 or more matrices: {count:?}"
+    );
     let rows = l.bytes[count.start] as usize;
     // The end of the query's rows: the last value region of this (batch,
     // query).
