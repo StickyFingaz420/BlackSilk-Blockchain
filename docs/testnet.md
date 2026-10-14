@@ -192,7 +192,7 @@ Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
   transfer can reach), **PX and block verdict samples** on the golden PX
   transaction (the stateless PX rules and the deploy rules; and, as boundary
   pairs, PX6 the validity window, PX4 the pool and B8 the tree capacity, both
-  for one transaction and in a block whose proof the verified-proof cache vouches
+  for one transaction and in a block whose PX proof the verified-proof cache vouches
   for; reviews/v3-consensus-changes.md#fingerprint-px-samples; the PX proof
   verification itself, PX5, is pinned by tests, not sampled, for start-up cost),
   and the **rule-revision list**, one entry per reviewed

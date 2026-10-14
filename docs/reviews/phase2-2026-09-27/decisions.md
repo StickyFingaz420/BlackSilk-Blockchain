@@ -1975,4 +1975,4 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   rules and consensus fingerprints of every network change, identity unchanged.
   Record: docs/reviews/v3-consensus-changes.md#fingerprint-px-samples
   (`Revision: none (fingerprint coverage only; no verdict changes)`).
-- **Red team:** owed before the merge.
+- **Red team:** internal red team (2026-10-14): merge with fixes (F1 doc comment, F2 status, F3 fixture assumption, F4 wording), applied; merged into rebuild/core after this review.

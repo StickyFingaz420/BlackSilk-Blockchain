@@ -5177,4 +5177,8 @@ of every network change (identity unchanged).
     rules fingerprint covers and its limits); mutation-exemptions.md (E86 updated,
     E88, E89).
 15. **Review status.** Implemented and verified by the implementing agent under the
-    lead's decision; an internal red-team pass is owed before the merge.
+    lead's decision; internal red team (2026-10-14): merge with fixes (F1 doc comment, F2 status, F3 fixture assumption, F4 wording), applied; merged into rebuild/core after this review. F3:
+    `px_bridge_out_variant` now shifts the pseudo-output by the change of `bridge_out`
+    (new minus golden), not by the new value, so it does not rely on the golden
+    `bridge_out` being 0; every manifest value and pin is unchanged (the golden value
+    is 0).
