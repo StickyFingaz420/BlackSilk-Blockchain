@@ -106,7 +106,9 @@ for m in "${mutants[@]}"; do
   # A mutant that does not build, or whose test binary never ran, is not a kill.
   grep -qE 'Running.*tests/grinding\.rs' "$log" || die "mutant $id: the grinding tests did not run (build failure?)"
   [ "$rc" != 124 ] && [ "$rc" != 137 ] || die "mutant $id: the tests timed out (30 min)"
-  failed=$(grep -E '^test .* \.\.\. FAILED$' "$log" | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | sort -u | paste -sd ' ' -)
+  # `|| true`: no FAILED line (a survivor) must reach the report below, not stop
+  # the script under `set -e -o pipefail`.
+  failed=$( { grep -E '^test .* \.\.\. FAILED$' "$log" || true; } | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | sort -u | paste -sd ' ' -)
   if [ "$rc" != 0 ] && grep -qE "^test $expect \.\.\. FAILED$" "$log"; then
     echo "E69 mutant $id: CAUGHT by $expect (failed tests: $failed)"
     echo "::notice title=E69 mutant $id caught::by $expect (failed tests: $failed)"

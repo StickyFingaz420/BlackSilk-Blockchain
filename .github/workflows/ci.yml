@@ -326,9 +326,10 @@ jobs:
   #   (.github/scripts/e69-arm64.sh; on every push: it reuses this job's zk
   #   build and adds two zk rebuilds and three runs of tests/grinding.rs);
   # - RandomX full mode (the miner's default) and the rest of `randomx-full`'s
-  #   ignored tests, as that job does on x86_64 on every push (about 28
-  #   minutes there): miners run on arm64 machines too, and this job is far
-  #   shorter than `test`, so it does not lengthen a run.
+  #   ignored tests, as that job does on x86_64 on every push (29 and 43
+  #   minutes there in runs 38477291905 and 38521517518; this step took 11
+  #   minutes on arm64 in the latter): miners run on arm64 machines too, and
+  #   this job is far shorter than `test`, so it does not lengthen a run.
   # The first step records the toolchain and the target features, and fails
   # unless the host is aarch64 with NEON.
   arm64:
