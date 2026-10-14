@@ -308,6 +308,66 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --locked --release -p blacksilk-randomx
 
+  # Consensus code on aarch64 (freeze gate, step 1). Until this job, the only
+  # arm64 leg was `guests (ubuntu-24.04-arm)`, which rebuilds the guest ELFs
+  # and runs no consensus test, so RandomX and the STARK verifier had never run
+  # on the second architecture the project builds for. Here, on
+  # ubuntu-24.04-arm, in release as in `test`:
+  # - RandomX light mode (what nodes verify with) and the reference corpus
+  #   (tests/equivalence.rs), with the consensus crate's tests (the RandomX
+  #   known-answer test tests/golden.rs, the difficulty adjustment), crypto and
+  #   px-core (consensus arithmetic; about 2.5 minutes for these crates in
+  #   `overflow (core)` on x86_64);
+  # - every non-ignored zk test: aarch64 has NEON on by default, so Plonky3's
+  #   BabyBear packs 4 lanes there (p3-monty-31 0.7.0) and 1 on x86_64 without
+  #   AVX2: the prover's packed grinding search runs a different code path;
+  # - exemption E69 (docs/reviews/mutation-exemptions.md): the two mutants it
+  #   calls equivalent at width 1 must be killed at width 4
+  #   (.github/scripts/e69-arm64.sh; on every push: it reuses this job's zk
+  #   build and adds two zk rebuilds and three runs of tests/grinding.rs);
+  # - RandomX full mode (the miner's default) and the rest of `randomx-full`'s
+  #   ignored tests, as that job does on x86_64 on every push (about 28
+  #   minutes there): miners run on arm64 machines too, and this job is far
+  #   shorter than `test`, so it does not lengthen a run.
+  # The first step records the toolchain and the target features, and fails
+  # unless the host is aarch64 with NEON.
+  arm64:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Platform (aarch64 with NEON, or fail)
+        shell: bash
+        run: |
+          rustc -vV
+          rustc --print cfg | grep -E '^target_(arch|feature)='
+          nproc; free -m
+          rustc --print cfg | grep -qx 'target_arch="aarch64"' || { echo "::error title=arm64::not an aarch64 host"; exit 1; }
+          rustc --print cfg | grep -qx 'target_feature="neon"' || { echo "::error title=arm64::NEON is not enabled"; exit 1; }
+      - name: RandomX light mode and reference corpus, consensus, crypto, px-core (release)
+        shell: bash
+        run: |
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast \
+            -p blacksilk-randomx -p blacksilk-consensus -p blacksilk-crypto -p blacksilk-px-core
+      - name: zk, every non-ignored test (release)
+        if: success() || failure()
+        shell: bash
+        run: bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast -p blacksilk-zk
+      - name: E69 mutants are killed at packing width 4 (mutation self-test)
+        if: success() || failure()
+        shell: bash
+        run: bash .github/scripts/e69-arm64.sh
+      - name: RandomX full mode vectors, full/light agreement, FPU oracle (10^7) and large digest
+        if: success() || failure()
+        shell: bash
+        run: bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-randomx -- --ignored --nocapture
+
   # RustSec advisory database (docs/reviews/dependency-review.md §5), for the
   # main workspace and the separate fuzz workspace.
   audit:
