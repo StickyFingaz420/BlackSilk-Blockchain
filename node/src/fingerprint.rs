@@ -1627,8 +1627,8 @@ fn px_transaction_samples(m: &mut Manifest) {
 }
 
 /// The golden PX transaction with `bridge_out = bridge_in + 1` and its first
-/// pseudo-output lowered by the change of `bridge_out` times `H` (`(bridge_in
-/// + 1)·H`, the golden `bridge_out` being 0): it still balances
+/// pseudo-output lowered by the change of `bridge_out` times `H`, that is
+/// `(bridge_in + 1)·H` (the golden `bridge_out` is 0): it still balances
 /// (`check_px_balance`: `Σ pseudo_outs − Σ outputs = (fee + bridge_in +
 /// Σ payouts − bridge_out)·H`), so it passes every stateless rule, and takes
 /// one unit out of the pool (PX4: `pool + bridge_in ≥ bridge_out` holds
