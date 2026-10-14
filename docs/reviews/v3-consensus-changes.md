@@ -42,6 +42,7 @@ they are never renamed. Index:
 - px-deploy-row-caps (tx deploy rule, px shape check, node samples; B2-CAPS)
 - fingerprint-sample-inputs (node fingerprint manifest: sample inputs, key-schedule samples, D0 as identity; lead decision 2026-10-13)
 - fingerprint-stable-verdicts (tx `TxError::fingerprint_text`, node verdict samples: stable verdict text, no manifest value changes; lead decision 2026-10-14)
+- fingerprint-px-samples (tx `BlockError::fingerprint_text`, node verdict samples for PX6, PX4 and B8 and block verdicts; lead decision 2026-10-14)
 
 New sections are appended at the end.
 
@@ -4917,3 +4918,19 @@ deploy verdict, proof, manifest entry name, order or value, fingerprint pin,
     lead's decision; internal red team (2026-10-14): merge with fixes (F1 status
     wording, F2 test message, F3 recorded as open), applied; merged into rebuild/core
     after this review.
+
+---
+
+<a id="fingerprint-px-samples"></a>
+
+## fingerprint-px-samples: verdict samples for PX6, PX4 and B8, and block verdicts on the cached path
+
+Revision: none (fingerprint coverage only; no verdict changes)
+
+Decision: "PX verdict samples in the fingerprint (lead decision, 2026-10-14)"
+(decisions.md), step 5(B) of the owner-approved freeze-gate plan. Branch
+`consensus/fingerprint-px-samples` (from `c3df4d5`). Internal engineering work, not an
+audit. No validity rule, validation order, network id, genesis, genesis id or D0
+changes; the rules manifest gains entries, and the rules and consensus fingerprints of
+every network change. In progress: the sections below are completed with the results
+in the last commit of the branch.
