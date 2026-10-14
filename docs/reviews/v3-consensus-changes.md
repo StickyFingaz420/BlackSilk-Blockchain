@@ -4689,3 +4689,135 @@ genesis or D0 changes; every manifest value and every fingerprint pin stays the 
     now say that `ALL` and the golden table are complete by convention (comments
     only, no manifest change). F2 (status): the status texts give the review result.
     Applied; merged into rebuild/core after this review.
+
+---
+
+<a id="v12-caps-single-definition"></a>
+
+## v12-caps-single-definition: the V12 deploy caps and rules have one definition, used by tx, the prover and the B2 example
+
+Revision: none (no rule or value change)
+
+Decision: "V12 caps: one definition (lead decision, 2026-10-14)" (decisions.md), step 3
+of the owner-approved freeze-gate plan. Branch `consensus/v12-caps-single-definition`
+(from `d933dd1`). Internal engineering work, not an audit. No cap value, deploy rule,
+deploy verdict, proof, manifest entry name, order or value, fingerprint pin,
+`REVISIONS` entry, network id, genesis or D0 changes.
+
+1. **Problem.** The V12 deploy caps (record `px-deploy-row-caps`) were written down
+   in several places that nothing tied together (inventory at `d933dd1`):
+   - tx/src/params.rs:62-74: the ten consensus constants `PX_FN_LOG_CYCLES` 15,
+     `PX_FN_LOG_KEYS` 14, `PX_FN_LOG_PROGRAM` 14, `PX_FN_LOG_IMAGE` 14, `PX_LOG_ADD`
+     16, `PX_LOG_BIT` 14, `PX_LOG_LT` 16, `PX_LOG_SHIFT` 14, `PX_LOG_MUL` 14,
+     `PX_LOG_POSEIDON` 11; const assertions at :79-90 (each ≤ `PX_MAX_LOG_HEIGHT` =
+     16) and :93 (`PX_FN_LOG_CYCLES == blacksilk_px::prove::FN_RUN_LOG_CYCLES`);
+   - tx/src/px.rs:866-881 `budget_is_provable` and :889-894 `program_is_provable`,
+     the two deploy rules on those constants (called from `check_deploy_structure`,
+     :925 and :933);
+   - px/src/prove.rs:93: `FN_RUN_LOG_CYCLES = 15`, a second literal of the cycles
+     cap (the prover's early stop, prove.rs:295), tied to tx only by the tx-side
+     const assertion;
+   - px/examples/freeze_b2_b3.rs:665-674: the ten caps **restated** as `V12_*`
+     constants; :677 the per-function maxima `V12_TABLE = [32_768, 16_384, 20_168,
+     7_192, 22_493, 7_367, 7_367, 948]`; :713-728 `v12_budget_ok` and :731-735
+     `v12_program_ok` (the two rules restated); :740-753 `v12_largest`.
+     `blacksilk-tx` depends on `blacksilk-px`, so the example could not call tx;
+   - tx/tests/deploy_rules.rs:199: the same eight-number table as a second literal
+     (`the_largest_allowed_budget_is_the_v12_table`), computed there from the tx
+     constants. The example's copy was checked only against its own restatement,
+     and its program and image caps (14, 14) against nothing.
+
+   The manifest entries carrying the caps: node/src/fingerprint.rs:461-482
+   (`tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE`, `tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON`,
+   in `chain_entries`, read through `tx::`); px/src/fingerprint.rs carries
+   `px.prove.PX_MAX_LOG_HEIGHT` and the kernel budgets, not the caps. A change of a
+   tx cap would have left the B2 example measuring the old caps without any test
+   failing.
+2. **Demonstrated failure.** None was observed in the code: at `d933dd1` all copies
+   agree (item 11 shows that the values and every output are unchanged). The defect
+   is the missing link (STATUS: "the V12 caps restated in the measuring example are
+   not yet pinned against tx"); item 11 shows that a changed cap now fails the
+   tests.
+3. **Prior art.** In this repository: `blacksilk-tx` already re-exports
+   `blacksilk_crypto::clsag::RING_SIZE` (tx/src/params.rs:6) rather than restating
+   it, and derives `MAX_PX_TX_SIZE` from `blacksilk_zk::params::MAX_PROOF_BYTES`; the
+   kernel budgets have their single definition in px (`prove::kernel_budget`), which
+   tx calls. Not checked: how other chains share consensus constants between a
+   validation crate and a prover crate.
+4. **Alternatives.**
+   - Pin the example's copy against tx with a cross-crate test: rejected, the copy
+     would remain (two definitions plus a check), and px cannot depend on tx, so the
+     test would have to live in tx and restate the example's values.
+   - Put the caps in `blacksilk-px-core`: rejected, the rules need
+     `prove::kernel_budget` (px) and the zkvm table helpers, which px-core (`no_std`,
+     no dependencies, also built for the guest) must not take; the caps without the
+     rules would still leave the rules restated in the example.
+   - A new crate: rejected, new dependency edges for ten constants and two functions.
+   - **Chosen:** a module `blacksilk_px::deploy_caps` (px/src/deploy_caps.rs) with
+     the ten constants, both rules and `largest_budget()`; tx re-exports them under
+     their old paths; `prove::FN_RUN_LOG_CYCLES` is defined as
+     `deploy_caps::PX_FN_LOG_CYCLES`; the example imports them. tx already depends
+     on px, so no edge is added.
+5. **Affected components.**
+   - px/src/deploy_caps.rs (new): the ten `pub const` caps (same values); the
+     compile-time assertions moved from tx (every cap ≤ `PX_MAX_LOG_HEIGHT`) plus one
+     new one (`2^PX_MAX_LOG_HEIGHT == zkvm::air::byte::HEIGHT`: the tallest table is
+     the byte table); `budget_is_provable` and `program_is_provable` moved verbatim
+     from tx/src/px.rs (only the paths of `kernel_budget` and `MAX_FN` shortened);
+     `largest_budget()` (the example's `v12_largest`; not a rule). Unit tests:
+     `the_v12_caps_and_table_are_pinned` (the single numeric pin: the ten caps,
+     `MAX_FN` = 2, the eight maxima, `FN_RUN_LOG_CYCLES`), `budget_rule_boundaries`
+     (every field at its maximum allowed; +1, `usize::MAX` and an overflowing
+     product refused; the vault budget and the zero budget allowed),
+     `program_rule_boundaries` (image of exactly 2^14 words allowed, 2^14 + 1
+     refused, a 2^15-row program table refused).
+   - px/src/prove.rs: `FN_RUN_LOG_CYCLES = crate::deploy_caps::PX_FN_LOG_CYCLES`
+     (was the literal 15); doc comments.
+   - tx/src/params.rs: `pub use blacksilk_px::deploy_caps::{PX_FN_LOG_*, PX_LOG_*}`
+     replaces the definitions; the const assertion tying the cycles cap to the
+     prover's stop stays.
+   - tx/src/px.rs: `pub use blacksilk_px::deploy_caps::{budget_is_provable,
+     program_is_provable}` replaces the two functions; `check_deploy_structure` calls
+     them as before.
+   - px/examples/freeze_b2_b3.rs: the restated caps, rules, table and `v12_largest`
+     removed; it uses `deploy_caps`. `v12_admit` keeps its run-time checks (cycle
+     stop equals the cycles cap, `MAX_FN` = 2, largest budget allowed, each field +1
+     refused, the program image boundary, both budgets and programs of the shape
+     allowed), now on the shared rules; its comparison with the restated table is
+     gone (the table is pinned in `deploy_caps`). Its admission line now names
+     `blacksilk_px::deploy_caps` instead of "restated".
+   - tx/tests/deploy_rules.rs: `the_largest_allowed_budget_is_the_v12_table`
+     compares the test's own computation from the tx constants with
+     `deploy_caps::largest_budget()` instead of repeating the literal.
+   - .github/scripts/consensus-gate.sh: px/src/deploy_caps.rs is a consensus path (it
+     now holds two deploy rules).
+   - Unchanged: every value; the rules' logic and call order; node/src/fingerprint.rs
+     (it reads `tx::PX_FN_LOG_*` and `tx::PX_LOG_*`, now re-exports of the same
+     items); px/src/fingerprint.rs; the pre-V12 `registrable` restatement of the R7-5
+     rule in the example (historical, for the `coarse18`/`dense18` configurations).
+6. **Activation.** None: no rule or value changes.
+7. **Compatibility.** Nothing changes for operators, wallets or deployers: the public
+   paths `blacksilk_tx::params::PX_FN_LOG_*`, `PX_LOG_*`,
+   `blacksilk_tx::px::budget_is_provable`, `program_is_provable` and
+   `blacksilk_px::prove::FN_RUN_LOG_CYCLES` still resolve, to the same values and the
+   same functions.
+8. **Reorg, wallet, mining, P2P.** None.
+9. **Vectors.** No new vector; the manifest carries the ten caps as before, and the
+   deploy verdict samples are unchanged.
+10. **Invariants preserved** (written down before editing):
+    - per-function caps: `cycles ≤ 2^15`, `keys ≤ 2^14`; program table and padded
+      image ≤ 2^14 rows each;
+    - shared tables: `K.x + MAX_FN·b.x ≤ 2^cap` with `K = kernel_budget(MAX_FN)`, in
+      checked arithmetic; caps add 16, bit 14, lt 16, shift 14, mul 14, Poseidon2 11;
+    - every PX table ≤ 2^16 (`PX_MAX_LOG_HEIGHT`, the byte table);
+    - the prover's cycle stop is the cycles cap (`FN_RUN_LOG_CYCLES ==
+      PX_FN_LOG_CYCLES`);
+    - the eight-field largest budget is `[32_768, 16_384, 20_168, 7_192, 22_493,
+      7_367, 7_367, 948]` with the frozen `kernel_budget(2)`;
+    - the manifests and every fingerprint pin are byte-identical.
+11. **Suite results.** Pending: completed in a later commit of this branch.
+12. **Open review points.** Pending: completed in a later commit of this branch.
+13. **Identity impact.** None: no identity entry, network id, genesis or D0 changes.
+14. **Documentation.** This section; decisions.md; docs/STATUS.md (the
+    px-deploy-row-caps row and the freeze gate B2 row).
+15. **Review status.** Pending: completed in a later commit of this branch.
