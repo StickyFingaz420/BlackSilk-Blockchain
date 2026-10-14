@@ -315,7 +315,13 @@ fn program_and_image_caps() {
     assert!(!program_is_provable(&image_over), "image 2^14 + 1");
     let height_over = load((1 << 14) + 1);
     assert_eq!(program::height(&height_over, MIN_HEIGHT), 1 << 15);
-    assert!(!program_is_provable(&height_over), "program height 2^15");
+    // Its image is above 2^14 words too: the image clause refuses it. The
+    // program-table clause follows from the image clause for every program
+    // and cannot be tested alone (record `v12-caps-single-definition`, item 12).
+    assert!(
+        !program_is_provable(&height_over),
+        "program height 2^15 (refused by the image clause, which it implies)"
+    );
     assert!(program_is_provable(&Program::from_elf(VAULT_ELF).unwrap()));
     assert!(program_is_provable(
         &Program::from_elf(&other_elf()).unwrap()

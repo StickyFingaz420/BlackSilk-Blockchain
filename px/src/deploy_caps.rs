@@ -218,8 +218,12 @@ mod tests {
     }
 
     /// The program rule at its boundaries: an image of exactly 2^14 words
-    /// is allowed and one word more is refused; a program table of 2^15
-    /// rows is refused.
+    /// is allowed and one word more is refused; a program with a 2^15-row
+    /// program table is refused. That program's image is above 2^14 words
+    /// too, so the image clause refuses it: the program-table clause follows
+    /// from the image clause for every program (the image holds every code
+    /// word) and cannot be tested alone (record
+    /// `v12-caps-single-definition`, item 12).
     #[test]
     fn program_rule_boundaries() {
         let v = crate::vault::program();
@@ -235,6 +239,9 @@ mod tests {
         assert!(!program_is_provable(&over), "image one word above the cap");
         let tall = padded_vault((1 << PX_FN_LOG_PROGRAM) + 1);
         assert!(program::height(&tall, MIN_HEIGHT) > 1 << PX_FN_LOG_PROGRAM);
-        assert!(!program_is_provable(&tall), "program table above the cap");
+        assert!(
+            !program_is_provable(&tall),
+            "program table above the cap (refused by the image clause, which it implies)"
+        );
     }
 }
