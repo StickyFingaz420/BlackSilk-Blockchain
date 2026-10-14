@@ -260,8 +260,8 @@ limit).
     security figures): `the_security_figures_are_computed_on_the_committed_domain`.
 - `lib.rs:637:21` (`num_periodic_columns`) is caught by the existing px
   `proof_limits` (stage 2b; checked by the lead).
-- Equivalent (10): E67, E68, E69 (width-1 builds only, not aarch64: the BabyBear
-  packing width, § Open items (f)), E70.
+- Equivalent (10): E67, E68, E69 (width-1 builds only; killed on aarch64, § Open
+  items (f)), E70.
 - Timeouts (8, still timeouts alone, `runG5t`): `smallest_pow_witness` scans of the
   whole field or endless loops (250:64 `*`, 254:26 `==`, `>`, 254:63 `|`, `^`, 258:15
   `*=`), `VerifierConfig::for_statement` → `Default` (infinite recursion), and the
@@ -513,6 +513,12 @@ from 2 048 and 18 432 to 4 096 and 20 480, while the five heights sampled before
 unchanged. Internal records (`runFPSI`, `runFPSI-summary.txt`,
 `seed-minus1-mutation.txt`, `runFPSIsweep`) are in the lead's scratch area (`C:/bszkeval/g11-scratch/fpsi/`).
 
+**E69 on aarch64.** E69's two mutants (`config.rs` 250:64 and 253:35) are killed on
+aarch64 (CI job `arm64`, run 38521517518 at `16d4fe9`, § Open items (f)) but remain
+exempt on width-1 x86_64 builds, where they are equivalent. x86_64 is a supported
+target, so they stay counted among the 79 exempt: the counts (80 killed, 79 exempt,
+1 open) do not change.
+
 Earlier kill checks, kept for the record: `runG4k1`, `runG6k1`, `runG6k2`, `runG10k`
 (and `runG10keq`, the equivalents' survival), `runG3a`, `runG3b`.
 
@@ -704,7 +710,11 @@ These are stated as open. None is exempt.
   (and on opt-in AVX2 or AVX-512 builds) the two mutants make the prover panic, at an
   underflow or at `grind`'s assertion of the verifier's `check_witness`; they never
   give an invalid proof, since the witness is checked with the verifier's code before
-  use. **Follow-up:** re-check `config.rs` 250:64 and 253:35 on the arm64 runner.
+  use. **Resolved for aarch64 (2026-10-14):** on the arm64 runner both mutants are
+  killed (CI job `arm64`, run 38521517518 at `16d4fe9`; each fails
+  `the_prover_grinds_the_smallest_valid_nonce` and the other four non-ignored
+  grinding tests). The width-1 exemption stands for x86_64 builds only; opt-in
+  AVX2/AVX-512 x86_64 builds are not run in CI.
 
 - **(g) Verdict samples are derived-`Debug` text (fingerprint, outside this run's
   survivors).** The rules fingerprint's verdict samples are `format!("{:?}")` text of
