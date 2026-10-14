@@ -269,6 +269,45 @@ jobs:
             exit "$rc"
           }
 
+  # The full tamper sweep of the golden PX proof (node/tests/px_tamper.rs,
+  # full_px_proof_tamper_sweep): every length, tag and version byte and a
+  # structure-aware sample of every value of the transfer fixture's proof,
+  # plus every h_tx byte and public word, about 32,000 single-bit changes,
+  # each refused with its field's class. Verify only (no proving): 61 MiB
+  # peak and about 4.5 minutes locally (Windows, release, 2026-10-14). Its
+  # own job, so it runs on its own runner with nothing beside it, on every
+  # push like `test` (the verifier, zk and third_party code it pins change
+  # between pushes; the sweep is deterministic, so a weekly run adds
+  # nothing). The smoke subset (each field once) runs in `test` and
+  # `overflow` with the other node tests.
+  px-tamper:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Build
+        run: cargo test --locked --release -p blacksilk-node --test px_tamper --no-run
+      # `--exact` with the test's full path, and exactly one test must pass: a
+      # renamed test would otherwise run nothing and pass.
+      - name: Full tamper sweep of the golden PX proof
+        shell: bash
+        env:
+          ANNOTATE_TIMEOUT: 60m
+        run: |
+          set -o pipefail
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-node --test px_tamper -- \
+            --ignored --exact full_px_proof_tamper_sweep --nocapture --test-threads=1 | tee px-tamper.log
+          grep -q '^test result: ok\. 1 passed; 0 failed' px-tamper.log || {
+            echo "::error title=px-tamper::the full sweep did not run exactly one passing test"
+            exit 1
+          }
+
   # The consensus-pinned guest programs rebuild from source to their pinned
   # program ids and to the committed bytes (zkvm/guests/README.md), on Windows,
   # Linux x86_64 and Linux arm64: the build is path-independent (stripped, no
