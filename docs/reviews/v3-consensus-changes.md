@@ -4241,7 +4241,9 @@ every budget and program table at its V12 cap (68.5 M weighted cells, FRI schedu
 - Still open: the size-widest V12 shape (non-vault programs, output tables at 2^9,
   about 3.70 / 3.78 MB by model) is not measured, so the proof-size bound remains a
   model; the example restates the V12 caps (px cannot depend on tx) and the
-  restatement is not yet pinned against tx; one run on one runner class.
+  restatement is not yet pinned against tx (closed 2026-10-14 by
+  `v12-caps-single-definition`: one definition, no restatement); one run on one
+  runner class.
 
 ---
 
@@ -4815,9 +4817,66 @@ deploy verdict, proof, manifest entry name, order or value, fingerprint pin,
     - the eight-field largest budget is `[32_768, 16_384, 20_168, 7_192, 22_493,
       7_367, 7_367, 948]` with the frozen `kernel_budget(2)`;
     - the manifests and every fingerprint pin are byte-identical.
-11. **Suite results.** Pending: completed in a later commit of this branch.
-12. **Open review points.** Pending: completed in a later commit of this branch.
+11. **Suite results** (2026-10-14, 4-core i7-6700, 16 GB, Windows 10, toolchain
+    1.98.1; scratch records in the lead's scratch area, `C:/bszkeval/g11-scratch/v12/`).
+    Code at `5ca8a3a` (`bbb7479`, `ab1d85b`, `5ca8a3a` on the record commit `305ed17`).
+    - **Byte identity:** `blacksilk-node --print-manifest <network>`, release builds of
+      `d933dd1` (a detached worktree, own target directory) and of `5ca8a3a` (own
+      target directory), both from clean trees: the bodies (every line after the
+      first, which names the build commit) are byte-identical on mainnet, testnet and
+      regtest. The cap entries read `tx.PX_FN_LOG_CYCLES_KEYS_PROGRAM_IMAGE = [15, 14,
+      14, 14]` and `tx.PX_LOG_ADD_BIT_LT_SHIFT_MUL_POSEIDON = [16, 14, 16, 14, 14, 11]`
+      in both.
+    - **Pins unchanged:** `cargo test --locked --release -p blacksilk-node --test
+      deploy_configs`: 15 passed, pins untouched (testnet `77c9751b…`, `2a8e5466…`,
+      `fe014b57…`; regtest `4d1e5c1d…`, `ba12487a…`, `bc72c2dc…`; mainnet `e7419968…`,
+      `2a8e5466…`, `70718cc7…`); `-p blacksilk-px --test consensus_fingerprint`: 1
+      passed (PX pin unchanged).
+    - **B2 example:** `freeze_b2_b3 b2 v12mem 0 <dir> --check-only` (release) at
+      `d933dd1` and at `5ca8a3a`: the outputs differ in one line only, the admission
+      line's wording ("pass the V12 deploy rules (restated)" → "(blacksilk_px::deploy_caps)");
+      the budgets, usage, every table height, weighted cells, modelled memory, FRI
+      schedule and the schedule search (216 × 27 choices, 7 rounds, 494,592 rows) are
+      identical. Neither run writes files.
+    - **Tests** (on the working tree of the three code commits, before committing):
+      `cargo test --locked --release -p blacksilk-tx`: every target passed (lib 53,
+      deploy_rules 13, px_io_limits 1, px_consensus 4, and the rest; 0 failed);
+      `-p blacksilk-px --lib`: 40 passed (3 new); `--test proof_limits` 5,
+      `kernel_budget` 7, `consensus_fingerprint` 1, `state` 4 passed. `unified` and
+      `proof` not run (memory and time), as planned.
+    - **A changed cap fails** (scratch, reverted): `PX_LOG_POSEIDON` 11 → 12 in
+      px/src/deploy_caps.rs fails `the_v12_caps_and_table_are_pinned` (px `--lib`) and
+      tx `allowed_budget_boundaries` (deploy_rules); the manifest pins would fail too
+      (the value is a manifest entry).
+    - **Intermediate commit:** `bbb7479` alone passes `cargo clippy --locked --release
+      -p blacksilk-tx -p blacksilk-px --all-targets -- -D warnings`.
+    - `cargo clippy --locked --release -p blacksilk-tx -p blacksilk-px -p
+      blacksilk-node --all-targets -- -D warnings` and `cargo fmt --all -- --check`
+      clean at `5ca8a3a`; doc-lint, unicode-scan and `consensus-gate.sh --selftest` pass;
+      `consensus-gate.sh d933dd1 HEAD` passes (2 of 4 commits touch consensus paths).
+    - **Mutation:** cargo-mutants 27.1.0, `--in-diff` of `d933dd1..5ca8a3a` over
+      px/src and tx/src, `--profile mutants --cap-lints true --jobs 2`. px (oracle
+      `--lib --test proof_limits`): 30 mutants, all in px/src/deploy_caps.rs: 29
+      caught, 1 unviable (`largest_budget` → `Default::default()`: `Budget` has no
+      `Default`), 0 missed, 0 timeouts. tx (oracle `--lib --test deploy_rules --test
+      px_io_limits`): no mutants (the tx changes are `pub use` lines). Constants are
+      not mutated by cargo-mutants; the numeric pin and the scratch change above
+      cover them.
+12. **Open review points.**
+    - The program-table clause of `program_is_provable` is implied by the image
+      clause for every program (the image holds every code word), as before; it is
+      kept as written, verbatim.
+    - The example's historical `registrable` (the pre-V12 R7-5 rule, for the
+      `coarse18`/`dense18` configurations) is still a restatement; it is not a V12
+      cap and not consensus.
+    - docs/evidence/b2-v12mem-2026-10-10/README.md (dated evidence) still says that
+      the example restates the caps; it describes the 2026-10-10 run and is left as
+      it was.
+    - tx/tests/deploy_rules.rs keeps two literal checks of single values
+      (`(PX_FN_LOG_PROGRAM, PX_FN_LOG_IMAGE) == (14, 14)` and the Poseidon2 boundary
+      948/949) next to the shared pin; they predate this change.
 13. **Identity impact.** None: no identity entry, network id, genesis or D0 changes.
 14. **Documentation.** This section; decisions.md; docs/STATUS.md (the
     px-deploy-row-caps row and the freeze gate B2 row).
-15. **Review status.** Pending: completed in a later commit of this branch.
+15. **Review status.** Implemented and verified by the implementing agent under the
+    lead's decision; internal red team pending. Not merged.
