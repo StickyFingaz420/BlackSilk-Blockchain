@@ -10,7 +10,7 @@
 //!   and FRI schedules of every configuration.
 //! - `b2 <config> <count> <dir> [--check-only]`: proves and verifies `count`
 //!   two-function proofs of configuration `base`, `coarse18`, `dense18`,
-//!   or `v12mem`; appends one row per proof to `<dir>/b2.csv` and
+//!   `v12mem` or `v12size`; appends one row per proof to `<dir>/b2.csv` and
 //!   saves the first proof as `<dir>/<config>.bin`. First prints the
 //!   configuration's table heights, weighted cells and modelled memory. With
 //!   `--check-only` it stops there, after the admission checks and a native
@@ -23,6 +23,11 @@
 //!   budget and program passes the V12 deploy rules, asserted at run time.
 //!   `v12_schedule_search` shows that no vault-based V12 pair has a longer
 //!   FRI schedule, so the same proof is also the longest-schedule one.
+//!   `v12size` is the size-widest V12 shape (see `v12_size_search`): two
+//!   echo programs whose budgets put a table at every height from 2^8 to
+//!   2^16, the longest FRI schedule, [1 x 8, 3]. It prints the size model
+//!   (expected and worst size, every reachable height set ranked) from
+//!   `<dir>/size-base.bin` with `--check-only`, and from each proof it makes.
 //! - `p5 <n_fn> <per class> <dir>`: the P-5 campaign for one function count;
 //!   appends to `<dir>/p5.csv` (resumable: rows already present are skipped).
 //!   Asserts, exactly, that every proof of the shape has the same
@@ -534,7 +539,7 @@ fn case(
 // ----------------------------------------------------------------- budgets
 
 /// Every `b2` configuration.
-const CONFIGS: [&str; 4] = ["base", "coarse18", "dense18", "v12mem"];
+const CONFIGS: [&str; 5] = ["base", "coarse18", "dense18", "v12mem", "v12size"];
 
 /// A B2 configuration: the program and budget of `C`'s function (the CLAIM)
 /// and of `C2`'s (the LOCK); the kernel's budget is `kernel_budget(2)`.
@@ -544,6 +549,9 @@ struct Shape {
     budgets: [Budget; 2],
     /// Built under the V12 deploy caps (and checked against them).
     v12: bool,
+    /// The functions are echo programs (`echo_program`) fed the kernel's
+    /// prefixes, not the vault (`echo_inputs`).
+    echo: bool,
 }
 
 impl Shape {
@@ -566,6 +574,7 @@ fn config(name: &str) -> Shape {
         programs: [vault::program(), vault::program()],
         budgets: [b0, b1],
         v12: false,
+        echo: false,
     }
 }
 
@@ -739,8 +748,10 @@ fn v12_shape(name: &str) -> Shape {
                 programs: [padded_vault(len), padded_vault(len - 1)],
                 budgets: [top, top],
                 v12: true,
+                echo: false,
             }
         }
+        "v12size" => v12_size_search().0,
         _ => panic!("unknown configuration {name}"),
     }
 }
@@ -916,6 +927,7 @@ fn v12_schedule_search() -> Shape {
         programs: [padded_vault(o[0].code_len), padded_vault(len1)],
         budgets: b.map(from_fields),
         v12: true,
+        echo: false,
     };
     let real: Vec<usize> = degree_bits(kernel_out, &shape.parts())
         .iter()
@@ -935,6 +947,344 @@ fn v12_schedule_search() -> Shape {
         score.2
     );
     shape
+}
+
+// ------------------------------------------------------- V12 size-widest
+
+/// A synthetic deployable function: it reads a word count `n`, then `n`
+/// words of its private input, writes each to its public output and halts
+/// with exit code 0. Fed the kernel's function prefix (`echo_inputs`), it is
+/// a valid function with no contract logic of its own: it approves what the
+/// caller's witness says. Its program, image and output tables are at the
+/// 2^8 minimum, so its budget alone sets its keys and cycles tables, from
+/// its own use up to the caps. `pad` NOPs after the halt (never executed)
+/// give distinct program ids.
+fn echo_program(pad: usize) -> Arc<Program> {
+    use blacksilk_zkvm::asm::reg::{A0, T1, ZERO};
+    use blacksilk_zkvm::asm::Asm;
+    use blacksilk_zkvm::isa::Op;
+    let mut a = Asm::new(0x1_0000);
+    a.ecall(1)
+        .imm(Op::Addi, T1, A0, 0)
+        .label("next")
+        .branch(Op::Beq, T1, ZERO, "done")
+        .ecall(1)
+        .ecall(2)
+        .imm(Op::Addi, T1, T1, -1)
+        .jal(ZERO, "next")
+        .label("done")
+        .halt(0);
+    let p = a.finish().expect("the echo program assembles");
+    let mut code = p.code.clone();
+    code.resize(code.len() + pad, NOP);
+    Arc::new(
+        Program::new(p.entry, p.code_base, code, p.data.clone())
+            .expect("the padded echo program is valid"),
+    )
+}
+
+/// `c` with every function call's input replaced by the echo input of its
+/// kernel pair `(contract, io_hash)`: the prefix length, then the prefix.
+/// The witness, and so the kernel's approvals and outputs, is unchanged.
+fn echo_inputs(c: Case) -> Case {
+    let (w, calls) = c;
+    let public = pxkernel::transfer(
+        &mut HostPerm::new(),
+        &mut blacksilk_px_core::kernel::SliceSource::new(&prove::witness_words(&w)),
+    )
+    .expect("the native kernel accepts the witness");
+    let calls = calls
+        .into_iter()
+        .enumerate()
+        .map(|(i, (contract, _))| {
+            let (c, io_hash) = &public.functions[i];
+            assert_eq!(*c, contract, "function {i}: contract");
+            let mut input = vec![PREFIX_WORDS as u32];
+            input.extend(function_prefix(ABI_VERSION, io_hash, c, &W));
+            (contract, input)
+        })
+        .collect();
+    (w, calls)
+}
+
+/// The B2 case of a shape: W28-3's pair (`claim_lock`, the LOCK under `C2`),
+/// run by the vault or, for an echo shape, by the echo programs.
+fn b2_case(shape: &Shape, f: &Fixture, k: usize, rng: &mut ChaCha20Rng) -> Case {
+    let c = function_case(f, "claim_lock", k, rng, C2);
+    if shape.echo {
+        echo_inputs(c)
+    } else {
+        c
+    }
+}
+
+/// Weighted cells per row of every table (`weighted_cells`' measure).
+fn row_weights(st: &Statement) -> Vec<usize> {
+    let db: Vec<usize> = st
+        .shape()
+        .unwrap()
+        .iter()
+        .map(|h| h.trailing_zeros() as usize + 1)
+        .collect();
+    let airs = trace::tables(st);
+    let widths = blacksilk_zk::analysis::trace_widths(&airs);
+    let chunks = blacksilk_zk::analysis::quotient_chunks(&airs, &db);
+    (0..db.len())
+        .map(|t| widths[t] + 8 * chunks[t] + 24)
+        .collect()
+}
+
+fn mask_of(heights: &[usize]) -> u32 {
+    heights.iter().fold(0, |m, &h| m | 1 << h)
+}
+
+fn heights_of(mask: u32) -> Vec<usize> {
+    (0..32).filter(|h| mask >> h & 1 == 1).collect()
+}
+
+/// The FRI schedule of a set of table heights (log2): the schedule depends
+/// on the distinct heights only.
+fn schedule_of(mask: u32) -> Vec<usize> {
+    let db: Vec<usize> = heights_of(mask).iter().map(|h| h + 1).collect();
+    blacksilk_zk::honest_fri_schedule(&db)
+}
+
+/// `v12size`, the size-widest V12 shape, and every set of table heights
+/// (log2, as bit masks) its search reaches.
+///
+/// Why it is the size-widest (the size model, module header; the
+/// budget-cap study's "any programs" row at 2^16): every input batch of a
+/// PX proof has the depth of its tallest table, the fixed 2^16 byte table,
+/// and the opened values depend on the tables' widths only, so a proof's
+/// encoded length is fixed by its folding schedule (`honest_fri_schedule`)
+/// and the pruned digests of its trees, both functions of the SET of
+/// distinct table heights. The schedule stops at every distinct height:
+/// with every height from 2^8 (`MIN_LOG_HEIGHT`) to 2^16 present it is
+/// [1 x 8, 3], nine rounds, the longest any PX proof can have; the
+/// memory-widest vault pair (`v12mem`) has seven, [1, 1, 1, 1, 1, 3, 3]. The
+/// kernel fixes 2^8, 2^12, 2^13 and 2^16; the vault's own tables cannot go
+/// below 2^11, so 2^9 and 2^10 need a smaller program: here, for both
+/// functions, the echo program (`echo_program`), whose keys and cycles
+/// tables can sit at any height from 2^8 to their caps.
+///
+/// Search: both functions run echo programs (distinct ids); per function,
+/// keys from its use to 2^14 and cycles from its use to 2^15 rows; each
+/// shared table from the height `kernel_budget(MAX_FN)` plus both uses gives
+/// to its V12 cap. It keeps the longest schedule, then the most distinct
+/// heights, then the FEWEST weighted cells: the bytes do not depend on which
+/// tables carry the heights, so the cheapest statement to prove is chosen.
+/// The pick is realized with budgets whose real `Statement::shape` is
+/// asserted to match; `v12_admit` checks them against the deploy rules.
+fn v12_size_search() -> (Shape, Vec<u32>) {
+    let k = kernel_budget(MAX_FN);
+    let top = largest_budget();
+    let programs = [echo_program(0), echo_program(1)];
+    let f = fixture();
+    let mut rng = ChaCha20Rng::seed_from_u64(0);
+    let c = echo_inputs(function_case(&f, "claim_lock", 0, &mut rng, C2));
+    let used: Vec<Budget> = (0..2)
+        .map(|e| {
+            let exec = blacksilk_zkvm::run(&programs[e], &c.1[e].1, blacksilk_zkvm::MAX_CYCLES)
+                .expect("the echo program runs");
+            trace::usage(&programs[e], &exec)
+        })
+        .collect();
+    let least: Registry = [
+        (C, (programs[0].clone(), used[0])),
+        (C2, (programs[1].clone(), used[1])),
+    ]
+    .into();
+    let kernel_out = run_case(&c, &least).expect("the echo pair runs");
+    let least_parts = [
+        (programs[0].clone(), used[0]),
+        (programs[1].clone(), used[1]),
+    ];
+    let base: Vec<usize> = degree_bits(kernel_out, &least_parts)
+        .iter()
+        .map(|d| d - 1)
+        .collect();
+    let weights = row_weights(&statement(kernel_out, &least_parts));
+    // Shared tables: (index in `fields`, index in the shape).
+    let shared: [(usize, usize); 6] = [(2, 5), (3, 6), (4, 7), (5, 8), (6, 9), (7, 11)];
+    let (kf, tf) = (fields(&k), fields(&top));
+    let uf = [fields(&used[0]), fields(&used[1])];
+    let shared_opts: Vec<Vec<usize>> = shared
+        .iter()
+        .map(|&(fi, _)| {
+            let cap = log2_ceil(kf[fi] + MAX_FN * tf[fi]);
+            (log2_ceil(kf[fi] + uf[0][fi] + uf[1][fi])..=cap).collect()
+        })
+        .collect();
+    // Per function: (keys log, cycles log).
+    let own: Vec<Vec<(usize, usize)>> = (0..2)
+        .map(|e| {
+            let mut v = Vec::new();
+            for kl in log2_ceil(used[e].keys)..=PX_FN_LOG_KEYS as usize {
+                for cl in log2_ceil(used[e].cycles)..=PX_FN_LOG_CYCLES as usize {
+                    v.push((kl, cl));
+                }
+            }
+            v
+        })
+        .collect();
+    let heights = |sh: &[usize], o: [(usize, usize); 2]| -> Vec<usize> {
+        let mut h = base.clone();
+        for (j, &(_, t)) in shared.iter().enumerate() {
+            h[t] = shared_opts[j][sh[j]];
+        }
+        for (e, &(kl, cl)) in o.iter().enumerate() {
+            h[14 + 5 * e] = kl;
+            h[15 + 5 * e] = cl;
+        }
+        h
+    };
+    let tuples = odometer(&shared_opts.iter().map(Vec::len).collect::<Vec<_>>());
+    let mut rounds: HashMap<u32, usize> = HashMap::new();
+    let mut reached: BTreeSet<u32> = BTreeSet::new();
+    type Score = (usize, u32, std::cmp::Reverse<usize>);
+    type Best = (Score, Vec<usize>, [(usize, usize); 2]);
+    let mut best: Option<Best> = None;
+    for sh in &tuples {
+        for &o0 in &own[0] {
+            for &o1 in &own[1] {
+                let h = heights(sh, [o0, o1]);
+                let mask = mask_of(&h);
+                reached.insert(mask);
+                let r = *rounds
+                    .entry(mask)
+                    .or_insert_with(|| schedule_of(mask).len());
+                let cells: usize = h.iter().zip(&weights).map(|(&x, w)| w << x).sum();
+                let score = (r, mask.count_ones(), std::cmp::Reverse(cells));
+                if best.as_ref().is_none_or(|b| score > b.0) {
+                    best = Some((score, sh.clone(), [o0, o1]));
+                }
+            }
+        }
+    }
+    let (score, sh, o) = best.expect("the least budgets are a realization");
+    // Realize: shared sums `S` with `pow2(K + S) = 2^h` (the uses at a
+    // table's lowest height), split over the two functions with each part at
+    // least its use and at most the cap.
+    let mut b = uf;
+    for (n, &(fi, _)) in shared.iter().enumerate() {
+        let h = shared_opts[n][sh[n]];
+        let sum = if h == shared_opts[n][0] {
+            uf[0][fi] + uf[1][fi]
+        } else {
+            (1usize << h).min(kf[fi] + MAX_FN * tf[fi]) - kf[fi]
+        };
+        let b0 = tf[fi].min(sum - uf[1][fi]);
+        let b1 = sum - b0;
+        assert!(uf[0][fi] <= b0 && uf[1][fi] <= b1 && b0 <= tf[fi] && b1 <= tf[fi]);
+        b[0][fi] = b0;
+        b[1][fi] = b1;
+    }
+    for e in 0..2 {
+        b[e][1] = 1 << o[e].0;
+        b[e][0] = 1 << o[e].1;
+    }
+    let shape = Shape {
+        programs,
+        budgets: b.map(from_fields),
+        v12: true,
+        echo: true,
+    };
+    let real: Vec<usize> = degree_bits(kernel_out, &shape.parts())
+        .iter()
+        .map(|d| d - 1)
+        .collect();
+    assert_eq!(
+        real,
+        heights(&sh, o),
+        "size search: the realization has the searched heights"
+    );
+    println!(
+        "size search: {} shared-table choices x {} x {} per function, {} reachable height sets; best: {} FRI rounds, {} distinct heights, {:.1} M weighted cells (the fewest of those)",
+        tuples.len(),
+        own[0].len(),
+        own[1].len(),
+        reached.len(),
+        score.0,
+        score.1,
+        score.2 .0 as f64 / 1e6
+    );
+    (shape, reached.into_iter().collect())
+}
+
+/// The size model at degree bits `db`, from a real two-function proof
+/// `base` (any statement of the PX widths; module header): mean, standard
+/// deviation and maximum over `n` uniform query draws, and the worst case
+/// over any query positions.
+fn size_at(base: &[u8], db: &[usize], n: usize, seed: u64) -> (f64, f64, f64, usize) {
+    let batches = parts(&blacksilk_zk::decode_proof(base).expect("the base proof decodes"))
+        .batch_digests
+        .len();
+    let (m, t, schedule) = trees(db, batches);
+    let zero = synth(base, db, &schedule, &vec![0; t.len()]);
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let sizes: Vec<f64> = (0..n)
+        .map(|_| {
+            let (c, _) = draw(m, &t, &mut rng);
+            (zero + c.iter().map(|&x| digest_bytes(x) - 1).sum::<usize>()) as f64
+        })
+        .collect();
+    let worst = zero
+        + t.iter()
+            .map(|&(d, _)| digest_bytes(worst_digests(d)) - 1)
+            .sum::<usize>();
+    let max = sizes.iter().cloned().fold(0.0, f64::max);
+    (mean(&sizes), sd(&sizes), max, worst)
+}
+
+/// The size model of `v12size` from the real two-function proof `base`
+/// (`label` names it): the shape's modelled size, and every reachable
+/// height set ranked by its expected size (common query draws), asserting
+/// that no set the search reaches is expected to be larger.
+fn v12size_model(label: &str, base: &[u8], db: &[usize], sets: &[u32]) {
+    let n_tables = db.len();
+    let own = mask_of(&db.iter().map(|d| d - 1).collect::<Vec<_>>());
+    let set_db = |mask: u32| -> Vec<usize> {
+        let mut v: Vec<usize> = heights_of(mask).iter().map(|h| h + 1).collect();
+        while v.len() < n_tables {
+            v.push(v[0]);
+        }
+        v
+    };
+    let (e, s, max, worst) = size_at(base, db, 20_000, 20_261_014);
+    println!(
+        "v12size: size model from {label}: 20,000 uniform query draws: mean {e:.0}, sd {s:.0}, max {max:.0}; worst over any query positions {worst} bytes ({} the {AGENT22_BYTES}-byte budget; MAX_PROOF_BYTES {MAX_PROOF_BYTES})",
+        if worst < AGENT22_BYTES { "below" } else { "NOT below" }
+    );
+    let mut ranked: Vec<(f64, u32)> = sets
+        .iter()
+        .map(|&m| (size_at(base, &set_db(m), 2_000, 7).0, m))
+        .collect();
+    ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    for (i, (x, m)) in ranked.iter().enumerate().take(4) {
+        println!(
+            "v12size: reachable set {}: heights {:?}, schedule {:?}, expected {x:.0} bytes",
+            i + 1,
+            heights_of(*m),
+            schedule_of(*m)
+        );
+    }
+    let mine = size_at(base, &set_db(own), 2_000, 7).0;
+    let v12mem = mask_of(&[8, 11, 12, 13, 14, 15, 16]);
+    println!(
+        "v12size: for comparison, v12mem's set {:?}: expected {:.0} bytes",
+        heights_of(v12mem),
+        size_at(base, &set_db(v12mem), 2_000, 7).0
+    );
+    assert!(
+        ranked[0].0 <= mine,
+        "v12size: the set {:?} is expected to be larger ({:.0} > {mine:.0} bytes)",
+        heights_of(ranked[0].1),
+        ranked[0].0
+    );
+    println!(
+        "v12size: no reachable height set is expected to be larger ({} sets; model from {label})",
+        ranked.len()
+    );
 }
 
 /// The V12 deploy rules (`blacksilk_px::deploy_caps`, the definition
@@ -1166,7 +1516,12 @@ fn prove_case(c: &Case, reg: &Registry, rng: &mut ChaCha20Rng) -> Proved {
 
 fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
     let f = fixture();
-    let shape = config(name);
+    // `v12size` keeps its search's reachable height sets for the size model.
+    let (shape, size_sets) = if name == "v12size" {
+        v12_size_search()
+    } else {
+        (config(name), Vec::new())
+    };
     if shape.v12 {
         v12_admit(name, &shape);
     } else {
@@ -1176,7 +1531,7 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
     // The first case natively: kernel and function exits, prefixes, and every
     // function's use against its budget, as the prover checks them.
     let mut rng = ChaCha20Rng::seed_from_u64(30_000);
-    let first = function_case(&f, "claim_lock", 0, &mut rng, C2);
+    let first = b2_case(&shape, &f, 0, &mut rng);
     let kernel_out = run_case(&first, &reg).unwrap_or_else(|e| panic!("{name}: {e}"));
     check_fit(&first, &reg);
     report(name, kernel_out, &shape);
@@ -1198,6 +1553,28 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
             schedule(&shape)
         );
     }
+    let shape_db = degree_bits(kernel_out, &shape.parts());
+    if name == "v12size" {
+        println!(
+            "{name}: the size-widest V12 schedule: every height from 2^{} to 2^{} present, FRI schedule {:?} ({} rounds; v12mem: 7)",
+            blacksilk_zk::params::MIN_LOG_HEIGHT,
+            PX_MAX_LOG_HEIGHT,
+            blacksilk_zk::honest_fri_schedule(&shape_db),
+            blacksilk_zk::honest_fri_schedule(&shape_db).len()
+        );
+        // The model needs a real two-function proof of the PX widths. With
+        // `--check-only`, `<dir>/size-base.bin` if present (any earlier
+        // two-function proof); a proving run uses its own first proof.
+        let base = dir.join("size-base.bin");
+        if let Ok(bytes) = std::fs::read(&base) {
+            v12size_model(&base.display().to_string(), &bytes, &shape_db, &size_sets);
+        } else {
+            println!(
+                "{name}: no {} for the size model; by docs/evidence/budget-cap-2026-10-04 (any programs, 2^16): 3,700,750 bytes expected, 3,780,959 worst over the query positions",
+                base.display()
+            );
+        }
+    }
     if check_only {
         println!("{name}: check only, no proof");
         return;
@@ -1213,7 +1590,7 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
             continue;
         }
         let mut rng = ChaCha20Rng::seed_from_u64(30_000 + k as u64);
-        let c = function_case(&f, "claim_lock", k, &mut rng, C2);
+        let c = b2_case(&shape, &f, k, &mut rng);
         let r = prove_case(&c, &reg, &mut rng);
         println!(
             "b2 {name} #{k}: {} bytes (nondigest {}), prove {:.1} s, verify {:?} ms, schedule {:?}",
@@ -1221,6 +1598,13 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
         );
         if k == 0 {
             std::fs::write(dir.join(format!("{name}.bin")), &r.bytes).unwrap();
+        }
+        if name == "v12size" {
+            assert_eq!(r.p.degree_bits, shape_db, "{name}: the proof has the shape");
+            println!(
+                "b2 {name} #{k}: digests per tree {:?} / {:?}, degree bits {:?}",
+                r.p.batch_digests, r.p.step_digests, r.p.degree_bits
+            );
         }
         write_row(
             &csv,
@@ -1234,6 +1618,9 @@ fn cmd_b2(name: &str, count: usize, dir: &Path, check_only: bool) {
                 verify_ms: r.verify_ms,
             },
         );
+        if name == "v12size" {
+            v12size_model(&format!("proof #{k}"), &r.bytes, &shape_db, &size_sets);
+        }
     }
 }
 
