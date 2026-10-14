@@ -1899,3 +1899,32 @@ px_root_after -> Option<Digest> with None` and `with Some(Default::default())`; 
 **Evidence.** Missed in `runG7s1node` and `runG7s2node`.
 
 Record: mutation run G, 2026-10-12.
+
+## E87: the compile-time check of the `TxError` list (tx/src/validate.rs)
+
+Decision: record [v3-consensus-changes.md](v3-consensus-changes.md)
+`fingerprint-stable-verdicts` (2026-10-14), as E83.
+
+**Code.** `const _: () = { let mut i = 0; while i < TxError::ALL.len() {
+assert!(TxError::ALL[i].variant_index() == i); i += 1; } };`
+
+**Mutants covered:** 592:13 `replace < with ==`, `replace < with >` (missed), and
+594:11 `replace += with *=` (timeout) (cargo-mutants, at `b3ae3b2`).
+
+**Argument.** The block is evaluated at compile time and produces no run-time code.
+With `i = 0` and a non-empty list, `0 == len` and `0 > len` are false, so the mutated
+loop never runs and the assertion, which holds in the original, is skipped. The built
+program is the same. The property the block checks is also checked at test time by
+`validate::tests::all_lists_every_variant_in_index_order`, so weakening the block does
+not remove the check.
+
+`+= → *=` keeps `i = 0`, so the loop never ends: rustc's const evaluator reports
+`long_running_const_eval` ("constant evaluation is taking a long time"), a
+deny-by-default lint. Under `--cap-lints true` (cargo-mutants' `--cap-lints=warn`) it is
+only a warning and the build runs until the 900 s build timeout; in a normal build the
+lint is an error and the mutant does not compile (unviable). No program is built.
+
+**Evidence.** Missed (two) and timed out in the build (one) in `runSVtx` (`--in-diff`
+sweep of the record's changed lines, oracle tx `--lib`).
+
+Record: v3-consensus-changes.md#fingerprint-stable-verdicts, 2026-10-14.

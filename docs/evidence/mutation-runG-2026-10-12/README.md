@@ -713,7 +713,13 @@ These are stated as open. None is exempt.
   `rust-toolchain.toml` is ruled out (decisions "Agent 45", per SX2). A local build
   with another toolchain could therefore print another fingerprint (consensus itself
   is unaffected). Follow-up before the freeze: a stable explicit verdict encoding.
-  Record: v3-consensus-changes.md#fingerprint-sample-inputs, item 12. OPEN.
+  Record: v3-consensus-changes.md#fingerprint-sample-inputs, item 12. **CLOSED
+  (2026-10-14)** by v3-consensus-changes.md#fingerprint-stable-verdicts (internal
+  red team (2026-10-14): merge with fixes (F1 wording, F2 status), applied; merged
+  into rebuild/core after this review): the verdict samples are
+  `TxError::fingerprint_text`, a hand-written, exhaustive text equal to the old one
+  byte for byte, so no manifest value or pin changed and `Debug` no longer reaches
+  the fingerprint.
 - **Line numbers.** The G7 mapping (§ Kill confirmation) gives the lines at `1a74131`
   and at `cf2414e`; after the red-team commits (`cb2f58a`) seven of the eleven moved,
   by −9, −31, +23 (three) and +26 (two) lines (independent re-check at `cf2414e`: all

@@ -95,6 +95,10 @@ pub trait ChainView {
     fn output_frontier(&self) -> OutputFrontier;
 }
 
+/// A new variant also needs its fingerprint text and index
+/// ([`TxError::fingerprint_text`], `variant_index`; the compiler enforces
+/// these) and, by convention, an entry in `TxError::ALL` and in the golden
+/// table of this module's tests (record `fingerprint-stable-verdicts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TxError {
     /// T1 (for transactions not produced by `decode`).
@@ -368,7 +372,238 @@ impl TxError {
             | TxError::DuplicateContract => false,
         }
     }
+
+    /// The text of this error in the consensus fingerprint's verdict samples
+    /// (node/src/fingerprint.rs, record
+    /// docs/reviews/v3-consensus-changes.md#fingerprint-stable-verdicts): the
+    /// variant's name, then its fields in declaration order, each as unsigned
+    /// decimal (integer `Display`):
+    ///
+    /// - a unit variant: `Name`;
+    /// - a tuple variant: `Name(d)`;
+    /// - a struct variant: `Name { f1: d1, f2: d2 }` (field names as declared;
+    ///   one space after `{`, after each `:` and `,`, and before `}`).
+    ///
+    /// This is the text the derived `Debug` printed for these shapes when the
+    /// samples were pinned, written out here because the standard library
+    /// documents derived `Debug` output as unstable across Rust versions.
+    /// **Fingerprint-pinned: never derive it from `Debug`**, and never change
+    /// an existing variant's text (that moves the rules fingerprint). The
+    /// match is exhaustive: a new variant fails to compile until it has a
+    /// text here and an index in [`Self::variant_index`]. Adding it to
+    /// [`Self::ALL`] and to the tests' golden table is by convention (stable
+    /// Rust cannot count enum variants); the sampled verdicts stay pinned
+    /// exactly by the node's `samples_are_the_golden_values`.
+    pub fn fingerprint_text(&self) -> String {
+        match *self {
+            TxError::TooLarge { size } => format!("TooLarge {{ size: {size} }}"),
+            TxError::CoinbaseNotAllowed => "CoinbaseNotAllowed".to_string(),
+            TxError::InputCount(x) => format!("InputCount({x})"),
+            TxError::OutputCount(x) => format!("OutputCount({x})"),
+            TxError::KeyImageIdentity { input } => format!("KeyImageIdentity {{ input: {input} }}"),
+            TxError::KeyImagesNotSorted => "KeyImagesNotSorted".to_string(),
+            TxError::RingNotIncreasing { input } => {
+                format!("RingNotIncreasing {{ input: {input} }}")
+            }
+            TxError::OutputKeyIdentity { output } => {
+                format!("OutputKeyIdentity {{ output: {output} }}")
+            }
+            TxError::EphemeralIdentity { output } => {
+                format!("EphemeralIdentity {{ output: {output} }}")
+            }
+            TxError::OutputsNotSorted => "OutputsNotSorted".to_string(),
+            TxError::PseudoOutCount => "PseudoOutCount".to_string(),
+            TxError::FeeNotExact { fee, required } => {
+                format!("FeeNotExact {{ fee: {fee}, required: {required} }}")
+            }
+            TxError::WeightOverflow => "WeightOverflow".to_string(),
+            TxError::Unbalanced => "Unbalanced".to_string(),
+            TxError::RangeProofShape => "RangeProofShape".to_string(),
+            TxError::RangeProofInvalid => "RangeProofInvalid".to_string(),
+            TxError::SignatureCount => "SignatureCount".to_string(),
+            TxError::AuxKeyImageIdentity { input } => {
+                format!("AuxKeyImageIdentity {{ input: {input} }}")
+            }
+            TxError::UnknownRingMember { input, index } => {
+                format!("UnknownRingMember {{ input: {input}, index: {index} }}")
+            }
+            TxError::RingMemberTooYoung { input, index } => {
+                format!("RingMemberTooYoung {{ input: {input}, index: {index} }}")
+            }
+            TxError::KeyImageSpent { input } => format!("KeyImageSpent {{ input: {input} }}"),
+            TxError::InvalidSignature { input } => format!("InvalidSignature {{ input: {input} }}"),
+            TxError::PxShape => "PxShape".to_string(),
+            TxError::PxFeeNotStandard { fee } => format!("PxFeeNotStandard {{ fee: {fee} }}"),
+            TxError::PxInvalidProgram => "PxInvalidProgram".to_string(),
+            TxError::PxUnknownAnchor => "PxUnknownAnchor".to_string(),
+            TxError::PxNullifierSpent { index } => format!("PxNullifierSpent {{ index: {index} }}"),
+            TxError::PxUnregistered { function } => {
+                format!("PxUnregistered {{ function: {function} }}")
+            }
+            TxError::PxPoolUnderflow => "PxPoolUnderflow".to_string(),
+            TxError::PxWindow => "PxWindow".to_string(),
+            TxError::PxWindowInverted => "PxWindowInverted".to_string(),
+            TxError::PxUnsupportedAbi { program } => {
+                format!("PxUnsupportedAbi {{ program: {program} }}")
+            }
+            TxError::PxOutputWords { function } => {
+                format!("PxOutputWords {{ function: {function} }}")
+            }
+            TxError::PxProof => "PxProof".to_string(),
+            TxError::DuplicateContract => "DuplicateContract".to_string(),
+            TxError::PxTreeFull => "PxTreeFull".to_string(),
+            TxError::PxDuplicateOutputKey { output } => {
+                format!("PxDuplicateOutputKey {{ output: {output} }}")
+            }
+            TxError::PxNullifierRepeated => "PxNullifierRepeated".to_string(),
+            TxError::PxCiphertextRNonCanonical { ciphertext } => {
+                format!("PxCiphertextRNonCanonical {{ ciphertext: {ciphertext} }}")
+            }
+            TxError::PxCiphertextRIdentity { ciphertext } => {
+                format!("PxCiphertextRIdentity {{ ciphertext: {ciphertext} }}")
+            }
+            TxError::PxDuplicateProgram { program } => {
+                format!("PxDuplicateProgram {{ program: {program} }}")
+            }
+            TxError::PxBudgetTooLarge { program } => {
+                format!("PxBudgetTooLarge {{ program: {program} }}")
+            }
+            TxError::PxProgramTooLarge { program } => {
+                format!("PxProgramTooLarge {{ program: {program} }}")
+            }
+            TxError::DeployFeeNotExact { fee, required } => {
+                format!("DeployFeeNotExact {{ fee: {fee}, required: {required} }}")
+            }
+        }
+    }
+
+    /// The position of this variant in [`Self::ALL`] (declaration order).
+    /// Exhaustive, so a new variant fails to compile here until it is given
+    /// a position. The assertion below the `impl` checks that every entry of
+    /// `ALL` sits at its own index; it cannot check that `ALL` lists every
+    /// variant (a new one left out of `ALL` still compiles), which is by
+    /// convention.
+    const fn variant_index(&self) -> usize {
+        match self {
+            TxError::TooLarge { .. } => 0,
+            TxError::CoinbaseNotAllowed => 1,
+            TxError::InputCount(_) => 2,
+            TxError::OutputCount(_) => 3,
+            TxError::KeyImageIdentity { .. } => 4,
+            TxError::KeyImagesNotSorted => 5,
+            TxError::RingNotIncreasing { .. } => 6,
+            TxError::OutputKeyIdentity { .. } => 7,
+            TxError::EphemeralIdentity { .. } => 8,
+            TxError::OutputsNotSorted => 9,
+            TxError::PseudoOutCount => 10,
+            TxError::FeeNotExact { .. } => 11,
+            TxError::WeightOverflow => 12,
+            TxError::Unbalanced => 13,
+            TxError::RangeProofShape => 14,
+            TxError::RangeProofInvalid => 15,
+            TxError::SignatureCount => 16,
+            TxError::AuxKeyImageIdentity { .. } => 17,
+            TxError::UnknownRingMember { .. } => 18,
+            TxError::RingMemberTooYoung { .. } => 19,
+            TxError::KeyImageSpent { .. } => 20,
+            TxError::InvalidSignature { .. } => 21,
+            TxError::PxShape => 22,
+            TxError::PxFeeNotStandard { .. } => 23,
+            TxError::PxInvalidProgram => 24,
+            TxError::PxUnknownAnchor => 25,
+            TxError::PxNullifierSpent { .. } => 26,
+            TxError::PxUnregistered { .. } => 27,
+            TxError::PxPoolUnderflow => 28,
+            TxError::PxWindow => 29,
+            TxError::PxWindowInverted => 30,
+            TxError::PxUnsupportedAbi { .. } => 31,
+            TxError::PxOutputWords { .. } => 32,
+            TxError::PxProof => 33,
+            TxError::DuplicateContract => 34,
+            TxError::PxTreeFull => 35,
+            TxError::PxDuplicateOutputKey { .. } => 36,
+            TxError::PxNullifierRepeated => 37,
+            TxError::PxCiphertextRNonCanonical { .. } => 38,
+            TxError::PxCiphertextRIdentity { .. } => 39,
+            TxError::PxDuplicateProgram { .. } => 40,
+            TxError::PxBudgetTooLarge { .. } => 41,
+            TxError::PxProgramTooLarge { .. } => 42,
+            TxError::DeployFeeNotExact { .. } => 43,
+        }
+    }
+
+    /// Every variant once (by convention: a variant left out still compiles,
+    /// see the enum's doc), in declaration order, with field values that
+    /// differ from every other field value in the list (`1000 + 10·i + k` for
+    /// field `k` of variant `i`), so a text that swaps or repeats fields
+    /// differs from the golden one (tests below).
+    const ALL: [TxError; 44] = [
+        TxError::TooLarge { size: 1000 },
+        TxError::CoinbaseNotAllowed,
+        TxError::InputCount(1020),
+        TxError::OutputCount(1030),
+        TxError::KeyImageIdentity { input: 1040 },
+        TxError::KeyImagesNotSorted,
+        TxError::RingNotIncreasing { input: 1060 },
+        TxError::OutputKeyIdentity { output: 1070 },
+        TxError::EphemeralIdentity { output: 1080 },
+        TxError::OutputsNotSorted,
+        TxError::PseudoOutCount,
+        TxError::FeeNotExact {
+            fee: 1110,
+            required: 1111,
+        },
+        TxError::WeightOverflow,
+        TxError::Unbalanced,
+        TxError::RangeProofShape,
+        TxError::RangeProofInvalid,
+        TxError::SignatureCount,
+        TxError::AuxKeyImageIdentity { input: 1170 },
+        TxError::UnknownRingMember {
+            input: 1180,
+            index: 1181,
+        },
+        TxError::RingMemberTooYoung {
+            input: 1190,
+            index: 1191,
+        },
+        TxError::KeyImageSpent { input: 1200 },
+        TxError::InvalidSignature { input: 1210 },
+        TxError::PxShape,
+        TxError::PxFeeNotStandard { fee: 1230 },
+        TxError::PxInvalidProgram,
+        TxError::PxUnknownAnchor,
+        TxError::PxNullifierSpent { index: 1260 },
+        TxError::PxUnregistered { function: 1270 },
+        TxError::PxPoolUnderflow,
+        TxError::PxWindow,
+        TxError::PxWindowInverted,
+        TxError::PxUnsupportedAbi { program: 1310 },
+        TxError::PxOutputWords { function: 1320 },
+        TxError::PxProof,
+        TxError::DuplicateContract,
+        TxError::PxTreeFull,
+        TxError::PxDuplicateOutputKey { output: 1360 },
+        TxError::PxNullifierRepeated,
+        TxError::PxCiphertextRNonCanonical { ciphertext: 1380 },
+        TxError::PxCiphertextRIdentity { ciphertext: 1390 },
+        TxError::PxDuplicateProgram { program: 1400 },
+        TxError::PxBudgetTooLarge { program: 1410 },
+        TxError::PxProgramTooLarge { program: 1420 },
+        TxError::DeployFeeNotExact {
+            fee: 1430,
+            required: 1431,
+        },
+    ];
 }
+
+const _: () = {
+    let mut i = 0;
+    while i < TxError::ALL.len() {
+        assert!(TxError::ALL[i].variant_index() == i);
+        i += 1;
+    }
+};
 
 fn strictly_increasing<T: Ord>(items: impl IntoIterator<Item = T>) -> bool {
     let mut prev: Option<T> = None;
@@ -1540,4 +1775,98 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TxError;
+
+    /// The fingerprint text of every variant (record
+    /// `fingerprint-stable-verdicts`). Written out, not computed: a change of
+    /// any text, of the grammar or of the field order fails here.
+    const GOLDEN: [&str; 44] = [
+        "TooLarge { size: 1000 }",
+        "CoinbaseNotAllowed",
+        "InputCount(1020)",
+        "OutputCount(1030)",
+        "KeyImageIdentity { input: 1040 }",
+        "KeyImagesNotSorted",
+        "RingNotIncreasing { input: 1060 }",
+        "OutputKeyIdentity { output: 1070 }",
+        "EphemeralIdentity { output: 1080 }",
+        "OutputsNotSorted",
+        "PseudoOutCount",
+        "FeeNotExact { fee: 1110, required: 1111 }",
+        "WeightOverflow",
+        "Unbalanced",
+        "RangeProofShape",
+        "RangeProofInvalid",
+        "SignatureCount",
+        "AuxKeyImageIdentity { input: 1170 }",
+        "UnknownRingMember { input: 1180, index: 1181 }",
+        "RingMemberTooYoung { input: 1190, index: 1191 }",
+        "KeyImageSpent { input: 1200 }",
+        "InvalidSignature { input: 1210 }",
+        "PxShape",
+        "PxFeeNotStandard { fee: 1230 }",
+        "PxInvalidProgram",
+        "PxUnknownAnchor",
+        "PxNullifierSpent { index: 1260 }",
+        "PxUnregistered { function: 1270 }",
+        "PxPoolUnderflow",
+        "PxWindow",
+        "PxWindowInverted",
+        "PxUnsupportedAbi { program: 1310 }",
+        "PxOutputWords { function: 1320 }",
+        "PxProof",
+        "DuplicateContract",
+        "PxTreeFull",
+        "PxDuplicateOutputKey { output: 1360 }",
+        "PxNullifierRepeated",
+        "PxCiphertextRNonCanonical { ciphertext: 1380 }",
+        "PxCiphertextRIdentity { ciphertext: 1390 }",
+        "PxDuplicateProgram { program: 1400 }",
+        "PxBudgetTooLarge { program: 1410 }",
+        "PxProgramTooLarge { program: 1420 }",
+        "DeployFeeNotExact { fee: 1430, required: 1431 }",
+    ];
+
+    #[test]
+    fn fingerprint_texts_are_the_golden_values() {
+        for (e, golden) in TxError::ALL.iter().zip(GOLDEN) {
+            assert_eq!(e.fingerprint_text(), golden);
+        }
+    }
+
+    /// The runtime twin of the const assertion after `impl TxError`: every
+    /// entry of `ALL` sits at its `variant_index`, and `ALL` has one entry per
+    /// golden text (a weakened const loop would otherwise pass unnoticed).
+    /// That `ALL` lists every variant is by convention, not checked here.
+    #[test]
+    fn all_lists_every_variant_in_index_order() {
+        for (i, e) in TxError::ALL.iter().enumerate() {
+            assert_eq!(e.variant_index(), i);
+        }
+        assert_eq!(TxError::ALL.len(), GOLDEN.len());
+    }
+
+    #[test]
+    fn fingerprint_texts_are_distinct_and_well_formed() {
+        let texts: Vec<String> = TxError::ALL.iter().map(TxError::fingerprint_text).collect();
+        let names: Vec<&str> = texts
+            .iter()
+            .map(|t| t.split(['(', ' ']).next().expect("a name"))
+            .collect();
+        for (i, (t, name)) in texts.iter().zip(&names).enumerate() {
+            assert_ne!(t, "Ok(())");
+            assert!(
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphabetic()),
+                "{t}"
+            );
+            for (u, other) in texts.iter().zip(&names).skip(i + 1) {
+                assert_ne!(t, u);
+                assert_ne!(name, other);
+            }
+        }
+    }
 }

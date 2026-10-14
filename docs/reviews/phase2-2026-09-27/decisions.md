@@ -1889,3 +1889,31 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
 - **Red team (internal, 2026-10-13):** merge with fixes; the fixes (docs F1 to F5,
   code H1 and H2, no manifest value or pin change) are applied as follow-up commits
   (record, Follow-up (red team)).
+
+## Stable verdict text for the fingerprint (lead decision, 2026-10-14)
+
+- **Why:** the node's rules fingerprint pinned its 36 verdict samples as
+  `format!("{:?}")` text of `Result<(), TxError>`. The standard library documents
+  derived `Debug` output (and the `Debug` of its own types) as unstable across Rust
+  versions, so a build with another toolchain could print other fingerprints although
+  no rule changed (open item of `fingerprint-sample-inputs`, run G § Open items (g)).
+  Step 2 of the owner-approved freeze-gate plan.
+- **Decision:** option (c′) of the lead's design memo. `TxError::fingerprint_text`
+  (tx/src/validate.rs) writes the verdict text by hand, one arm per variant and no
+  wildcard, in the grammar the derived `Debug` printed (`Name`, `Name(d)`,
+  `Name { f1: d1, f2: d2 }`, fields as unsigned decimal); node/src/fingerprint.rs
+  builds `Ok(())` or `Err(<text>)` with `verdict_text`. An exhaustive
+  `variant_index` and a const list `ALL` with distinct field values, tied by a const
+  assertion (the `KERNEL_ERRORS` pattern), back the golden-text tests. The text is
+  byte-identical to the old one, so no manifest value and no pin changes.
+- **Rejected:** (a) numeric verdict codes (every verdict entry and pin moves, the
+  names are lost); (b) a new `Value::Verdict` manifest tag (changes the `Manifest`
+  encoding, the recompute and every pin); a root `rust-toolchain.toml` (ruled out in
+  "Agent 45"; it would also only pin, not stabilize); the status quo.
+- **Scope:** tx/src/validate.rs and node/src/fingerprint.rs. No validity rule,
+  validation order, manifest entry name or order, `Manifest` encoding or tag,
+  `REVISIONS`, network id, genesis or D0 change. Record:
+  docs/reviews/v3-consensus-changes.md#fingerprint-stable-verdicts (`Revision: none`).
+- **Red team:** internal red team (2026-10-14): merge with fixes (F1 wording: a
+  variant left out of `ALL` still compiles, so `ALL` is complete by convention; F2
+  status), applied; merged into rebuild/core after this review.
