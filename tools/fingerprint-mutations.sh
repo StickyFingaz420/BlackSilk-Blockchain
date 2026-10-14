@@ -2,8 +2,9 @@
 # Fingerprint coverage check (RT-FP3 acceptance; docs/reviews/v3-consensus-
 # changes.md#fingerprint-v3, Follow-up (RT-FP3)).
 #
-# Applies each consensus mutation of the RT-FP3 red-team demonstration, one at
-# a time, to a scratch copy of HEAD, builds `blacksilk-node`, and compares its
+# Applies each consensus mutation of the RT-FP3 red-team demonstration, and
+# those of fingerprint-px-samples (PX6, PX4 and B8 on the transaction and the
+# block path), one at a time, to a scratch copy of HEAD, builds `blacksilk-node`, and compares its
 # `--print-manifest regtest` with the unmutated build's. Every mutation must
 # change the rules fingerprint; the changed manifest entries are printed.
 #
@@ -39,6 +40,15 @@ FILES=(
   randomx/src/config.rs
   tx/src/types.rs
   tx/src/validate.rs
+  px-core/src/call.rs
+  px-core/src/call.rs
+  tx/src/validate.rs
+  tx/src/validate.rs
+  tx/src/validate.rs
+  tx/src/validate.rs
+  tx/src/validate.rs
+  tx/src/validate.rs
+  tx/src/validate.rs
 )
 FROMS=(
   'next.clamp(1, u64::MAX as u128) as u64'
@@ -48,6 +58,15 @@ FROMS=(
   'pub(crate) const PROGRAM_ITERATIONS: usize = 2048;'
   '(320 * m).saturating_sub(bp_size) * 4 / 5'
   'if !strictly_increasing(tx.inputs.iter().map(|i| i.key_image)) {'
+  'self.not_before <= height && (self.not_after == 0 || height <= self.not_after)'
+  'self.not_before <= height && (self.not_after == 0 || height <= self.not_after)'
+  'if tx.window.contains(height) {'
+  'check_px_window(t, ctx.height).map_err(err)?;'
+  'if chain.px_pool() + (tx.bridge_in as u128) < (tx.bridge_out as u128) {'
+  'if chain.px_pool() + (tx.bridge_in as u128) < (tx.bridge_out as u128) {'
+  'pool = (pool + t.bridge_in as u128)'
+  'if tx.commitments.len() as u64 > px_free_leaves(chain) {'
+  'if leaves > free {'
 )
 TOS=(
   'next.clamp(2, u64::MAX as u128) as u64'
@@ -57,6 +76,15 @@ TOS=(
   'pub(crate) const PROGRAM_ITERATIONS: usize = 1024;'
   '(320 * m).saturating_sub(bp_size) * 1 / 2'
   'if false && !strictly_increasing(tx.inputs.iter().map(|i| i.key_image)) {'
+  'self.not_before < height && (self.not_after == 0 || height <= self.not_after)'
+  'self.not_before <= height && (self.not_after == 0 || height < self.not_after)'
+  'if true || tx.window.contains(height) {'
+  '// PX6 dropped from the block path (mutation)'
+  'if chain.px_pool() + (tx.bridge_in as u128) <= (tx.bridge_out as u128) {'
+  'if chain.px_pool() - (tx.bridge_in as u128) < (tx.bridge_out as u128) {'
+  'pool = (pool - t.bridge_in as u128)'
+  'if tx.commitments.len() as u64 >= px_free_leaves(chain) {'
+  'if leaves >= free {'
 )
 WHATS=(
   "the difficulty's lower clamp"
@@ -66,6 +94,15 @@ WHATS=(
   'RandomX program iterations'
   'the Bulletproofs+ weight clawback'
   'the key-image order rule (T4)'
+  'PX6: Window::contains, not_before <= h to <'
+  'PX6: Window::contains, h <= not_after to <'
+  'PX6: check_px_window always Ok'
+  'PX6 dropped from the block path (cached proofs included)'
+  'PX4 (mempool): pool + bridge_in < bridge_out to <='
+  'PX4 (mempool): pool + bridge_in to pool - bridge_in'
+  'PX4 (block): pool + bridge_in to pool - bridge_in'
+  'B8 (mempool): check_px_capacity > to >='
+  'B8 (block): leaves > free to >='
 )
 # A quoted replacement is literal (bash 5.2 `patsub_replacement` expands an
 # unquoted `&`).

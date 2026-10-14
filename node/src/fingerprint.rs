@@ -60,7 +60,7 @@ use blacksilk_tx::mmr;
 use blacksilk_tx::params::{self as tx, max_weight, SigDomain, TxRules};
 use blacksilk_tx::px::{deploy_fee, Registration};
 use blacksilk_tx::types::{v1_part_weight, OutputKey};
-use blacksilk_tx::validate::OutputRecord;
+use blacksilk_tx::validate::{BlockError, OutputRecord};
 use blacksilk_tx::{ChainView, Transaction, Transfer, TxError};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -1015,12 +1015,22 @@ fn hex_bytes(s: &str) -> Option<Vec<u8>> {
 /// The chain view of the verdict samples: the fixture's ring members, with
 /// some removed or some key images spent, and the PX state of a chain with
 /// no PX transaction yet (its one recent root is the empty tree's, the
-/// golden PX transaction's anchor; the pool and the tree are empty; no
-/// contract is deployed).
+/// golden PX transaction's anchor; no nullifier is spent; no contract is
+/// deployed), except for the PX pool and the tree size, which a sample may
+/// set (`pool`, `tree_size`; 0 in the fixture's context, record
+/// `fingerprint-px-samples`).
 struct FixtureChain<'a> {
     outputs: &'a BTreeMap<u64, OutputRecord>,
     missing: Option<u64>,
     spent: Option<Point>,
+    /// The PX pool (PX4).
+    pool: u128,
+    /// The PX tree's size (B8). Only the capacity rule reads it:
+    /// `px_root_after` appends to the empty tree whatever the size, so a
+    /// block sample on a non-empty size still commits to the empty tree's
+    /// root after its leaves (`BlockContext::committing` reads the same
+    /// view, so B-PXR holds).
+    tree_size: u64,
 }
 
 impl<'a> FixtureChain<'a> {
@@ -1029,6 +1039,8 @@ impl<'a> FixtureChain<'a> {
             outputs,
             missing: None,
             spent: None,
+            pool: 0,
+            tree_size: 0,
         }
     }
 }
@@ -1055,7 +1067,7 @@ impl ChainView for FixtureChain<'_> {
         false
     }
     fn px_pool(&self) -> u128 {
-        0
+        self.pool
     }
     fn px_function(
         &self,
@@ -1068,7 +1080,7 @@ impl ChainView for FixtureChain<'_> {
         false
     }
     fn px_tree_size(&self) -> u64 {
-        0
+        self.tree_size
     }
     fn px_root_after(
         &self,
@@ -1076,8 +1088,10 @@ impl ChainView for FixtureChain<'_> {
     ) -> Option<blacksilk_px::core::Digest> {
         blacksilk_px::state::State::new().root_after(leaves)
     }
-    /// No block is validated on this view (only transactions): the fixture's
-    /// outputs are sparse ring members, not a range, so the range is empty.
+    /// The fixture's outputs are sparse ring members, not a range, so the
+    /// range is empty. The block samples commit to it
+    /// (`BlockContext::committing`) and check it (B-OMR) on this same view,
+    /// so they agree by construction (mutation-exemptions.md E89).
     fn output_frontier(&self) -> blacksilk_tx::mmr::OutputFrontier {
         blacksilk_tx::mmr::OutputFrontier::new()
     }
@@ -1207,11 +1221,7 @@ fn compute_transaction_samples() -> Manifest {
     // One variant per error class; each changes one thing of the valid case.
     let identity = Point::from_point(RistrettoPoint::default());
     let plus_g = |p: &Point| Point::from_point(p.point() + G);
-    let full = FixtureChain {
-        outputs: &f.outputs,
-        missing: None,
-        spent: None,
-    };
+    let full = FixtureChain::new(&f.outputs);
     // The verdict, the input hash of the transfer, and what the case changes
     // besides the transfer ([`verdict_context`]).
     let verdict =
@@ -1354,6 +1364,8 @@ fn verdict_context(chain: &FixtureChain, height: u64, rules: &TxRules) -> Manife
         outputs,
         missing,
         spent,
+        pool,
+        tree_size,
     } = chain;
     let TxRules {
         network_id,
@@ -1375,6 +1387,15 @@ fn verdict_context(chain: &FixtureChain, height: u64, rules: &TxRules) -> Manife
     }
     if let Some(i) = missing {
         context.u("missing ring member", *i);
+    }
+    if *pool != 0 {
+        context.u(
+            "pool",
+            u64::try_from(*pool).expect("a sampled pool fits in 64 bits"),
+        );
+    }
+    if *tree_size != 0 {
+        context.u("tree size", *tree_size);
     }
     if height != f.height {
         context.u("height", height);
@@ -1402,6 +1423,16 @@ fn verdict_context(chain: &FixtureChain, height: u64, rules: &TxRules) -> Manife
 /// does not depend on the toolchain (record `fingerprint-stable-verdicts`).
 /// Never `format!("{:?}")`.
 fn verdict_text(r: Result<(), TxError>) -> String {
+    match r {
+        Ok(()) => "Ok(())".to_string(),
+        Err(e) => format!("Err({})", e.fingerprint_text()),
+    }
+}
+
+/// The text of a sampled block verdict: `Ok(())`, or `Err(<text>)` with
+/// [`BlockError::fingerprint_text`] (record `fingerprint-px-samples`; as
+/// [`verdict_text`], never `format!("{:?}")`).
+fn block_verdict_text(r: Result<(), BlockError>) -> String {
     match r {
         Ok(()) => "Ok(())".to_string(),
         Err(e) => format!("Err({})", e.fingerprint_text()),
@@ -1592,6 +1623,191 @@ fn px_transaction_samples(m: &mut Manifest) {
     for (name, v) in deploy_cases {
         v.record(m, &format!("rules.sample.deploy.verdict ({name})"));
     }
+    px_context_samples(m);
+}
+
+/// The golden PX transaction with `bridge_out = bridge_in + 1` and its first
+/// pseudo-output lowered by the change of `bridge_out` times `H`, that is
+/// `(bridge_in + 1)·H` (the golden `bridge_out` is 0): it still balances
+/// (`check_px_balance`: `Σ pseudo_outs − Σ outputs = (fee + bridge_in +
+/// Σ payouts − bridge_out)·H`), so it passes every stateless rule, and takes
+/// one unit out of the pool (PX4: `pool + bridge_in ≥ bridge_out` holds
+/// exactly from a pool of 1). The CLSAG signs `bridge_out`, so a case that
+/// passes PX4 fails at the signature.
+fn px_bridge_out_variant(px: &blacksilk_tx::px::PxTx) -> blacksilk_tx::px::PxTx {
+    let mut v = px.clone();
+    v.bridge_out = v.bridge_in + 1;
+    let delta = v.bridge_out - px.bridge_out;
+    let shift = blacksilk_crypto::Scalar::from(delta) * blacksilk_crypto::generators::h();
+    v.pseudo_outs[0] = Point::from_point(v.pseudo_outs[0].point() - shift);
+    v
+}
+
+/// The contextual PX samples on the golden PX transaction (record
+/// `fingerprint-px-samples`), as boundary pairs: one case on each side of
+/// the rule's bound, the passing one reaching a later, distinct verdict.
+///
+/// - **Transaction verdicts** (`rules.sample.px.verdict`):
+///   `validate_px_without_proof` at the fixture's height `h` on the fixture
+///   chain, every rule of `validate_px` but PX5, in its order: PX6 (the
+///   validity window, `Window::contains`): `(h + 1, 0)` and `(0, h − 1)` are
+///   refused, `(h, h)` passes it and fails at the CLSAG, which signs the
+///   window; PX4 (the pool) on [`px_bridge_out_variant`]: refused on a pool
+///   of 0, passing on a pool of 1 (then the CLSAG); B8 (the tree capacity,
+///   two commitments): refused with one free leaf, valid with two.
+/// - **Block verdicts** (`rules.sample.block.verdict`):
+///   `validate_block_transactions_cached` on the block of the fixture
+///   coinbase and one PX transaction, at the coinbase's height `b`, with the
+///   header commitments of `BlockContext::committing` and the reward that
+///   balances the coinbase (B3), every PX proof vouched for by the cache
+///   (`proof_verified` true: PX6 must still be checked, AT-5): PX6 `(b + 1,
+///   0)` refused, `(b, 0)` passing; PX4 on a pool of 0 and 1; B8 with one and
+///   two free leaves (`PxTreeFull { leaves: 2, free: 1 }`). A case that
+///   passes the sampled rule fails at C1: the fixture's ring members are
+///   immature at height `b`, so no block sample reaches the range proofs or a
+///   signature.
+fn px_context_samples(m: &mut Manifest) {
+    use blacksilk_px::tree::CAPACITY;
+    use blacksilk_tx::px::PxTx;
+    use blacksilk_tx::validate::validate_px_without_proof;
+    let p = PxFixture::get();
+    let f = Fixture::get();
+    let rules = fixture_rules();
+    let h = f.height;
+    let window = |not_before: u64, not_after: u64| {
+        let mut v = p.px.clone();
+        v.window.not_before = not_before;
+        v.window.not_after = not_after;
+        v
+    };
+    let bridge_out = px_bridge_out_variant(&p.px);
+    let on = |pool: u128, tree_size: u64| FixtureChain {
+        pool,
+        tree_size,
+        ..FixtureChain::new(&f.outputs)
+    };
+    let tx_verdict = |t: &PxTx, chain: &FixtureChain| Sampled {
+        verdict: verdict_text(validate_px_without_proof(t, chain, h, &rules)),
+        input: input_hash(&Transaction::Px(Box::new(t.clone())).encode()),
+        context: verdict_context(chain, h, &rules),
+    };
+    let tx_cases: [(&str, Sampled); 8] = [
+        ("valid", tx_verdict(&p.px, &on(0, 0))),
+        (
+            "window (h + 1, 0)",
+            tx_verdict(&window(h + 1, 0), &on(0, 0)),
+        ),
+        (
+            "window (0, h - 1)",
+            tx_verdict(&window(0, h - 1), &on(0, 0)),
+        ),
+        ("window (h, h)", tx_verdict(&window(h, h), &on(0, 0))),
+        (
+            "bridge_out = bridge_in + 1, pool 0",
+            tx_verdict(&bridge_out, &on(0, 0)),
+        ),
+        (
+            "bridge_out = bridge_in + 1, pool 1",
+            tx_verdict(&bridge_out, &on(1, 0)),
+        ),
+        (
+            "tree size CAPACITY - 1",
+            tx_verdict(&p.px, &on(0, CAPACITY - 1)),
+        ),
+        (
+            "tree size CAPACITY - 2",
+            tx_verdict(&p.px, &on(0, CAPACITY - 2)),
+        ),
+    ];
+    for (name, v) in tx_cases {
+        v.record(m, &format!("rules.sample.px.verdict ({name})"));
+    }
+
+    // The block samples: the fixture coinbase and one PX transaction.
+    m.bytes(
+        "rules.sample.block.verdict input.coinbase",
+        &input_hash(&Fixture::get().coinbase.encode()),
+    );
+    // A fixed seed: the samples never draw from it (every case stops before
+    // the batched range proofs; `block_samples_never_draw_randomness`).
+    let mut rng =
+        <rand_chacha::ChaCha20Rng as rand_chacha::rand_core::SeedableRng>::from_seed([0; 32]);
+    for (name, v) in block_samples(&mut rng) {
+        v.record(m, &format!("rules.sample.block.verdict ({name})"));
+    }
+}
+
+/// The block verdict samples of [`px_context_samples`]:
+/// `validate_block_transactions_cached` on the fixture coinbase and one
+/// variant of the golden PX transaction, at the coinbase's height `b`, with
+/// `rng` for the batched range proofs, which no case reaches (each stops at
+/// the sampled rule or at C1, before T10).
+fn block_samples<R>(rng: &mut R) -> [(&'static str, Sampled); 6]
+where
+    R: rand_chacha::rand_core::RngCore + rand_chacha::rand_core::CryptoRng,
+{
+    use blacksilk_px::tree::CAPACITY;
+    use blacksilk_tx::px::PxTx;
+    use blacksilk_tx::validate::validate_block_transactions_cached;
+    let p = PxFixture::get();
+    let f = Fixture::get();
+    let rules = fixture_rules();
+    let coinbase = &f.coinbase;
+    let (b, paid) = match coinbase {
+        Transaction::Coinbase(c) => (c.height, c.total()),
+        _ => unreachable!("the fixture coinbase"),
+    };
+    let window = |not_before: u64, not_after: u64| {
+        let mut v = p.px.clone();
+        v.window.not_before = not_before;
+        v.window.not_after = not_after;
+        v
+    };
+    let bridge_out = px_bridge_out_variant(&p.px);
+    let on = |pool: u128, tree_size: u64| FixtureChain {
+        pool,
+        tree_size,
+        ..FixtureChain::new(&f.outputs)
+    };
+    let mut block_verdict = |t: &PxTx, chain: &FixtureChain| {
+        let px = Transaction::Px(Box::new(t.clone()));
+        let reward = u64::try_from(paid - u128::from(px.fee()))
+            .expect("the fixture coinbase pays the reward and the PX fee");
+        let txs = [coinbase.clone(), px];
+        let ctx = blacksilk_tx::BlockContext::committing(b, reward, &txs, chain);
+        let r = validate_block_transactions_cached(&txs, &ctx, chain, &rules, rng, &|_| true);
+        Sampled {
+            verdict: block_verdict_text(r),
+            input: input_hash(&txs[1].encode()),
+            context: verdict_context(chain, b, &rules),
+        }
+    };
+    [
+        (
+            "window (b + 1, 0), cached proof",
+            block_verdict(&window(b + 1, 0), &on(0, 0)),
+        ),
+        (
+            "window (b, 0), cached proof",
+            block_verdict(&window(b, 0), &on(0, 0)),
+        ),
+        (
+            "bridge_out = bridge_in + 1, pool 0",
+            block_verdict(&bridge_out, &on(0, 0)),
+        ),
+        (
+            "bridge_out = bridge_in + 1, pool 1",
+            block_verdict(&bridge_out, &on(1, 0)),
+        ),
+        (
+            "tree size CAPACITY - 1",
+            block_verdict(&p.px, &on(0, CAPACITY - 1)),
+        ),
+        (
+            "tree size CAPACITY - 2",
+            block_verdict(&p.px, &on(0, CAPACITY - 2)),
+        ),
+    ]
 }
 
 /// Lowercase hex.
@@ -2055,6 +2271,10 @@ mod tests {
         // fixture transfer and its variants, the golden PX fixture's stateless
         // verdicts (the ciphertext `R` rule included), and the deploy's full
         // verdicts.
+        // A block sample that passes its rule fails at C1: the first ring
+        // member of the PX transaction's input is immature at height 1.
+        const BLOCK_IMMATURE: &str =
+            "Err(Tx { index: 1, error: RingMemberTooYoung { input: 0, index: 0 } })";
         let text = |name: &str| match get(name) {
             Value::Text(t) => t,
             other => panic!("{other:?}"),
@@ -2144,6 +2364,43 @@ mod tests {
                     ),
                 ][..],
             ),
+            (
+                // fingerprint-px-samples: PX6, PX4 and B8 as boundary pairs.
+                "rules.sample.px.verdict",
+                &[
+                    ("valid", "Ok(())"),
+                    ("window (h + 1, 0)", "Err(PxWindow)"),
+                    ("window (0, h - 1)", "Err(PxWindow)"),
+                    ("window (h, h)", "Err(InvalidSignature { input: 0 })"),
+                    ("bridge_out = bridge_in + 1, pool 0", "Err(PxPoolUnderflow)"),
+                    (
+                        "bridge_out = bridge_in + 1, pool 1",
+                        "Err(InvalidSignature { input: 0 })",
+                    ),
+                    ("tree size CAPACITY - 1", "Err(PxTreeFull)"),
+                    ("tree size CAPACITY - 2", "Ok(())"),
+                ][..],
+            ),
+            (
+                "rules.sample.block.verdict",
+                &[
+                    (
+                        "window (b + 1, 0), cached proof",
+                        "Err(Tx { index: 1, error: PxWindow })",
+                    ),
+                    ("window (b, 0), cached proof", BLOCK_IMMATURE),
+                    (
+                        "bridge_out = bridge_in + 1, pool 0",
+                        "Err(Tx { index: 1, error: PxPoolUnderflow })",
+                    ),
+                    ("bridge_out = bridge_in + 1, pool 1", BLOCK_IMMATURE),
+                    (
+                        "tree size CAPACITY - 1",
+                        "Err(PxTreeFull { leaves: 2, free: 1 })",
+                    ),
+                    ("tree size CAPACITY - 2", BLOCK_IMMATURE),
+                ][..],
+            ),
         ] {
             for (case, golden) in cases {
                 assert_eq!(
@@ -2162,13 +2419,49 @@ mod tests {
                     "rules.sample.verdict (",
                     "rules.sample.px.stateless_verdict (",
                     "rules.sample.deploy.verdict (",
+                    "rules.sample.px.verdict (",
+                    "rules.sample.block.verdict (",
                 ]
                 .iter()
                 .any(|p| name.starts_with(p))
                     && !name.contains(") input")
             })
             .count();
-        assert_eq!(n_verdicts, 36);
+        assert_eq!(n_verdicts, 50);
+        // fingerprint-px-samples: the context of the PX and block samples
+        // (the block's height is the fixture coinbase's, 1).
+        for (name, value) in [
+            (
+                "rules.sample.px.verdict (bridge_out = bridge_in + 1, pool 1) input.pool",
+                Value::U64(1),
+            ),
+            (
+                "rules.sample.px.verdict (tree size CAPACITY - 1) input.tree size",
+                Value::U64(blacksilk_px::tree::CAPACITY - 1),
+            ),
+            (
+                "rules.sample.px.verdict (tree size CAPACITY - 2) input.tree size",
+                Value::U64(blacksilk_px::tree::CAPACITY - 2),
+            ),
+            (
+                "rules.sample.block.verdict (bridge_out = bridge_in + 1, pool 1) input.pool",
+                Value::U64(1),
+            ),
+            (
+                "rules.sample.block.verdict (tree size CAPACITY - 1) input.tree size",
+                Value::U64(blacksilk_px::tree::CAPACITY - 1),
+            ),
+            (
+                "rules.sample.block.verdict (tree size CAPACITY - 2) input.tree size",
+                Value::U64(blacksilk_px::tree::CAPACITY - 2),
+            ),
+            (
+                "rules.sample.block.verdict (window (b + 1, 0), cached proof) input.height",
+                Value::U64(1),
+            ),
+        ] {
+            assert_eq!(get(name), value, "{name}");
+        }
     }
 
     /// fingerprint-sample-inputs: every verdict variant records an input that
@@ -2188,6 +2481,7 @@ mod tests {
             "rules.sample.verdict",
             "rules.sample.px.stateless_verdict",
             "rules.sample.deploy.verdict",
+            "rules.sample.px.verdict",
         ] {
             let valid = get(&format!("{family} (valid) input")).expect("the valid input");
             assert!(matches!(valid, Value::Bytes(b) if b.len() == 32));
@@ -2220,6 +2514,7 @@ mod tests {
                         "signature domain" => {
                             assert_ne!(*v, Value::Bytes(rules.domain().bytes().to_vec()))
                         }
+                        "pool" | "tree size" => assert_ne!(*v, Value::U64(0)),
                         "spent key image" | "missing ring member" => {}
                         other => panic!("{family} ({case}): unexpected part {other}"),
                     }
@@ -2234,8 +2529,43 @@ mod tests {
                 "rules.sample.verdict (ring member unknown)",
                 "rules.sample.verdict (coinbase ring member immature (height 60))",
                 "rules.sample.verdict (other branch id)",
+                "rules.sample.px.verdict (tree size CAPACITY - 1)",
+                "rules.sample.px.verdict (tree size CAPACITY - 2)",
             ]
         );
+        // fingerprint-px-samples: within each family, no two cases record
+        // the same input (the input hash with every context entry), so the
+        // two cases of a boundary pair differ in their input, not only in
+        // their names.
+        for family in [
+            "rules.sample.verdict",
+            "rules.sample.px.stateless_verdict",
+            "rules.sample.deploy.verdict",
+            "rules.sample.px.verdict",
+            "rules.sample.block.verdict",
+        ] {
+            let mut inputs: Vec<Vec<(&str, &Value)>> = Vec::new();
+            for (n, _) in e {
+                let Some(case) = n
+                    .strip_prefix(&format!("{family} ("))
+                    .and_then(|c| c.strip_suffix(") input"))
+                else {
+                    continue;
+                };
+                let prefix = format!("{family} ({case}) input");
+                let input: Vec<(&str, &Value)> = e
+                    .iter()
+                    .filter(|(k, _)| *k == prefix || k.starts_with(&format!("{prefix}.")))
+                    .map(|(k, v)| (&k[prefix.len()..], v))
+                    .collect();
+                assert!(
+                    !inputs.contains(&input),
+                    "{family} ({case}): the input of another case"
+                );
+                inputs.push(input);
+            }
+            assert!(inputs.len() >= 5, "{family}");
+        }
         // The other-branch case records the branch it signs under, not
         // the fixture's.
         let other = fixture_rules().domain();
@@ -2394,6 +2724,48 @@ mod tests {
             assert_eq!(network_by_name(crate::network_name(n)), Some(n));
         }
         assert_eq!(network_by_name("x"), None);
+    }
+
+    /// fingerprint-px-samples: the block samples never draw from their RNG
+    /// (each stops at its rule or at C1, before the batched range proofs),
+    /// so its fixed seed cannot reach the manifest; and they record the
+    /// manifest's verdicts.
+    #[test]
+    fn block_samples_never_draw_randomness() {
+        use rand_chacha::rand_core::{CryptoRng, Error, RngCore, SeedableRng};
+        struct Counting(rand_chacha::ChaCha20Rng, u64);
+        impl RngCore for Counting {
+            fn next_u32(&mut self) -> u32 {
+                self.1 += 1;
+                self.0.next_u32()
+            }
+            fn next_u64(&mut self) -> u64 {
+                self.1 += 1;
+                self.0.next_u64()
+            }
+            fn fill_bytes(&mut self, dest: &mut [u8]) {
+                self.1 += 1;
+                self.0.fill_bytes(dest)
+            }
+            fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
+                self.1 += 1;
+                self.0.try_fill_bytes(dest)
+            }
+        }
+        impl CryptoRng for Counting {}
+        let mut rng = Counting(rand_chacha::ChaCha20Rng::seed_from_u64(7), 0);
+        let cases = block_samples(&mut rng);
+        assert_eq!(rng.1, 0, "a block sample drew from the RNG");
+        let m = rules_manifest(Network::Regtest);
+        for (name, v) in cases {
+            let entry = format!("rules.sample.block.verdict ({name})");
+            assert!(
+                m.entries()
+                    .iter()
+                    .any(|(n, x)| *n == entry && *x == Value::Text(v.verdict.clone())),
+                "{entry}"
+            );
+        }
     }
 
     /// Blank and whitespace-only lines are skipped by both fixture parsers:

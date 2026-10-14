@@ -1944,3 +1944,35 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
 - **Red team:** internal red team (2026-10-14): merge with fixes (F1 status wording,
   F2 test message, F3 recorded as open), applied; merged into rebuild/core after this
   review.
+
+## PX verdict samples in the fingerprint (lead decision, 2026-10-14)
+
+- **Why:** the rules fingerprint had no verdict sample for PX6 (the validity window),
+  PX4 (the pool) or B8 (the PX tree capacity), and none on the block path; a boundary
+  change there, or PX6 dropped for the PX transactions whose proof the verified-proof
+  cache vouches for, moved no fingerprint (STATUS, fingerprint row). Step 5(B) of the
+  owner-approved freeze-gate plan.
+- **Decision:** boundary pairs on the golden PX transaction: eight transaction verdicts
+  (`validate_px_without_proof`: windows `(h + 1, 0)`, `(0, h − 1)`, `(h, h)`; a
+  `bridge_out = bridge_in + 1` variant on a pool of 0 and 1; one and two free tree
+  leaves) and six block verdicts on `validate_block_transactions_cached` with every
+  proof vouched for (PX6, PX4 and B8 as pairs). `FixtureChain` gains `pool` and
+  `tree_size`, recorded as context entries. `BlockError::fingerprint_text`, a
+  hand-written exhaustive text like `TxError`'s. PX5 stays out of the manifest and
+  pinned by tests: measured at about +215 ms release and +6.2 s debug cold start,
+  above the lead's ~0.5 s bound. The 14 samples cost about +245 ms release cold start
+  (143 → 390 ms), accepted.
+- **Dependency (lead decision under delegation):** `rand_chacha` moves from the node's
+  dev-dependencies to its dependencies: the block samples need an `RngCore +
+  CryptoRng`, which no node dependency offers; a fixed seed, never drawn from (a test
+  counts zero draws). No lockfile change: `Cargo.lock` is byte-identical (the node's
+  lock entry already listed `rand_chacha` 0.3.1, which chain already uses); lockfile
+  gate and `cargo deny` pass.
+- **Rejected:** single samples instead of pairs (blind to a bound moved by one); the
+  uncached block path for PX6; a `rand_core` re-export from tx with a node-local RNG;
+  no block samples; PX5 in the manifest.
+- **Scope:** no validity rule, validation order, network id, genesis or D0 change; the
+  rules and consensus fingerprints of every network change, identity unchanged.
+  Record: docs/reviews/v3-consensus-changes.md#fingerprint-px-samples
+  (`Revision: none (fingerprint coverage only; no verdict changes)`).
+- **Red team:** internal red team (2026-10-14): merge with fixes (F1 doc comment, F2 status, F3 fixture assumption, F4 wording), applied; merged into rebuild/core after this review.

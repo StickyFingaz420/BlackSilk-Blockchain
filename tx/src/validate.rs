@@ -1446,6 +1446,167 @@ pub enum BlockError {
     },
 }
 
+impl BlockError {
+    /// The text of this error in the consensus fingerprint's block verdict
+    /// samples (node/src/fingerprint.rs, record
+    /// docs/reviews/v3-consensus-changes.md#fingerprint-px-samples), in the
+    /// grammar of [`TxError::fingerprint_text`]: the variant's name, then its
+    /// fields in declaration order, each integer as unsigned decimal (integer
+    /// `Display`), and the error of [`BlockError::Tx`] as its own
+    /// [`TxError::fingerprint_text`]:
+    ///
+    /// - a unit variant: `Name`;
+    /// - a tuple variant: `Name(d)`;
+    /// - a struct variant: `Name { f1: d1, f2: d2 }` (field names as declared;
+    ///   one space after `{`, after each `:` and `,`, and before `}`).
+    ///
+    /// This is the text the derived `Debug` printed for these shapes when the
+    /// samples were pinned, written out because the standard library
+    /// documents derived `Debug` output as unstable across Rust versions.
+    /// **Fingerprint-pinned: never derive it from `Debug`**, and never change
+    /// an existing variant's text (that moves the rules fingerprint). The
+    /// match is exhaustive: a new variant fails to compile until it has a
+    /// text here and an index in [`Self::variant_index`]. Adding it to
+    /// [`Self::ALL`] and to the tests' golden table is by convention; the
+    /// sampled verdicts stay pinned exactly by the node's
+    /// `samples_are_the_golden_values`.
+    pub fn fingerprint_text(&self) -> String {
+        match *self {
+            BlockError::MissingCoinbase => "MissingCoinbase".to_string(),
+            BlockError::UnexpectedCoinbase { index } => {
+                format!("UnexpectedCoinbase {{ index: {index} }}")
+            }
+            BlockError::CoinbaseHeight { expected, found } => {
+                format!("CoinbaseHeight {{ expected: {expected}, found: {found} }}")
+            }
+            BlockError::CoinbaseOutputCount(x) => format!("CoinbaseOutputCount({x})"),
+            BlockError::CoinbaseOutputKeyIdentity { output } => {
+                format!("CoinbaseOutputKeyIdentity {{ output: {output} }}")
+            }
+            BlockError::CoinbaseEphemeralIdentity { output } => {
+                format!("CoinbaseEphemeralIdentity {{ output: {output} }}")
+            }
+            BlockError::CoinbaseOutputsNotSorted => "CoinbaseOutputsNotSorted".to_string(),
+            BlockError::CoinbaseAmount { claimed, allowed } => {
+                format!("CoinbaseAmount {{ claimed: {claimed}, allowed: {allowed} }}")
+            }
+            BlockError::TxRootMismatch => "TxRootMismatch".to_string(),
+            BlockError::OutputCountMismatch { expected, found } => {
+                format!("OutputCountMismatch {{ expected: {expected}, found: {found} }}")
+            }
+            BlockError::OutputRootMismatch => "OutputRootMismatch".to_string(),
+            BlockError::PxRootMismatch => "PxRootMismatch".to_string(),
+            BlockError::WeightExceeded { weight, max } => {
+                format!("WeightExceeded {{ weight: {weight}, max: {max} }}")
+            }
+            BlockError::Tx { index, error } => format!(
+                "Tx {{ index: {index}, error: {} }}",
+                error.fingerprint_text()
+            ),
+            BlockError::RangeProofBatch => "RangeProofBatch".to_string(),
+            BlockError::PxBytesExceeded { bytes, max } => {
+                format!("PxBytesExceeded {{ bytes: {bytes}, max: {max} }}")
+            }
+            BlockError::DeployBytesExceeded { bytes, max } => {
+                format!("DeployBytesExceeded {{ bytes: {bytes}, max: {max} }}")
+            }
+            BlockError::PxTreeFull { leaves, free } => {
+                format!("PxTreeFull {{ leaves: {leaves}, free: {free} }}")
+            }
+        }
+    }
+
+    /// The position of this variant in [`Self::ALL`] (declaration order).
+    /// Exhaustive, so a new variant fails to compile here until it is given
+    /// a position. The assertion below the `impl` checks that every entry of
+    /// `ALL` sits at its own index; that `ALL` lists every variant is by
+    /// convention.
+    const fn variant_index(&self) -> usize {
+        match self {
+            BlockError::MissingCoinbase => 0,
+            BlockError::UnexpectedCoinbase { .. } => 1,
+            BlockError::CoinbaseHeight { .. } => 2,
+            BlockError::CoinbaseOutputCount(_) => 3,
+            BlockError::CoinbaseOutputKeyIdentity { .. } => 4,
+            BlockError::CoinbaseEphemeralIdentity { .. } => 5,
+            BlockError::CoinbaseOutputsNotSorted => 6,
+            BlockError::CoinbaseAmount { .. } => 7,
+            BlockError::TxRootMismatch => 8,
+            BlockError::OutputCountMismatch { .. } => 9,
+            BlockError::OutputRootMismatch => 10,
+            BlockError::PxRootMismatch => 11,
+            BlockError::WeightExceeded { .. } => 12,
+            BlockError::Tx { .. } => 13,
+            BlockError::RangeProofBatch => 14,
+            BlockError::PxBytesExceeded { .. } => 15,
+            BlockError::DeployBytesExceeded { .. } => 16,
+            BlockError::PxTreeFull { .. } => 17,
+        }
+    }
+
+    /// Every variant once (by convention, as [`TxError::ALL`]), in
+    /// declaration order, with field values that differ from every other
+    /// field value in the list and in `TxError::ALL` (`2000 + 10·i + k` for
+    /// field `k` of variant `i`; the nested error of `Tx` takes the next
+    /// values), so a text that swaps or repeats fields differs from the
+    /// golden one (tests below).
+    const ALL: [BlockError; 18] = [
+        BlockError::MissingCoinbase,
+        BlockError::UnexpectedCoinbase { index: 2010 },
+        BlockError::CoinbaseHeight {
+            expected: 2020,
+            found: 2021,
+        },
+        BlockError::CoinbaseOutputCount(2030),
+        BlockError::CoinbaseOutputKeyIdentity { output: 2040 },
+        BlockError::CoinbaseEphemeralIdentity { output: 2050 },
+        BlockError::CoinbaseOutputsNotSorted,
+        BlockError::CoinbaseAmount {
+            claimed: 2070,
+            allowed: 2071,
+        },
+        BlockError::TxRootMismatch,
+        BlockError::OutputCountMismatch {
+            expected: 2090,
+            found: 2091,
+        },
+        BlockError::OutputRootMismatch,
+        BlockError::PxRootMismatch,
+        BlockError::WeightExceeded {
+            weight: 2120,
+            max: 2121,
+        },
+        BlockError::Tx {
+            index: 2130,
+            error: TxError::UnknownRingMember {
+                input: 2131,
+                index: 2132,
+            },
+        },
+        BlockError::RangeProofBatch,
+        BlockError::PxBytesExceeded {
+            bytes: 2150,
+            max: 2151,
+        },
+        BlockError::DeployBytesExceeded {
+            bytes: 2160,
+            max: 2161,
+        },
+        BlockError::PxTreeFull {
+            leaves: 2170,
+            free: 2171,
+        },
+    ];
+}
+
+const _: () = {
+    let mut i = 0;
+    while i < BlockError::ALL.len() {
+        assert!(BlockError::ALL[i].variant_index() == i);
+        i += 1;
+    }
+};
+
 /// Validates the transactions of a block at `ctx.height` against `chain` (the
 /// state after the parent block). Checks B1–B8, B-OMR, B-PXR and every T/C
 /// rule, cheap first (docs/transactions.md §8.3): structure, B5, B-OMR, B6,
@@ -1779,7 +1940,7 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
 
 #[cfg(test)]
 mod tests {
-    use super::TxError;
+    use super::{BlockError, TxError};
 
     /// The fingerprint text of every variant (record
     /// `fingerprint-stable-verdicts`). Written out, not computed: a change of
@@ -1853,6 +2014,78 @@ mod tests {
     #[test]
     fn fingerprint_texts_are_distinct_and_well_formed() {
         let texts: Vec<String> = TxError::ALL.iter().map(TxError::fingerprint_text).collect();
+        let names: Vec<&str> = texts
+            .iter()
+            .map(|t| t.split(['(', ' ']).next().expect("a name"))
+            .collect();
+        for (i, (t, name)) in texts.iter().zip(&names).enumerate() {
+            assert_ne!(t, "Ok(())");
+            assert!(
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphabetic()),
+                "{t}"
+            );
+            for (u, other) in texts.iter().zip(&names).skip(i + 1) {
+                assert_ne!(t, u);
+                assert_ne!(name, other);
+            }
+        }
+    }
+
+    /// The fingerprint text of every `BlockError` variant (record
+    /// `fingerprint-px-samples`). Written out, not computed: a change of any
+    /// text, of the grammar, of the field order or of the nested error's
+    /// text fails here.
+    const BLOCK_GOLDEN: [&str; 18] = [
+        "MissingCoinbase",
+        "UnexpectedCoinbase { index: 2010 }",
+        "CoinbaseHeight { expected: 2020, found: 2021 }",
+        "CoinbaseOutputCount(2030)",
+        "CoinbaseOutputKeyIdentity { output: 2040 }",
+        "CoinbaseEphemeralIdentity { output: 2050 }",
+        "CoinbaseOutputsNotSorted",
+        "CoinbaseAmount { claimed: 2070, allowed: 2071 }",
+        "TxRootMismatch",
+        "OutputCountMismatch { expected: 2090, found: 2091 }",
+        "OutputRootMismatch",
+        "PxRootMismatch",
+        "WeightExceeded { weight: 2120, max: 2121 }",
+        "Tx { index: 2130, error: UnknownRingMember { input: 2131, index: 2132 } }",
+        "RangeProofBatch",
+        "PxBytesExceeded { bytes: 2150, max: 2151 }",
+        "DeployBytesExceeded { bytes: 2160, max: 2161 }",
+        "PxTreeFull { leaves: 2170, free: 2171 }",
+    ];
+
+    #[test]
+    fn block_fingerprint_texts_are_the_golden_values() {
+        for (e, golden) in BlockError::ALL.iter().zip(BLOCK_GOLDEN) {
+            assert_eq!(e.fingerprint_text(), golden);
+        }
+        // The nested error is written by `TxError::fingerprint_text`, for
+        // every `TxError` variant.
+        for e in TxError::ALL {
+            assert_eq!(
+                BlockError::Tx { index: 7, error: e }.fingerprint_text(),
+                format!("Tx {{ index: 7, error: {} }}", e.fingerprint_text())
+            );
+        }
+    }
+
+    /// The runtime twin of the const assertion after `impl BlockError`.
+    #[test]
+    fn block_all_lists_every_variant_in_index_order() {
+        for (i, e) in BlockError::ALL.iter().enumerate() {
+            assert_eq!(e.variant_index(), i);
+        }
+        assert_eq!(BlockError::ALL.len(), BLOCK_GOLDEN.len());
+    }
+
+    #[test]
+    fn block_fingerprint_texts_are_distinct_and_well_formed() {
+        let texts: Vec<String> = BlockError::ALL
+            .iter()
+            .map(BlockError::fingerprint_text)
+            .collect();
         let names: Vec<&str> = texts
             .iter()
             .map(|t| t.split(['(', ' ']).next().expect("a name"))

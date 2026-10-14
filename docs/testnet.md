@@ -189,7 +189,13 @@ Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
   proof transcript), **transaction samples** on a pinned fixture transfer
   (`node/src/fingerprint_fixture.txt`: its weight, id and signature message, and
   the validation verdict of the transfer and of one variant per error class a
-  transfer can reach), and the **rule-revision list**, one entry per reviewed
+  transfer can reach), **PX and block verdict samples** on the golden PX
+  transaction (the stateless PX rules and the deploy rules; and, as boundary
+  pairs, PX6 the validity window, PX4 the pool and B8 the tree capacity, both
+  for one transaction and in a block whose PX proof the verified-proof cache vouches
+  for; reviews/v3-consensus-changes.md#fingerprint-px-samples; the PX proof
+  verification itself, PX5, is pinned by tests, not sampled, for start-up cost),
+  and the **rule-revision list**, one entry per reviewed
   rule change (each record in reviews/v3-consensus-changes.md carries a
   `Revision:` line, and a test ties the two). Each sample's **input** is
   recorded next to its output (the sampled numbers and bytes, or a hash of a
@@ -219,7 +225,8 @@ Limits of the check:
   a sample or a revision reaches it. A change that keeps every sampled result
   (for example a different order of checks with the same verdicts, or a rule
   only a PX proof or a full block exercises: CLSAG and proof internals beyond
-  the samples, the canonical-proof rules, tree capacity, block-level rules)
+  the samples, the canonical-proof rules, block-level rules other than the
+  sampled PX6, PX4 and B8 verdicts)
   leaves the fingerprints unchanged, and the revision list is maintained by hand
   (a test ties it to the records). Equal fingerprints do not show equal
   binaries; the binary hash and the commit do.

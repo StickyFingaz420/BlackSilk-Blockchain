@@ -43,9 +43,14 @@ getrandom = "0.2"
 fs2 = "0.4"
 dirs = "5"
 toml = "0.8"
+# The block-form fingerprint samples (src/fingerprint.rs, record
+# fingerprint-px-samples) need an `RngCore + CryptoRng` for
+# `validate_block_transactions_cached`: a fixed seed, never drawn from (every
+# sample stops before the batched range proofs). Moved from the
+# dev-dependencies; already in the graph via chain, Cargo.lock unchanged.
+rand_chacha = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 # Fault injection for the halt exit-status test (tests/halt_exit.rs).
 blacksilk-chain = { path = "../chain", features = ["test-hooks"] }
-rand_chacha = { version = "0.3", default-features = false }
 tempfile = "3"
