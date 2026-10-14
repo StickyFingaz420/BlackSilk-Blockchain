@@ -4245,6 +4245,31 @@ every budget and program table at its V12 cap (68.5 M weighted cells, FRI schedu
   `v12-caps-single-definition`: one definition, no restatement); one run on one
   runner class.
 
+### Follow-up (B2 size measurement, 2026-10-14)
+
+Item 12 (i) is resolved for the size-widest shape; evidence and documentation only, no
+rule or pin changes. GitHub Actions run 38569791238 (`px-widest.yml`, branch
+`gate/b2-size-widest` at `2018636`, `config=v12size`, `count=2`, `swap=on`;
+ubuntu-24.04, 4 vCPU, 15,989 MiB) proved and verified the size-widest V12 shape twice;
+evidence docs/evidence/b2-v12size-2026-10-14/README.md.
+- The shape: a table at every height from 2^8 to 2^16, FRI schedule
+  [1, 1, 1, 1, 1, 1, 1, 1, 3]. The kernel fixes 2^8, 2^12, 2^13 and 2^16; the free
+  heights 2^9 and 2^10 come from the two functions' **memory-init tables** (keys budgets
+  512 and 1,024), 2^11 from shift and mul, 2^14 from bit, 2^15 from add and lt; both
+  functions run a synthetic echo program (13 and 14 code words) admitted by
+  `px::deploy_caps`. (The 2026-10-10 entry above describes this shape as needing
+  "output tables at 2^9"; the output tables are not needed and stay at 2^8.)
+- Why it is the widest: only 2^9, 2^10, 2^11, 2^14 and 2^15 are free in any
+  two-function statement, so there are 32 possible height sets; the example reached
+  and ranked all 32, and the bytes depend on the height set only, apart from the
+  query draw.
+- Proofs of 3,704,031 and 3,694,591 bytes (non-digest 3,306,469 both), verified
+  (about 364 ms), proving 148.0 and 146.3 s; the model expects 3,700,725 (sd 5,092),
+  and reproduces both byte-exactly (local check). Below 3.8 MB and `MAX_PROOF_BYTES`.
+- Peak RSS 5,410 MiB, no swap, no OOM.
+- Still open: the worst case over the query positions (3,780,959 bytes, 19,041 below
+  3.8 MB) is a model bound; one run on one runner class.
+
 ---
 
 <a id="fingerprint-sample-inputs"></a>

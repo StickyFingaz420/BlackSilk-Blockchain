@@ -111,6 +111,8 @@ that set:
 
 ### Verifier time
 
+*(Added note, 2026-10-14: for the size-widest shape under the later V12 caps, verification was measured at about 0.36 s; see [b2-v12size-2026-10-14](../b2-v12size-2026-10-14/README.md).)*
+
 Not measured for the widest shape, because it cannot be proven here. The verifier hashes
 the same opened rows as for any shape. It does more Merkle compressions (model: 25,082
 (a) and 26,563 (b), against 10,086 for base) and runs 13–15 FRI rounds instead of 5.

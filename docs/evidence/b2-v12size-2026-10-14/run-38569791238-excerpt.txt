@@ -1,0 +1,160 @@
+Excerpt of the GitHub Actions log of run 38569791238 (workflow px-widest.yml, job measure),
+branch gate/b2-size-widest at commit 2018636, inputs config=v12size count=2 swap=on.
+Fetched read-only with: gh run view 38569791238 --repo StickyFingaz420/BlackSilk-Blockchain --log
+Each line is prefixed with its step name; timestamps, ANSI colour codes and trailing spaces are stripped.
+Line ranges of the full log are given in brackets. Nothing else is altered.
+
+=== Runner image [log lines 17-18]
+Set up job| Image: ubuntu-24.04
+Set up job| Version: 20261012.334.1
+
+=== Checkout [log lines 94-103, selected]
+Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09| [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +2018636057013ea05d4cbca5fd85316a3c2ef23a:refs/remotes/origin/gate/b2-size-widest
+Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09|  * [new ref]         2018636057013ea05d4cbca5fd85316a3c2ef23a -> origin/gate/b2-size-widest
+Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09| [command]/usr/bin/git checkout --progress --force -B gate/b2-size-widest refs/remotes/origin/gate/b2-size-widest
+
+=== Shape and admission, no proving [log lines 526-560]
+Shape and admission (no proving)| size search: 1024 shared-table choices x 56 x 56 per function, 32 reachable height sets; best: 9 FRI rounds, 9 distinct heights, 32.1 M weighted cells (the fewest of those)
+Shape and admission (no proving)| v12size: both budgets and both programs pass the V12 deploy rules (blacksilk_px::deploy_caps)
+Shape and admission (no proving)| function 0: 13 code words, image 45, used [154, 45, 88, 0, 22, 0, 0, 0] (0 keys outside the image), budget [256, 512, 88, 7192, 22, 0, 0, 0]
+Shape and admission (no proving)| function 1: 14 code words, image 46, used [154, 46, 88, 0, 22, 0, 0, 0] (0 keys outside the image), budget [256, 1024, 88, 7192, 22, 0, 0, 0]
+Shape and admission (no proving)| v12size: budget C  Budget { cycles: 256, keys: 512, add: 88, bit: 7192, lt: 22, shift: 0, mul: 0, poseidon: 0 }
+Shape and admission (no proving)| v12size: budget C2 Budget { cycles: 256, keys: 1024, add: 88, bit: 7192, lt: 22, shift: 0, mul: 0, poseidon: 0 }
+Shape and admission (no proving)| v12size: table heights
+Shape and admission (no proving)|     byte         2^16 =  65536 rows, width  18, quotient chunks  4,   4.85 M cells
+Shape and admission (no proving)|     k.program    2^12 =   4096 rows, width  38, quotient chunks  4,   0.39 M cells
+Shape and admission (no proving)|     k.image      2^12 =   4096 rows, width  16, quotient chunks  4,   0.29 M cells
+Shape and admission (no proving)|     k.mem_init   2^13 =   8192 rows, width  29, quotient chunks  4,   0.70 M cells
+Shape and admission (no proving)|     k.cpu        2^16 =  65536 rows, width 103, quotient chunks 16,  16.71 M cells
+Shape and admission (no proving)|     alu.add      2^15 =  32768 rows, width  27, quotient chunks  4,   2.72 M cells
+Shape and admission (no proving)|     alu.bit      2^14 =  16384 rows, width  24, quotient chunks  4,   1.31 M cells
+Shape and admission (no proving)|     alu.lt       2^15 =  32768 rows, width  34, quotient chunks  8,   4.00 M cells
+Shape and admission (no proving)|     alu.shift    2^11 =   2048 rows, width  44, quotient chunks  8,   0.27 M cells
+Shape and admission (no proving)|     alu.mul      2^11 =   2048 rows, width  53, quotient chunks  8,   0.29 M cells
+Shape and admission (no proving)|     k.output     2^8  =    256 rows, width  16, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)|     poseidon2    2^8  =    256 rows, width 540, quotient chunks  8,   0.16 M cells
+Shape and admission (no proving)|     f0.program   2^8  =    256 rows, width  38, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)|     f0.image     2^8  =    256 rows, width  16, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)|     f0.mem_init  2^9  =    512 rows, width  29, quotient chunks  4,   0.04 M cells
+Shape and admission (no proving)|     f0.cpu       2^8  =    256 rows, width 103, quotient chunks 16,   0.07 M cells
+Shape and admission (no proving)|     f0.output    2^8  =    256 rows, width  16, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)|     f1.program   2^8  =    256 rows, width  38, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)|     f1.image     2^8  =    256 rows, width  16, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)|     f1.mem_init  2^10 =   1024 rows, width  29, quotient chunks  4,   0.09 M cells
+Shape and admission (no proving)|     f1.cpu       2^8  =    256 rows, width 103, quotient chunks 16,   0.07 M cells
+Shape and admission (no proving)|     f1.output    2^8  =    256 rows, width  16, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)|     blind        2^8  =    256 rows, width   9, quotient chunks  4,   0.02 M cells
+Shape and admission (no proving)| v12size: tallest 2^16, 9 distinct heights {8, 9, 10, 11, 12, 13, 14, 15, 16}, FRI schedule [1, 1, 1, 1, 1, 1, 1, 1, 3]
+Shape and admission (no proving)| v12size: 32.1 M weighted cells (base 40.3); modelled peak memory L 5285 MB, M 4523 MB (docs/evidence/budget-cap-2026-10-04)
+Shape and admission (no proving)| v12size: the size-widest V12 schedule: every height from 2^8 to 2^16 present, FRI schedule [1, 1, 1, 1, 1, 1, 1, 1, 3] (9 rounds; v12mem: 7)
+Shape and admission (no proving)| v12size: no out/size-base.bin for the size model; by docs/evidence/budget-cap-2026-10-04 (any programs, 2^16): 3,700,750 bytes expected, 3,780,959 worst over the query positions
+Shape and admission (no proving)| v12size: check only, no proof
+
+=== Guard [log line 580]
+Guard (runner RAM, proof count)| MemTotal: 15989 MiB
+
+=== Runner memory [log lines 593-598]
+Runner memory| 4
+Runner memory|                total        used        free      shared  buff/cache   available
+Runner memory| Mem:           15989         952       11967          45        3452       15037
+Runner memory| Swap:           3071           0        3071
+Runner memory| NAME      TYPE SIZE USED PRIO
+Runner memory| /swapfile file   3G   0B   -2
+
+=== Prove and verify [log lines 665-683]
+Prove and verify (one process, one proof at a time)| b2 v12size #0: 3704031 bytes (nondigest 3306469), prove 148.0 s, verify [364.324929, 364.625681, 364.713336] ms, schedule [1, 1, 1, 1, 1, 1, 1, 1, 3]
+Prove and verify (one process, one proof at a time)| b2 v12size #0: digests per tree [1344, 1344, 1344, 1344] / [1236, 1128, 1020, 912, 804, 696, 588, 480, 183], degree bits [17, 13, 13, 14, 17, 16, 15, 16, 12, 12, 9, 9, 9, 9, 10, 9, 9, 9, 9, 11, 9, 9, 9]
+Prove and verify (one process, one proof at a time)| v12size: size model from proof #0: 20,000 uniform query draws: mean 3700725, sd 5092, max 3721535; worst over any query positions 3780959 bytes (below the 3800000-byte budget; MAX_PROOF_BYTES 4194304)
+Prove and verify (one process, one proof at a time)| v12size: reachable set 1: heights [8, 9, 10, 11, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 1, 1, 1, 1, 3], expected 3700686 bytes
+Prove and verify (one process, one proof at a time)| v12size: reachable set 2: heights [8, 10, 11, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 1, 1, 2, 3], expected 3683458 bytes
+Prove and verify (one process, one proof at a time)| v12size: reachable set 3: heights [8, 9, 11, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 1, 2, 1, 3], expected 3680035 bytes
+Prove and verify (one process, one proof at a time)| v12size: reachable set 4: heights [8, 9, 10, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 2, 1, 1, 3], expected 3676595 bytes
+Prove and verify (one process, one proof at a time)| v12size: for comparison, v12mem's set [8, 11, 12, 13, 14, 15, 16]: expected 3669718 bytes
+Prove and verify (one process, one proof at a time)| v12size: no reachable height set is expected to be larger (32 sets; model from proof #0)
+Prove and verify (one process, one proof at a time)| b2 v12size #1: 3694591 bytes (nondigest 3306469), prove 146.3 s, verify [363.89396600000003, 363.747504, 364.01003399999996] ms, schedule [1, 1, 1, 1, 1, 1, 1, 1, 3]
+Prove and verify (one process, one proof at a time)| b2 v12size #1: digests per tree [1320, 1320, 1320, 1320] / [1212, 1104, 996, 888, 780, 672, 564, 458, 174], degree bits [17, 13, 13, 14, 17, 16, 15, 16, 12, 12, 9, 9, 9, 9, 10, 9, 9, 9, 9, 11, 9, 9, 9]
+Prove and verify (one process, one proof at a time)| v12size: size model from proof #1: 20,000 uniform query draws: mean 3700725, sd 5092, max 3721535; worst over any query positions 3780959 bytes (below the 3800000-byte budget; MAX_PROOF_BYTES 4194304)
+Prove and verify (one process, one proof at a time)| v12size: reachable set 1: heights [8, 9, 10, 11, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 1, 1, 1, 1, 3], expected 3700686 bytes
+Prove and verify (one process, one proof at a time)| v12size: reachable set 2: heights [8, 10, 11, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 1, 1, 2, 3], expected 3683458 bytes
+Prove and verify (one process, one proof at a time)| v12size: reachable set 3: heights [8, 9, 11, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 1, 2, 1, 3], expected 3680035 bytes
+Prove and verify (one process, one proof at a time)| v12size: reachable set 4: heights [8, 9, 10, 12, 13, 14, 15, 16], schedule [1, 1, 1, 1, 2, 1, 1, 3], expected 3676595 bytes
+Prove and verify (one process, one proof at a time)| v12size: for comparison, v12mem's set [8, 11, 12, 13, 14, 15, 16]: expected 3669718 bytes
+Prove and verify (one process, one proof at a time)| v12size: no reachable height set is expected to be larger (32 sets; model from proof #1)
+Prove and verify (one process, one proof at a time)| prover exit status: 0
+
+=== Report: /usr/bin/time -v, b2.csv, OOM check, memory samples [log lines 783-857]
+Report| --- /usr/bin/time -v
+Report| 	Command being timed: "target/release/examples/freeze_b2_b3 b2 v12size 2 out"
+Report| 	User time (seconds): 1158.55
+Report| 	System time (seconds): 4.82
+Report| 	Percent of CPU this job got: 383%
+Report| 	Elapsed (wall clock) time (h:mm:ss or m:ss): 5:03.21
+Report| 	Average shared text size (kbytes): 0
+Report| 	Average unshared data size (kbytes): 0
+Report| 	Average stack size (kbytes): 0
+Report| 	Average total size (kbytes): 0
+Report| 	Maximum resident set size (kbytes): 5540524
+Report| 	Average resident set size (kbytes): 0
+Report| 	Major (requiring I/O) page faults: 0
+Report| 	Minor (reclaiming a frame) page faults: 569152
+Report| 	Voluntary context switches: 38818
+Report| 	Involuntary context switches: 239748
+Report| 	Swaps: 0
+Report| 	File system inputs: 0
+Report| 	File system outputs: 7256
+Report| 	Socket messages sent: 0
+Report| 	Socket messages received: 0
+Report| 	Signals delivered: 0
+Report| 	Page size (bytes): 4096
+Report| 	Exit status: 0
+Report| --- b2.csv
+Report| kind,n_fn,class,index,total,nondigest,batch_digests,step_arity,step_digests,degree_bits,prove_s,verify_ms
+Report| b2,2,v12size,0,3704031,3306469,1344;1344;1344;1344,1;1;1;1;1;1;1;1;3,1236;1128;1020;912;804;696;588;480;183,17;13;13;14;17;16;15;16;12;12;9;9;9;9;10;9;9;9;9;11;9;9;9,148.00,364.3;364.6;364.7
+Report| b2,2,v12size,1,3694591,3306469,1320;1320;1320;1320,1;1;1;1;1;1;1;1;3,1212;1104;996;888;780;672;564;458;174,17;13;13;14;17;16;15;16;12;12;9;9;9;9;10;9;9;9;9;11;9;9;9,146.26,363.9;363.7;364.0
+Report| --- kernel OOM messages
+Report| none
+Report| --- memory samples (last 40 of 61)
+Report| 13:15:07 used=5590MiB available=10399MiB swap_used=0MiB VmHWM=4650MiB VmRSS=4650MiB VmSwap=0MiB
+Report| 13:15:12 used=5602MiB available=10387MiB swap_used=0MiB VmHWM=4666MiB VmRSS=4666MiB VmSwap=0MiB
+Report| 13:15:17 used=5606MiB available=10383MiB swap_used=0MiB VmHWM=4666MiB VmRSS=4666MiB VmSwap=0MiB
+Report| 13:15:22 used=5612MiB available=10377MiB swap_used=0MiB VmHWM=4674MiB VmRSS=4674MiB VmSwap=0MiB
+Report| 13:15:27 used=5941MiB available=10048MiB swap_used=0MiB VmHWM=5004MiB VmRSS=5004MiB VmSwap=0MiB
+Report| 13:15:32 used=5962MiB available=10027MiB swap_used=0MiB VmHWM=5028MiB VmRSS=5028MiB VmSwap=0MiB
+Report| 13:15:37 used=6259MiB available=9730MiB swap_used=0MiB VmHWM=5344MiB VmRSS=5313MiB VmSwap=0MiB
+Report| 13:15:42 used=6255MiB available=9734MiB swap_used=0MiB VmHWM=5345MiB VmRSS=5313MiB VmSwap=0MiB
+Report| 13:15:47 used=6285MiB available=9704MiB swap_used=0MiB VmHWM=5358MiB VmRSS=5358MiB VmSwap=0MiB
+Report| 13:15:52 used=2448MiB available=13541MiB swap_used=0MiB VmHWM=5381MiB VmRSS=1518MiB VmSwap=0MiB
+Report| 13:15:57 used=2448MiB available=13541MiB swap_used=0MiB VmHWM=5381MiB VmRSS=1518MiB VmSwap=0MiB
+Report| 13:16:02 used=2452MiB available=13537MiB swap_used=0MiB VmHWM=5381MiB VmRSS=1518MiB VmSwap=0MiB
+Report| 13:16:07 used=2452MiB available=13537MiB swap_used=0MiB VmHWM=5381MiB VmRSS=1518MiB VmSwap=0MiB
+Report| 13:16:12 used=2456MiB available=13532MiB swap_used=0MiB VmHWM=5381MiB VmRSS=1518MiB VmSwap=0MiB
+Report| 13:16:17 used=3195MiB available=12794MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2270MiB VmSwap=0MiB
+Report| 13:16:22 used=3203MiB available=12786MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2270MiB VmSwap=0MiB
+Report| 13:16:27 used=3203MiB available=12786MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2270MiB VmSwap=0MiB
+Report| 13:16:32 used=3219MiB available=12770MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2286MiB VmSwap=0MiB
+Report| 13:16:38 used=3225MiB available=12764MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2294MiB VmSwap=0MiB
+Report| 13:16:43 used=3243MiB available=12746MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2310MiB VmSwap=0MiB
+Report| 13:16:48 used=3255MiB available=12734MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2333MiB VmSwap=0MiB
+Report| 13:16:53 used=3271MiB available=12717MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2343MiB VmSwap=0MiB
+Report| 13:16:58 used=3280MiB available=12709MiB swap_used=0MiB VmHWM=5381MiB VmRSS=2351MiB VmSwap=0MiB
+Report| 13:17:03 used=3993MiB available=11996MiB swap_used=0MiB VmHWM=5381MiB VmRSS=3066MiB VmSwap=0MiB
+Report| 13:17:08 used=4672MiB available=11317MiB swap_used=0MiB VmHWM=5381MiB VmRSS=3727MiB VmSwap=0MiB
+Report| 13:17:13 used=5604MiB available=10385MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4679MiB VmSwap=0MiB
+Report| 13:17:18 used=5604MiB available=10385MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4679MiB VmSwap=0MiB
+Report| 13:17:23 used=5609MiB available=10380MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4679MiB VmSwap=0MiB
+Report| 13:17:28 used=5609MiB available=10380MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4679MiB VmSwap=0MiB
+Report| 13:17:33 used=5609MiB available=10379MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4679MiB VmSwap=0MiB
+Report| 13:17:38 used=5609MiB available=10379MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4679MiB VmSwap=0MiB
+Report| 13:17:43 used=5629MiB available=10360MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4695MiB VmSwap=0MiB
+Report| 13:17:48 used=5629MiB available=10359MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4695MiB VmSwap=0MiB
+Report| 13:17:53 used=5641MiB available=10348MiB swap_used=0MiB VmHWM=5381MiB VmRSS=4703MiB VmSwap=0MiB
+Report| 13:17:58 used=5963MiB available=10025MiB swap_used=0MiB VmHWM=5381MiB VmRSS=5034MiB VmSwap=0MiB
+Report| 13:18:03 used=5993MiB available=9995MiB swap_used=0MiB VmHWM=5381MiB VmRSS=5058MiB VmSwap=0MiB
+Report| 13:18:08 used=6294MiB available=9695MiB swap_used=0MiB VmHWM=5381MiB VmRSS=5342MiB VmSwap=0MiB
+Report| 13:18:13 used=6280MiB available=9708MiB swap_used=0MiB VmHWM=5381MiB VmRSS=5343MiB VmSwap=0MiB
+Report| 13:18:19 used=6322MiB available=9666MiB swap_used=0MiB VmHWM=5384MiB VmRSS=5384MiB VmSwap=0MiB
+Report| 13:18:24 used=3570MiB available=12419MiB swap_used=0MiB VmHWM=5410MiB VmRSS=2643MiB VmSwap=0MiB
+Report| --- largest sampled VmHWM (MiB)
+Report| 5410
+Report| --- largest sampled VmSwap (MiB)
+Report| 0

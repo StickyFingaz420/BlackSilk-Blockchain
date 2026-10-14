@@ -12,6 +12,8 @@ verifies that statement once and records the prover's peak memory.
 (3,673,891 bytes) verifies. The measurement lies within the model range.** The
 size-widest V12 shape is a different shape and is not measured (see "Limits").
 
+*(Added note, 2026-10-14: the size-widest V12 shape has since been measured, 3,704,031 and 3,694,591 bytes; see [b2-v12size-2026-10-14](../b2-v12size-2026-10-14/README.md).)*
+
 ## Run
 
 | Item | Value |
@@ -123,6 +125,7 @@ statement of px-deploy-row-caps holds for this shape.
   program, image, cycles and keys tables with output tables at 2^9, which shift the
   FRI schedule. That shape was **not measured**, so B2's proof-size bound below
   3.8 MB remains a model.
+  *(Added note, 2026-10-14: that shape has since been measured (its 2^9 and 2^10 tables are memory-init tables, not output tables), 3,704,031 and 3,694,591 bytes; see [b2-v12size-2026-10-14](../b2-v12size-2026-10-14/README.md).)*
 - **The caps are restated.** The example restates the V12 caps (px cannot depend on
   tx) instead of calling `tx::px::budget_is_provable` and `program_is_provable`. The
   restatement is not yet pinned against the tx constants by a test across the crates;

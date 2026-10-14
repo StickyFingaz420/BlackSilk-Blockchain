@@ -839,8 +839,11 @@ expected (4.20–4.24 MB worst over the query positions), above the 3.8 MB bound
 decision "Agent 22": **verdict B2: FAIL** (evidence README, "Verdict B2"). The fix is the
 deploy-time row caps (V12; px.md §11.3, "Deploy"; reviews/v3-consensus-changes.md,
 `px-deploy-row-caps`). With them the widest PX proof is about **3.70 MB expected and
-3.78 MB worst over the query positions, by model**, not measured; the model is exact
-(0 bytes off) on all 34 measured two-function proofs. Any pair of registered functions
+3.78 MB worst over the query positions, by model**; the size-widest shape (a table at
+every height from 2^8 to 2^16) was measured on 2026-10-14 at 3,704,031 and 3,694,591
+bytes (two proofs, one GitHub runner; evidence/b2-v12size-2026-10-14/), and the model is
+exact (0 bytes off) on the 34 two-function proofs of 2026-10-04 and on these two. The
+worst case over the query positions remains a model bound. Any pair of registered functions
 is modelled at 10.4–13.1 GB of prover memory (modelled, not measured).
 
 Per-transaction proofs of this size are not viable for a production chain. The paths
