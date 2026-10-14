@@ -1094,8 +1094,10 @@ impl ChainView for FixtureChain<'_> {
 ///   verdicts);
 /// - **verdict samples** (RTFP3-4): `validate_transfer` on the fixture and on
 ///   one variant per `TxError` class a transfer can reach (each variant
-///   changes one field, or the chain view, or the validation height), as the
-///   `Debug` text of the result. Not sampled: `TooLarge` (no transfer shape
+///   changes one field, or the chain view, or the validation height), as
+///   [`verdict_text`] of the result (never its `Debug` text, which the
+///   standard library does not keep stable across Rust versions;
+///   `fingerprint-stable-verdicts`). Not sampled: `TooLarge` (no transfer shape
 ///   within the count limits reaches `MAX_TX_SIZE`) and `WeightOverflow`
 ///   (the fee of every bounded shape fits in 64 bits).
 pub fn transaction_samples() -> &'static Manifest {
@@ -1214,7 +1216,7 @@ fn compute_transaction_samples() -> Manifest {
     // besides the transfer ([`verdict_context`]).
     let verdict =
         |tx: &Transfer, chain: &FixtureChain, height: u64, case_rules: &TxRules| Sampled {
-            verdict: format!("{:?}", validate_transfer(tx, chain, height, case_rules)),
+            verdict: verdict_text(validate_transfer(tx, chain, height, case_rules)),
             input: input_hash(&Transaction::from(tx.clone()).encode()),
             context: verdict_context(chain, height, case_rules),
         };
@@ -1394,6 +1396,18 @@ fn verdict_context(chain: &FixtureChain, height: u64, rules: &TxRules) -> Manife
     context
 }
 
+/// The text of a sampled verdict: `Ok(())`, or `Err(<text>)` with
+/// [`TxError::fingerprint_text`]. The same text the derived `Debug` printed
+/// when the samples were pinned, written out so that the rules fingerprint
+/// does not depend on the toolchain (record `fingerprint-stable-verdicts`).
+/// Never `format!("{:?}")`.
+fn verdict_text(r: Result<(), TxError>) -> String {
+    match r {
+        Ok(()) => "Ok(())".to_string(),
+        Err(e) => format!("Err({})", e.fingerprint_text()),
+    }
+}
+
 /// A sampled verdict and its input (fingerprint-sample-inputs): the
 /// [`input_hash`] of the sampled transaction's encoding, and the context
 /// entries of a case that changes the chain view, the height or the rules
@@ -1471,11 +1485,10 @@ fn px_transaction_samples(m: &mut Manifest) {
 
     let stateless = |t: &PxTx| {
         Sampled::of(
-            format!(
-                "{:?}",
+            verdict_text(
                 check_px_structure(t)
                     .and_then(|_| check_px_balance(t))
-                    .and_then(|_| decode_px_proof(t).map(|_| ()))
+                    .and_then(|_| decode_px_proof(t).map(|_| ())),
             ),
             &Transaction::Px(Box::new(t.clone())),
         )
@@ -1556,7 +1569,7 @@ fn px_transaction_samples(m: &mut Manifest) {
         let mut v = d.clone();
         change(&mut v);
         Sampled {
-            verdict: format!("{:?}", validate_deploy(&v, &chain, f.height, &rules)),
+            verdict: verdict_text(validate_deploy(&v, &chain, f.height, &rules)),
             input: input_hash(&Transaction::PxDeploy(Box::new(v)).encode()),
             context: verdict_context(&chain, f.height, &rules),
         }
@@ -2037,90 +2050,125 @@ mod tests {
             get("randomx.ARGON_SALT"),
             Value::Bytes(b"BlackSilk/RandomX/v1".to_vec())
         );
-        let verdict = |case: &str| match get(&format!("rules.sample.verdict ({case})")) {
-            Value::Text(t) => t,
-            other => panic!("{other:?}"),
-        };
-        assert_eq!(verdict("valid"), "Ok(())");
-        for (case, class) in [
-            ("no inputs", "InputCount"),
-            ("one output", "OutputCount"),
-            ("identity key image", "KeyImageIdentity"),
-            ("key images unsorted", "KeyImagesNotSorted"),
-            ("ring unsorted", "RingNotIncreasing"),
-            ("identity output key", "OutputKeyIdentity"),
-            ("identity ephemeral", "EphemeralIdentity"),
-            ("outputs unsorted", "OutputsNotSorted"),
-            ("missing pseudo-output", "PseudoOutCount"),
-            ("missing signature", "SignatureCount"),
-            ("identity auxiliary image", "AuxKeyImageIdentity"),
-            ("short range proof", "RangeProofShape"),
-            ("fee + 1", "FeeNotExact"),
-            ("unbalanced", "Unbalanced"),
-            ("balanced, range proof invalid", "RangeProofInvalid"),
-            ("key image spent", "KeyImageSpent"),
-            ("ring member unknown", "UnknownRingMember"),
-            (
-                "coinbase ring member immature (height 60)",
-                "RingMemberTooYoung",
-            ),
-            ("other branch id", "InvalidSignature"),
-            ("signature of the other input", "InvalidSignature"),
-        ] {
-            assert!(
-                verdict(case).starts_with(&format!("Err({class}")),
-                "{case}: {}",
-                verdict(case)
-            );
-        }
-        // The golden PX fixture: stateless verdicts by class (the ciphertext
-        // `R` rule included), and the deploy's full verdicts.
+        // The verdicts, by their full text (record
+        // `fingerprint-stable-verdicts`: `verdict_text`, never `Debug`): the
+        // fixture transfer and its variants, the golden PX fixture's stateless
+        // verdicts (the ciphertext `R` rule included), and the deploy's full
+        // verdicts.
         let text = |name: &str| match get(name) {
             Value::Text(t) => t,
             other => panic!("{other:?}"),
         };
-        let px = |case: &str| text(&format!("rules.sample.px.stateless_verdict ({case})"));
-        assert_eq!(px("valid"), "Ok(())");
-        for (case, class) in [
+        for (prefix, cases) in [
             (
-                "identity R in ciphertext 0",
-                "PxCiphertextRIdentity { ciphertext: 0 }",
+                "rules.sample.verdict",
+                &[
+                    ("valid", "Ok(())"),
+                    ("no inputs", "Err(InputCount(0))"),
+                    ("one output", "Err(OutputCount(1))"),
+                    ("identity key image", "Err(KeyImageIdentity { input: 0 })"),
+                    ("key images unsorted", "Err(KeyImagesNotSorted)"),
+                    ("ring unsorted", "Err(RingNotIncreasing { input: 0 })"),
+                    (
+                        "identity output key",
+                        "Err(OutputKeyIdentity { output: 0 })",
+                    ),
+                    ("identity ephemeral", "Err(EphemeralIdentity { output: 0 })"),
+                    ("outputs unsorted", "Err(OutputsNotSorted)"),
+                    ("missing pseudo-output", "Err(PseudoOutCount)"),
+                    ("missing signature", "Err(SignatureCount)"),
+                    (
+                        "identity auxiliary image",
+                        "Err(AuxKeyImageIdentity { input: 0 })",
+                    ),
+                    ("short range proof", "Err(RangeProofShape)"),
+                    (
+                        "fee + 1",
+                        "Err(FeeNotExact { fee: 63361, required: 63360 })",
+                    ),
+                    ("unbalanced", "Err(Unbalanced)"),
+                    ("balanced, range proof invalid", "Err(RangeProofInvalid)"),
+                    ("key image spent", "Err(KeyImageSpent { input: 1 })"),
+                    (
+                        "ring member unknown",
+                        "Err(UnknownRingMember { input: 1, index: 31 })",
+                    ),
+                    (
+                        "coinbase ring member immature (height 60)",
+                        "Err(RingMemberTooYoung { input: 0, index: 0 })",
+                    ),
+                    ("other branch id", "Err(InvalidSignature { input: 0 })"),
+                    (
+                        "signature of the other input",
+                        "Err(InvalidSignature { input: 0 })",
+                    ),
+                ][..],
             ),
             (
-                "non-canonical R (p) in ciphertext 1",
-                "PxCiphertextRNonCanonical { ciphertext: 1 }",
+                "rules.sample.px.stateless_verdict",
+                &[
+                    ("valid", "Ok(())"),
+                    (
+                        "identity R in ciphertext 0",
+                        "Err(PxCiphertextRIdentity { ciphertext: 0 })",
+                    ),
+                    (
+                        "non-canonical R (p) in ciphertext 1",
+                        "Err(PxCiphertextRNonCanonical { ciphertext: 1 })",
+                    ),
+                    (
+                        "R with the top bit set in ciphertext 0",
+                        "Err(PxCiphertextRNonCanonical { ciphertext: 0 })",
+                    ),
+                    ("fee + 1", "Err(PxFeeNotStandard { fee: 8912897 })"),
+                    ("equal nullifiers", "Err(PxNullifierRepeated)"),
+                    ("inverted window", "Err(PxWindowInverted)"),
+                    ("bridge_in + 1", "Err(Unbalanced)"),
+                    ("missing signature", "Err(SignatureCount)"),
+                    ("truncated proof", "Err(PxProof)"),
+                ][..],
             ),
             (
-                "R with the top bit set in ciphertext 0",
-                "PxCiphertextRNonCanonical { ciphertext: 0 }",
+                "rules.sample.deploy.verdict",
+                &[
+                    ("valid", "Ok(())"),
+                    (
+                        "fee + 1",
+                        "Err(DeployFeeNotExact { fee: 709261, required: 709260 })",
+                    ),
+                    ("unsupported ABI", "Err(PxUnsupportedAbi { program: 0 })"),
+                    ("other salt", "Err(InvalidSignature { input: 0 })"),
+                    (
+                        "bit budget above its cap",
+                        "Err(PxBudgetTooLarge { program: 0 })",
+                    ),
+                ][..],
             ),
-            ("fee + 1", "PxFeeNotStandard"),
-            ("equal nullifiers", "PxNullifierRepeated"),
-            ("inverted window", "PxWindowInverted"),
-            ("bridge_in + 1", "Unbalanced"),
-            ("missing signature", "SignatureCount"),
-            ("truncated proof", "PxProof"),
         ] {
-            assert!(
-                px(case).starts_with(&format!("Err({class}")),
-                "{case}: {}",
-                px(case)
-            );
+            for (case, golden) in cases {
+                assert_eq!(
+                    text(&format!("{prefix} ({case})")),
+                    *golden,
+                    "{prefix} ({case})"
+                );
+            }
         }
-        let deploy = |case: &str| text(&format!("rules.sample.deploy.verdict ({case})"));
-        assert_eq!(deploy("valid"), "Ok(())");
-        for (case, class) in [
-            ("fee + 1", "DeployFeeNotExact"),
-            ("unsupported ABI", "PxUnsupportedAbi"),
-            ("other salt", "InvalidSignature"),
-            ("bit budget above its cap", "PxBudgetTooLarge"),
-        ] {
-            assert!(
-                deploy(case).starts_with(&format!("Err({class}")),
-                "{case}: {}",
-                deploy(case)
-            );
-        }
+        // Every verdict entry of the manifest is in the table above.
+        let n_verdicts = m
+            .entries()
+            .iter()
+            .filter(|(name, _)| {
+                [
+                    "rules.sample.verdict (",
+                    "rules.sample.px.stateless_verdict (",
+                    "rules.sample.deploy.verdict (",
+                ]
+                .iter()
+                .any(|p| name.starts_with(p))
+                    && !name.contains(") input")
+            })
+            .count();
+        assert_eq!(n_verdicts, 36);
     }
 
     /// fingerprint-sample-inputs: every verdict variant records an input that
