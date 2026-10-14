@@ -46,7 +46,7 @@ What a contract can do today, and what it cannot:
   Proving a two-function call needs about 6.4 GB of memory. Under the deploy-time row caps
   (V12, px.md) the widest proof a deploy can lead to is about 3.70 MB by model (3.78 MB
   worst); prover memory is modelled at 10.4–13.1 GB and measured at 10,585 MiB for the
-  memory-widest pair (one run; the size-widest shape is not measured). Aggregation is research (§9).
+  memory-widest pair (one run); the size-widest shape measured 3.69–3.70 MB (two proofs, one run). Aggregation is research (§9).
 - **Always public** for a call (privacy review P-8): the contract id and the program id
   of every called function, the functions' public output words (a fixed number per
   program, §5), the transaction's validity window, and the bridge amounts. Private:
@@ -239,7 +239,8 @@ Each item cites the finding it comes from. Check every item before deploying.
     Proving class: a call of any two functions is modelled at 10.4–13.1 GB of prover
     memory (a 16 GB device); 8 GB devices can prove transfers, single calls and the
     vault pair, not every pair. The memory figure is measured for the memory-widest
-    pair (10,585 MiB peak, one 16 GB runner, one run); the size-widest shape is modelled.
+    pair (10,585 MiB peak, one 16 GB runner, one run); the size-widest shape measured
+    3.69–3.70 MB (two proofs, one run).
 13. **Canonical input.** Check every field element you read (`canonical`); halt with
     codes, never with located panics (R15-6; `px/tests/elf_paths.rs`).
 14. **Time.** Assert on the echoed window (§4.3); a function that reads the window but
