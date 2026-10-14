@@ -714,8 +714,9 @@ These are stated as open. None is exempt.
   with another toolchain could therefore print another fingerprint (consensus itself
   is unaffected). Follow-up before the freeze: a stable explicit verdict encoding.
   Record: v3-consensus-changes.md#fingerprint-sample-inputs, item 12. **CLOSED
-  (2026-10-14)** by v3-consensus-changes.md#fingerprint-stable-verdicts (branch
-  `consensus/fingerprint-stable-verdicts`, red team owed): the verdict samples are
+  (2026-10-14)** by v3-consensus-changes.md#fingerprint-stable-verdicts (internal
+  red team (2026-10-14): merge with fixes (F1 wording, F2 status), applied; merged
+  into rebuild/core after this review): the verdict samples are
   `TxError::fingerprint_text`, a hand-written, exhaustive text equal to the old one
   byte for byte, so no manifest value or pin changed and `Debug` no longer reaches
   the fingerprint.

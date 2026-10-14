@@ -1914,4 +1914,6 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   validation order, manifest entry name or order, `Manifest` encoding or tag,
   `REVISIONS`, network id, genesis or D0 change. Record:
   docs/reviews/v3-consensus-changes.md#fingerprint-stable-verdicts (`Revision: none`).
-- **Not done:** an internal red-team pass before the merge.
+- **Red team:** internal red team (2026-10-14): merge with fixes (F1 wording: a
+  variant left out of `ALL` still compiles, so `ALL` is complete by convention; F2
+  status), applied; merged into rebuild/core after this review.

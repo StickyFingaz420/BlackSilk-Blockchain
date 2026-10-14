@@ -4572,9 +4572,9 @@ genesis or D0 changes; every manifest value and every fingerprint pin stays the 
      integer `Display`, the grammar `Name`, `Name(d)`, `Name { f1: d1, f2: d2 }`; its
      doc comment states the grammar and that it is fingerprint-pinned and never
      derived from `Debug`. `const fn variant_index(&self) -> usize` (exhaustive) and
-     `const ALL: [TxError; 44]` (every variant once; field `k` of variant `i` is
-     `1000 + 10·i + k`, so all field values in the list differ), tied by a const
-     assertion (`ALL[i].variant_index() == i`). `#[derive(Debug)]` stays, for
+     `const ALL: [TxError; 44]` (every variant once, by convention; field `k` of
+     variant `i` is `1000 + 10·i + k`, so all field values in the list differ), tied
+     by a const assertion (`ALL[i].variant_index() == i`). `#[derive(Debug)]` stays, for
      diagnostics only.
    - node/src/fingerprint.rs: `verdict_text(Result<(), TxError>) -> String`
      (`Ok(())` or `Err(<fingerprint_text>)`) replaces the three `format!("{:?}")`
@@ -4659,8 +4659,11 @@ genesis or D0 changes; every manifest value and every fingerprint pin stays the 
       and the consensus gate pass.
 12. **Open review points.**
     - The text of every existing variant must never change. A new `TxError` variant
-      fails to compile until it has a text, an index and an `ALL` entry, but nothing
-      forces a new verdict sample for it (as before).
+      fails to compile until it has a text and an index; adding it to `ALL` and the
+      golden table is by convention (stable Rust cannot count enum variants; a
+      variant left out of `ALL` still compiles and passes). The sampled verdicts stay
+      pinned exactly by the node test. Nothing forces a new verdict sample for a new
+      variant (as before).
     - The texts were shown equal to the derived `Debug` on rustc 1.98.1 only; from now
       on the toolchain's `Debug` does not reach the fingerprint.
     - No other hashed manifest value is `Debug`-derived: every text entry is a
@@ -4677,4 +4680,12 @@ genesis or D0 changes; every manifest value and every fingerprint pin stays the 
     fingerprint row's open item), the run G evidence (§ Open items (g) closed),
     decisions.md, mutation-exemptions.md (E87).
 15. **Review status.** Implemented and verified by the implementing agent under the
-    lead's decision; an internal red-team pass is owed before the merge.
+    lead's decision. Internal red team (2026-10-14): merge with fixes, nothing
+    blocking; the code is correct, and the byte identity and the pins were
+    re-confirmed independently. F1 (wording): the claim that a new variant fails to
+    compile until it has an `ALL` entry was false (a variant left out of `ALL`, with
+    a new index, still compiles and passes); the docs of the enum,
+    `fingerprint_text`, `variant_index`, `ALL` and the run-time test, and item 12,
+    now say that `ALL` and the golden table are complete by convention (comments
+    only, no manifest change). F2 (status): the status texts give the review result.
+    Applied; merged into rebuild/core after this review.
