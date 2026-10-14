@@ -1351,9 +1351,13 @@ Record: mutation run G, 2026-10-12.
 
 ## E69: `start - l` for `start + l` in `smallest_pow_witness`, at packing width 1 (zk/src/config.rs)
 
-Decision: mutation run G, batch G5, for the Lead's review. **Conditional on the build
-target: it does not hold on aarch64, which the project builds** (§ Open items (f) of
-the run G evidence).
+Decision: mutation run G, batch G5, for the Lead's review. **Holds at packing width 1
+only.** On aarch64 (NEON, width 4) the two mutants are killed: CI job `arm64`
+(.github/scripts/e69-arm64.sh, every push) applies each and requires
+`the_prover_grinds_the_smallest_valid_nonce` to fail; first run 38521517518 at
+`16d4fe9` (2026-10-14): both caught, by that test (`state 0, 8 bits`) and by all five
+non-ignored tests of zk/tests/grinding.rs, including `grind`'s assertion of the
+verifier's check (config.rs:195) (§ Open items (f) of the run G evidence).
 
 **Code.** As E68: the lane values `start + l as u64` (250:64) and the candidate
 `start + l as u64` (253:35). `<BabyBear as Field>::Packing` is chosen by
@@ -1383,14 +1387,13 @@ Either way the returned witness is no longer the one whose sample was tested. `g
 then runs the verifier's own `check_witness` on it and asserts the result: the prover
 panics, or, if the returned value happens to pass the verifier's check, it is a valid
 proof-of-work witness. So no invalid proof results; on aarch64 these are prover
-failures, not equivalents. A census on the arm64 runner would kill them (follow-up:
-re-check the two mutants there).
+failures, not equivalents. Confirmed on the arm64 runner (above).
 
 **Evidence.** Missed in `runG5s1`, `runG5s2a`, `runG5s2b`, `runG5s3`, on
-x86_64-pc-windows-msvc.
+x86_64-pc-windows-msvc. Killed on aarch64-unknown-linux-gnu, CI run 38521517518.
 
 Record: mutation run G, 2026-10-12; narrowed to width-1 builds in the run G revision,
-2026-10-13.
+2026-10-13; arm64 re-check, 2026-10-14.
 
 ## E70: `VerifierConfig::setup` as `Default::default()` (zk/src/config.rs)
 
