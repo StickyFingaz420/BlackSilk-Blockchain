@@ -95,6 +95,10 @@ pub trait ChainView {
     fn output_frontier(&self) -> OutputFrontier;
 }
 
+/// A new variant also needs its fingerprint text and index
+/// ([`TxError::fingerprint_text`], `variant_index`; the compiler enforces
+/// these) and, by convention, an entry in `TxError::ALL` and in the golden
+/// table of this module's tests (record `fingerprint-stable-verdicts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TxError {
     /// T1 (for transactions not produced by `decode`).
@@ -385,9 +389,11 @@ impl TxError {
     /// documents derived `Debug` output as unstable across Rust versions.
     /// **Fingerprint-pinned: never derive it from `Debug`**, and never change
     /// an existing variant's text (that moves the rules fingerprint). The
-    /// match is exhaustive: a new variant fails to compile until it has its
-    /// text, its index in [`Self::variant_index`] and its entry in
-    /// [`Self::ALL`].
+    /// match is exhaustive: a new variant fails to compile until it has a
+    /// text here and an index in [`Self::variant_index`]. Adding it to
+    /// [`Self::ALL`] and to the tests' golden table is by convention (stable
+    /// Rust cannot count enum variants); the sampled verdicts stay pinned
+    /// exactly by the node's `samples_are_the_golden_values`.
     pub fn fingerprint_text(&self) -> String {
         match *self {
             TxError::TooLarge { size } => format!("TooLarge {{ size: {size} }}"),
@@ -473,7 +479,10 @@ impl TxError {
 
     /// The position of this variant in [`Self::ALL`] (declaration order).
     /// Exhaustive, so a new variant fails to compile here until it is given
-    /// its position; the assertion below the `impl` requires `ALL` to agree.
+    /// a position. The assertion below the `impl` checks that every entry of
+    /// `ALL` sits at its own index; it cannot check that `ALL` lists every
+    /// variant (a new one left out of `ALL` still compiles), which is by
+    /// convention.
     const fn variant_index(&self) -> usize {
         match self {
             TxError::TooLarge { .. } => 0,
@@ -523,7 +532,8 @@ impl TxError {
         }
     }
 
-    /// Every variant once, in declaration order, with field values that
+    /// Every variant once (by convention: a variant left out still compiles,
+    /// see the enum's doc), in declaration order, with field values that
     /// differ from every other field value in the list (`1000 + 10·i + k` for
     /// field `k` of variant `i`), so a text that swaps or repeats fields
     /// differs from the golden one (tests below).
@@ -1828,9 +1838,10 @@ mod tests {
         }
     }
 
-    /// The runtime twin of the const assertion after `impl TxError`: `ALL`
-    /// lists every variant once, in `variant_index` order (a weakened const
-    /// loop would otherwise pass unnoticed).
+    /// The runtime twin of the const assertion after `impl TxError`: every
+    /// entry of `ALL` sits at its `variant_index`, and `ALL` has one entry per
+    /// golden text (a weakened const loop would otherwise pass unnoticed).
+    /// That `ALL` lists every variant is by convention, not checked here.
     #[test]
     fn all_lists_every_variant_in_index_order() {
         for (i, e) in TxError::ALL.iter().enumerate() {
