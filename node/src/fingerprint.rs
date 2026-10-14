@@ -1088,8 +1088,10 @@ impl ChainView for FixtureChain<'_> {
     ) -> Option<blacksilk_px::core::Digest> {
         blacksilk_px::state::State::new().root_after(leaves)
     }
-    /// No block is validated on this view (only transactions): the fixture's
-    /// outputs are sparse ring members, not a range, so the range is empty.
+    /// The fixture's outputs are sparse ring members, not a range, so the
+    /// range is empty. The block samples commit to it
+    /// (`BlockContext::committing`) and check it (B-OMR) on this same view,
+    /// so they agree by construction (mutation-exemptions.md E89).
     fn output_frontier(&self) -> blacksilk_tx::mmr::OutputFrontier {
         blacksilk_tx::mmr::OutputFrontier::new()
     }
@@ -1625,7 +1627,8 @@ fn px_transaction_samples(m: &mut Manifest) {
 }
 
 /// The golden PX transaction with `bridge_out = bridge_in + 1` and its first
-/// pseudo-output lowered by `(bridge_in + 1)·H`: it still balances
+/// pseudo-output lowered by the change of `bridge_out` times `H` (`(bridge_in
+/// + 1)·H`, the golden `bridge_out` being 0): it still balances
 /// (`check_px_balance`: `Σ pseudo_outs − Σ outputs = (fee + bridge_in +
 /// Σ payouts − bridge_out)·H`), so it passes every stateless rule, and takes
 /// one unit out of the pool (PX4: `pool + bridge_in ≥ bridge_out` holds
@@ -1634,7 +1637,8 @@ fn px_transaction_samples(m: &mut Manifest) {
 fn px_bridge_out_variant(px: &blacksilk_tx::px::PxTx) -> blacksilk_tx::px::PxTx {
     let mut v = px.clone();
     v.bridge_out = v.bridge_in + 1;
-    let shift = blacksilk_crypto::Scalar::from(v.bridge_out) * blacksilk_crypto::generators::h();
+    let delta = v.bridge_out - px.bridge_out;
+    let shift = blacksilk_crypto::Scalar::from(delta) * blacksilk_crypto::generators::h();
     v.pseudo_outs[0] = Point::from_point(v.pseudo_outs[0].point() - shift);
     v
 }
