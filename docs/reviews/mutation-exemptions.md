@@ -1903,6 +1903,12 @@ px_root_after -> Option<Digest> with None` and `with Some(Default::default())`; 
 
 Record: mutation run G, 2026-10-12.
 
+**Update (2026-10-14, record `fingerprint-px-samples`).** The view now also serves the
+block verdict samples (`block_samples`) and has a settable tree size, so the argument
+above no longer holds as written: `px_tree_size` → 0 and → 1, and `px_root_after` →
+`None`, are caught (`runSAMPe86`). The two mutants that still survive there are
+covered by E89.
+
 ## E87: the compile-time check of the `TxError` list (tx/src/validate.rs)
 
 Decision: record [v3-consensus-changes.md](v3-consensus-changes.md)
@@ -1931,3 +1937,53 @@ lint is an error and the mutant does not compile (unviable). No program is built
 sweep of the record's changed lines, oracle tx `--lib`).
 
 Record: v3-consensus-changes.md#fingerprint-stable-verdicts, 2026-10-14.
+
+## E88: the compile-time check of the `BlockError` list (tx/src/validate.rs)
+
+Decision: record [v3-consensus-changes.md](v3-consensus-changes.md)
+`fingerprint-px-samples` (2026-10-14), as E87.
+
+**Code.** `const _: () = { let mut i = 0; while i < BlockError::ALL.len() {
+assert!(BlockError::ALL[i].variant_index() == i); i += 1; } };`
+
+**Mutants covered:** 1604:13 `replace < with ==`, `replace < with >` (missed), and
+1606:11 `replace += with *=` (timeout) (cargo-mutants, at `b0a6b4a`).
+
+**Argument.** The argument of E87, word for word: the block is evaluated at compile
+time and emits no run-time code; the two comparison mutants skip the loop; `+= → *=`
+never ends const evaluation (a deny-by-default lint error in a normal build, a warning
+under `--cap-lints`). The property is checked at test time by
+`validate::tests::block_all_lists_every_variant_in_index_order`.
+
+**Evidence.** Missed (two) and timed out in the build (one) in `runSAMPtx` (`--in-diff`
+sweep of the record's changed lines, oracle tx `--lib`).
+
+Record: v3-consensus-changes.md#fingerprint-px-samples, 2026-10-14.
+
+## E89: block commitments read from the same `FixtureChain` view (node/src/fingerprint.rs)
+
+Decision: record [v3-consensus-changes.md](v3-consensus-changes.md)
+`fingerprint-px-samples` (2026-10-14).
+
+**Code.** `FixtureChain::px_root_after` (the empty PX state's root after the leaves)
+and `FixtureChain::output_frontier` (an empty frontier), read by the block verdict
+samples twice: by `BlockContext::committing`, which computes the header commitments
+the sample's block carries, and by `validate_block_transactions_cached`, which checks
+them (B-PXR, B-OMR).
+
+**Mutants covered:** 1089:9 `replace px_root_after -> Option<Digest> with
+Some(Default::default())`; 1094:9 `replace output_frontier -> OutputFrontier with
+Default::default()` (cargo-mutants, at `b0a6b4a`).
+
+**Argument.** Both sides of B-PXR and B-OMR read the same view, so any answer the view
+gives that is `Some` is committed and then found equal: the samples' verdicts do not
+depend on it, by construction (the samples sample PX6, PX4 and B8, not B-PXR or B-OMR).
+`output_frontier → Default::default()` is moreover the same value
+(`OutputFrontier::new()` is `Self::default()`). The PX root itself is sampled on the
+real state (`rules.sample.px_root_after` and `rules.sample.block_commitments`, on
+`MemoryChain`), not on this view.
+
+**Evidence.** Missed in `runSAMPe86` (`-f node/src/fingerprint.rs --re FixtureChain`,
+26 mutants: 22 caught, 2 unviable, these 2 missed).
+
+Record: v3-consensus-changes.md#fingerprint-px-samples, 2026-10-14.

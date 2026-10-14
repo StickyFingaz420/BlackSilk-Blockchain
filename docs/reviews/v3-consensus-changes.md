@@ -4931,6 +4931,250 @@ Decision: "PX verdict samples in the fingerprint (lead decision, 2026-10-14)"
 (decisions.md), step 5(B) of the owner-approved freeze-gate plan. Branch
 `consensus/fingerprint-px-samples` (from `c3df4d5`). Internal engineering work, not an
 audit. No validity rule, validation order, network id, genesis, genesis id or D0
-changes; the rules manifest gains entries, and the rules and consensus fingerprints of
-every network change. In progress: the sections below are completed with the results
-in the last commit of the branch.
+changes; the rules manifest gains 41 entries, and the rules and consensus fingerprints
+of every network change (identity unchanged).
+
+1. **Problem.** The rules fingerprint sampled the stateless PX rules and the deploy
+   rules on the golden PX fixture, but no verdict reached the contextual PX rules or
+   a block: PX6 (the validity window, `Window::contains` through `check_px_window`),
+   PX4 (the pool, `pool + bridge_in ≥ bridge_out`, `PxPoolUnderflow`) and B8 (the PX
+   tree capacity: the block's commitments fit in `CAPACITY − size` leaves,
+   `BlockError::PxTreeFull { leaves, free }`, and for one transaction
+   `check_px_capacity`, `TxError::PxTreeFull`) were covered only by `REVISIONS` and the
+   build commit (STATUS, fingerprint row: "Rules that only a later PX stage or a full
+   block reaches (PX6, the pool, B1–B8) are still covered by revision and commit
+   only"). A boundary change of one of them (`<=` to `<`, a dropped check, PX6
+   skipped for the PX transactions whose proof the cache vouches for) left every
+   fingerprint unchanged.
+2. **Demonstrated failure.** The nine consensus mutations added to
+   `tools/fingerprint-mutations.sh` (mutations 8 to 16, item 11), applied to a scratch
+   copy of `c3df4d5` with a release build each: **7 of 9 leave the rules fingerprint
+   unchanged** (`check_px_window` always `Ok`; PX6 dropped from the block path; the
+   mempool pool check `<` → `<=` and `+` → `-`; the block pool update `+` → `-`; the
+   mempool and block capacity checks `>` → `>=`). No manifest entry called
+   `check_px_window`, the pool checks, `check_px_capacity` or
+   `validate_block_transactions_cached`. The other two (`Window::contains` at either
+   bound) already moved it through the PX-side sample `px.sample.window.contains`
+   (px/src/fingerprint.rs). After this change all 16 mutations of the script move it
+   (item 11).
+3. **Prior art.** In this repository: the verdict samples on the fixture transfer
+   (fingerprint-v3, RTFP3-4), their inputs (fingerprint-sample-inputs) and their stable
+   text (fingerprint-stable-verdicts), whose pattern this follows; the boundary pairs of
+   the FTL and proof-of-work samples (RTFP3-5); the full PX verdicts of
+   `node/tests/px_fixture.rs` (`a_bridge_out_above_the_pool_is_refused` gave the PX4
+   variant). Not checked: how other chains sample block-level rules in a build
+   fingerprint (no direct precedent found).
+4. **Alternatives.**
+   - Single samples instead of boundary pairs: rejected, a refused case alone does not
+     see a bound that moves by one (`<=` to `<` keeps `(h + 1, 0)` refused).
+   - Block samples on `validate_block_transactions` (no cache): rejected for PX6, which
+     must be shown checked when the cache vouches for the proof (AT-5); and decoding
+     the 2.4 MB proof per case costs about 12 ms each. The cached entry point is the
+     same function (`validate_block_transactions` calls it with `|_| false`).
+   - A block that reaches the CLSAG and the batched range proofs (a coinbase at the
+     fixture's height 100): rejected, a new coinbase changes the fixture; the samples
+     only need the sampled rule's verdict and a distinct later one.
+   - **PX5** (`check_px_proof`, decode, shape and verification) in the manifest, the
+     golden transaction (`Ok(())`) and the same under a signature domain with another
+     genesis id (`PxProof`): measured (item 11) and **rejected** under the lead's rule
+     (release cold start ≤ about 0.5 s): it costs about +215 ms release and +6.2 s in a
+     debug build, where the probe's own `< 1 s` assertion fails. PX5 stays pinned by
+     `node/tests/px_fixture.rs` (`the_golden_px_transaction_is_valid_in_full` and the
+     variants there) and `node/tests/px_tamper.rs`.
+   - The block samples' RNG: (B) a re-export of `rand_core` from tx and a node-local
+     RNG (new public API on a consensus crate, a hand-made RNG), (C) no block samples
+     (loses the cached-path PX6 sample, which is the point): rejected; **chosen (A)**,
+     the lead's decision: `rand_chacha` moves from the node's dev-dependencies to its
+     dependencies (item 5, Dependency).
+   - **Chosen:** boundary pairs on the golden PX transaction, as transaction verdicts
+     (`validate_px_without_proof`) and as block verdicts on the cached path.
+5. **Affected components.**
+   - tx/src/validate.rs: `BlockError::fingerprint_text` (one arm per variant, 18, no
+     wildcard; the grammar of `TxError::fingerprint_text`; the error of `BlockError::Tx`
+     as its `TxError::fingerprint_text`), `const fn variant_index`, `const ALL:
+     [BlockError; 18]` (field `k` of variant `i` is `2000 + 10·i + k`; the nested error of
+     `Tx` takes the next values) and a const assertion tying them; tests
+     `block_fingerprint_texts_are_the_golden_values`,
+     `block_all_lists_every_variant_in_index_order`,
+     `block_fingerprint_texts_are_distinct_and_well_formed`. `#[derive(Debug)]` stays.
+     No rule or validation order changes.
+   - node/src/fingerprint.rs:
+     - `FixtureChain` gains `pool: u128` and `tree_size: u64` (0 in the fixture's
+       context), read by `px_pool` and `px_tree_size`; `verdict_context` destructures
+       them and records `input.pool` and `input.tree size` when non-zero. The view's
+       `px_root_after` ignores the size (it appends to the empty tree), so a block
+       sample on a non-empty size commits to the empty tree's root after its leaves;
+       `BlockContext::committing` reads the same view, so B-PXR holds.
+     - `px_bridge_out_variant`: the golden PX transaction with `bridge_out = bridge_in +
+       1` and its first pseudo-output lowered by `(bridge_in + 1)·H`; it balances, so it
+       passes every stateless rule, and needs a pool of at least 1.
+     - `px_context_samples`, `rules.sample.px.verdict (<case>)`:
+       `validate_px_without_proof` (every rule of `validate_px` but PX5, in its order)
+       at the fixture's height h = 100 on the fixture chain. Cases and verdicts:
+       `valid` `Ok(())`; `window (h + 1, 0)` and `window (0, h - 1)` `Err(PxWindow)`;
+       `window (h, h)` `Err(InvalidSignature { input: 0 })` (it passes PX6; the CLSAG
+       signs the window); `bridge_out = bridge_in + 1, pool 0` `Err(PxPoolUnderflow)`,
+       `pool 1` `Err(InvalidSignature { input: 0 })` (the CLSAG signs `bridge_out`);
+       `tree size CAPACITY - 1` `Err(PxTreeFull)`, `tree size CAPACITY - 2` `Ok(())`
+       (two commitments, one or two free leaves).
+     - `block_samples`, `rules.sample.block.verdict (<case>)`:
+       `validate_block_transactions_cached` on the block [fixture coinbase, one PX
+       transaction] at the coinbase's height b = 1, with the header commitments of
+       `BlockContext::committing`, the reward that balances the coinbase (B3: the
+       coinbase's total minus the PX fee) and `proof_verified` true for every
+       transaction (the cache vouches for every proof, so PX6 is shown checked
+       regardless, AT-5). Cases: `window (b + 1, 0), cached proof` `Err(Tx { index: 1,
+       error: PxWindow })`; `window (b, 0), cached proof`; `bridge_out = bridge_in + 1,
+       pool 0` `Err(Tx { index: 1, error: PxPoolUnderflow })`, `pool 1`; `tree size
+       CAPACITY - 1` `Err(PxTreeFull { leaves: 2, free: 1 })`, `tree size CAPACITY - 2`.
+       The three passing cases fail at C1, `Err(Tx { index: 1, error:
+       RingMemberTooYoung { input: 0, index: 0 } })`: the fixture's ring members are
+       immature at height 1, so no block sample reaches the batched range proofs or a
+       signature. Shared entry `rules.sample.block.verdict input.coinbase` (the
+       coinbase's `input_hash`); every block case records `input.height = 1`.
+     - `block_verdict_text` (`Ok(())` or `Err(<BlockError::fingerprint_text>)`; never
+       `Debug`).
+     - Tests: `samples_are_the_golden_values` checks the 14 new verdicts by their full
+       text (50 verdict entries, was 36) and the pool, tree-size and height inputs;
+       `every_verdict_variant_records_a_distinct_input` covers the new transaction
+       family (its two tree-size cases are context-only) and checks, in every family,
+       that no two cases record the same input; new `block_samples_never_draw_randomness`
+       (item 10).
+   - **Dependency (lead decision under delegation, 2026-10-14):** node/Cargo.toml moves
+     `rand_chacha = { version = "0.3", default-features = false }` from
+     `[dev-dependencies]` to `[dependencies]`. `validate_block_transactions_cached` takes
+     an `R: RngCore + CryptoRng` for the batched range proofs, and none of the node's
+     dependencies offers such a type (no `rand_core` path; the RNGs of chain, crypto,
+     tx and px are private or test-only). The samples use `ChaCha20Rng::from_seed([0;
+     32])` and never draw from it. `rand_chacha` 0.3.1 was already in the graph (chain
+     depends on it) and in the node's own `Cargo.lock` entry, which lists dev-
+     dependencies too: **Cargo.lock is byte-identical** (`git diff --exit-code c3df4d5
+     -- Cargo.lock`); the lockfile gate (0 commits change locked crates) and `cargo
+     deny check` (advisories, bans, licenses, sources ok) pass. No new crate enters the
+     build.
+   - tools/fingerprint-mutations.sh: nine mutations added (item 11).
+   - node/tests/deploy_configs.rs: re-pinned.
+   - Unchanged: every validity rule and validation order, px/src/fingerprint.rs (the PX
+     pin), `REVISIONS`, every existing manifest entry and its order.
+6. **Activation.** None: the fingerprint is not a validity rule. No verdict changes.
+7. **Compatibility.** Only the rules manifest (41 entries added after the deploy
+   verdicts) and the rules and consensus fingerprints change. Nodes compare
+   fingerprints only as an operator check; no P2P message carries them.
+8. **Reorg, wallet, mining, P2P.** None. Start-up cost: item 11.
+9. **Vectors.** No new vector. The independent recompute (item 11) decodes the new
+   manifests and recomputes every digest.
+10. **Tests.**
+    - tx `--lib`: the three `BlockError` tests of item 5.
+    - node `--lib`: item 5; `block_samples_never_draw_randomness` runs `block_samples`
+      with a counting `RngCore` wrapper around a seeded `ChaCha20Rng` and asserts zero
+      draws, and that each case's verdict is the manifest's.
+    - No permanent test compares `BlockError::fingerprint_text` with `Debug` (it would
+      bring the toolchain back). Compared once, in a scratch test not committed, on
+      rustc 1.98.1: for all 18 `ALL` entries, all 18 × 44 `Tx { index: 3, error: e }`
+      and `u128::MAX` fields, `fingerprint_text` equals `{:?}` and `Err(<text>)` equals
+      `{:?}` of `Err(e)`: all equal.
+11. **Suite results** (2026-10-14, 4-core i7-6700, 16 GB, Windows 10, toolchain 1.98.1;
+    scratch records in the lead's scratch area, `C:/bszkeval/g11-scratch/samples/`).
+    Code at `b0a6b4a` (`bd9171a`, `4310119`, `b0a6b4a` on the record commit `972f107`).
+    - **Start-up cost** (`fingerprint::tests::fingerprint_cost`, ignored, each run a
+      fresh process, cold = every network's manifests including the transaction
+      samples once):
+
+      | Build | `c3df4d5` | this change | with PX5 (rejected) |
+      |---|---|---|---|
+      | release | 141.6 to 145.2 ms (n = 5, about 143) | 374 to 400 ms (n = 5, about 390) | 598 to 619 ms (n = 3, about 605) |
+      | debug (the workspace's dev profile) | 429 to 435 ms (n = 3) | 648 to 665 ms (n = 3) | 6.88 to 7.02 s (n = 3; the probe's `< 1 s` assertion fails) |
+
+      Breakdown of the +245 ms in release (an instrumented scratch build, not
+      committed): the eight transaction cases about 80 ms (range proof and CLSAG
+      verification), the six block cases about 98 ms (mostly the 2.4 MB PX
+      transaction hashed twice per case for the block ids, in `committing` and in B5,
+      and encoded once for its input hash); the stateless PX cases, unchanged, about
+      74 ms. The PX5 pair adds about 215 ms (two verifications of the golden proof).
+    - **Manifest diff**, entry by entry, of release `blacksilk-node --print-manifest`
+      at `c3df4d5` (a clean detached worktree, own target directory) and at `4310119`
+      (own target directory, clean tree), on every network: rules 385 → 426 entries,
+      41 added after `rules.sample.deploy.verdict (bit budget above its cap) input`
+      (the 8 `rules.sample.px.verdict` cases with their inputs and 3 context entries;
+      `rules.sample.block.verdict input.coinbase`, the 6 block cases with their inputs
+      and 9 context entries), 0 removed, 0 changed, the kept entries in their order;
+      identity manifests and encodings byte-identical; the PX-side digest unchanged.
+      The bodies at `4310119` equal those of the uncommitted tree they were pinned
+      from.
+    - **Pins** (`node/tests/deploy_configs.rs`, `[consensus, rules, identity]`):
+      testnet `77c9751b…`, `2a8e5466…`, `fe014b57…` → `cacbadc8…`, `71a6053f…`,
+      `fe014b57…`; regtest `4d1e5c1d…`, `ba12487a…`, `bc72c2dc…` → `f90fef25…`,
+      `6ef53705…`, `bc72c2dc…`; mainnet `e7419968…`, `2a8e5466…`, `70718cc7…` →
+      `d302f55e…`, `71a6053f…`, `70718cc7…` (identity unchanged; testnet and mainnet
+      share the rules value). `px/tests/consensus_fingerprint.rs` (`9b67345e…`)
+      unchanged.
+    - **Independent recompute** (the standard-library Python script of
+      `fingerprint-sample-inputs`, on the before and after manifests of all three
+      networks): OVERALL True: both encodings decode, render and re-encode
+      byte-identically; the three digests equal the printed ones and the new pins;
+      the PX-side digest over the 113 PX entries equals the PX pin, before and after;
+      rules diff removed 0, added 41, changed 0, order preserved; identity diff empty;
+      D0 equals the genesis header's.
+    - **`tools/fingerprint-mutations.sh`** at `b0a6b4a`: **16 of 16** mutations change
+      the rules fingerprint (the 7 earlier ones and the 9 new ones). The new ones and
+      the entries they move: 8 `Window::contains` `not_before <= h` → `<`
+      (`px.sample.window.contains`, `px.verdict (window (h, h))`, `block.verdict
+      (window (b, 0), cached proof)`); 9 `h <= not_after` → `<`
+      (`px.sample.window.contains`, `px.verdict (window (h, h))`); 10
+      `check_px_window` always `Ok` and 11 PX6 dropped from the block path (`block.verdict
+      (window (b + 1, 0), cached proof)` → `RingMemberTooYoung`); 12 mempool pool `<` →
+      `<=` (`px.verdict (… pool 1)` → `PxPoolUnderflow`); 13 mempool `pool +
+      bridge_in` → `-` (`px.verdict (… pool 0)` → `InvalidSignature`); 14 block `pool
+      + bridge_in` → `-` (`block.verdict (… pool 0)` → `RingMemberTooYoung`); 15
+      `check_px_capacity` `>` → `>=` (`px.verdict (tree size CAPACITY - 2)` →
+      `PxTreeFull`); 16 block B8 `>` → `>=` (`block.verdict (tree size CAPACITY - 2)` →
+      `PxTreeFull { leaves: 2, free: 2 }`).
+    - **Demonstrated failure** (item 2): the 9 new mutations alone, at `c3df4d5`: 2 of
+      9 change the rules fingerprint (8 and 9, through the PX-side
+      `px.sample.window.contains`), 7 of 9 do not (10 to 16).
+    - **Mutation sweep**, cargo-mutants 27.1.0, `--in-diff` of `c3df4d5..b0a6b4a` per
+      file, `--profile mutants --cap-lints true --jobs 2`:
+      - tx/src/validate.rs (oracle tx `--lib`, `runSAMPtx`): 9 mutants, 2 caught
+        (`BlockError::fingerprint_text` → `String::new()` and → `"xyzzy"`), 4 unviable
+        (`variant_index` → 0 and → 1, 1604:13 `< → <=` and 1606:11 `+= → -=`, at
+        compile time), 2 missed and 1 timeout, all three in the compile-time
+        assertion block: exempt as E88 (mutation-exemptions.md, the argument of E87).
+      - node/src/fingerprint.rs (oracle `--lib --test deploy_configs --test
+        px_fixture`, `runSAMPnode`): 44 mutants, 36 caught, 8 unviable, 0 missed,
+        0 timeouts.
+      - The `FixtureChain` view, now read by block samples (`-f node/src/fingerprint.rs
+        --re FixtureChain`, `runSAMPe86`): 26 mutants, 22 caught, 2 unviable, 2 missed
+        (`px_root_after` → `Some(Default::default())`, `output_frontier` →
+        `Default::default()`: both sides of B-PXR and B-OMR read the same view;
+        exempt as E89). E86's `px_tree_size` → 1 is now caught.
+    - `cargo test --locked --release -p blacksilk-tx -p blacksilk-node` at `4310119`:
+      365 passed, 0 failed, 4 ignored (the cost probe, the two fixture regenerators and
+      the full tamper sweep, ignored before), 51 test binaries; `cargo clippy --locked
+      --release --all-targets -p blacksilk-tx -p blacksilk-node -p blacksilk-px -- -D
+      warnings` and `cargo fmt --all -- --check` clean; `consensus-gate.sh c3df4d5 HEAD`
+      and `lockfile-gate.sh c3df4d5 HEAD` (0 commits change locked crates) pass;
+      `git diff --exit-code c3df4d5 -- Cargo.lock` empty; `cargo deny --locked check`:
+      advisories, bans, licenses, sources ok; doc-lint and unicode-scan pass.
+12. **Open review points.**
+    - `revalidate_after_extension` (tx/src/validate.rs ~:1225-1231: PX6, PX4 and B8 on
+      re-admission after an extension) is mempool policy, not consensus, and is not
+      sampled; a change there moves no fingerprint.
+    - PX5 stays out of the manifest (item 4); its verdicts are pinned by tests only.
+    - The passing block cases all stop at C1 (`RingMemberTooYoung`): a reorder of the
+      block checks between the sampled rule and C1 is not seen by them; and the batched
+      range proofs, the CLSAGs and PX5 of a block are not sampled.
+    - The view's `px_root_after` ignores the tree size, so B-PXR is sampled only through
+      `rules.sample.block_commitments` and `px_root_after` on the empty tree (as before).
+    - `BlockError` variants other than `Tx` and `PxTreeFull` have a stable text but no
+      verdict sample; adding a variant to `ALL` and the golden table is by convention,
+      as for `TxError`.
+    - The window cases are named with `h` and `b`; their windows are bound by the input
+      hash of the transaction, not by a separate entry.
+13. **Identity impact.** None: the identity manifests are byte-identical on all three
+    networks; no network id, genesis or D0 changes.
+14. **Documentation.** This section; decisions.md; docs/STATUS.md (fingerprint row, the
+    golden PX fixture row, the fingerprint-mutations row); docs/testnet.md (what the
+    rules fingerprint covers and its limits); mutation-exemptions.md (E86 updated,
+    E88, E89).
+15. **Review status.** Implemented and verified by the implementing agent under the
+    lead's decision; an internal red-team pass is owed before the merge.
