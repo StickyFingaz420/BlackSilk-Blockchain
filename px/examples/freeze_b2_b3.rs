@@ -41,6 +41,10 @@
 //! degree bits, schedule and digest counts to the target's, and encodes it
 //! with the real encoder.
 
+use blacksilk_px::deploy_caps::{
+    budget_is_provable, largest_budget, program_is_provable, PX_FN_LOG_CYCLES, PX_FN_LOG_IMAGE,
+    PX_FN_LOG_KEYS,
+};
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::prove::{
     self, kernel_budget, kernel_program, prove_transfer, public_words, FN_RUN_LOG_CYCLES,
@@ -654,27 +658,10 @@ fn lde_heights(db: &[usize]) -> BTreeSet<usize> {
 
 // -------------------------------------------------------------- V12 shapes
 
-/// The V12 deploy caps (record `px-deploy-row-caps`; `blacksilk-tx` params
-/// `PX_FN_LOG_*` and `PX_LOG_*`), restated: `blacksilk-tx` depends on this
-/// crate, so its `budget_is_provable` and `program_is_provable` cannot be
-/// called here. `v12_admit` checks the restatement against a copy of the
-/// V12 table that tx/tests/deploy_rules.rs pins against the real caps
-/// (`the_largest_allowed_budget_is_the_v12_table`); the copy is not linked
-/// to tx mechanically, and the program and image caps are not in that table
-/// (a cross-crate pin is open).
-const V12_FN_LOG_CYCLES: u32 = 15;
-const V12_FN_LOG_KEYS: u32 = 14;
-const V12_FN_LOG_PROGRAM: u32 = 14;
-const V12_FN_LOG_IMAGE: u32 = 14;
-const V12_LOG_ADD: u32 = 16;
-const V12_LOG_BIT: u32 = 14;
-const V12_LOG_LT: u32 = 16;
-const V12_LOG_SHIFT: u32 = 14;
-const V12_LOG_MUL: u32 = 14;
-const V12_LOG_POSEIDON: u32 = 11;
-/// The per-function maxima `[cycles, keys, add, bit, lt, shift, mul,
-/// poseidon]` that tx/tests/deploy_rules.rs pins.
-const V12_TABLE: [usize; 8] = [32_768, 16_384, 20_168, 7_192, 22_493, 7_367, 7_367, 948];
+// The V12 deploy caps and rules (record `px-deploy-row-caps`) are
+// `blacksilk_px::deploy_caps`, the single definition consensus applies
+// through `blacksilk-tx` (record `v12-caps-single-definition`): this example
+// uses them directly, and `v12_admit` re-checks them at run time.
 const FIELD_NAMES: [&str; 8] = [
     "cycles", "keys", "add", "bit", "lt", "shift", "mul", "poseidon",
 ];
@@ -709,49 +696,6 @@ fn from_fields(f: [usize; 8]) -> Budget {
     }
 }
 
-/// `blacksilk_tx::px::budget_is_provable`, restated.
-fn v12_budget_ok(b: &Budget) -> bool {
-    let k = kernel_budget(MAX_FN);
-    let within = |x: usize, kx: usize, log: u32| {
-        x.checked_mul(MAX_FN)
-            .and_then(|s| s.checked_add(kx))
-            .is_some_and(|s| s <= 1usize << log)
-    };
-    b.cycles <= 1usize << V12_FN_LOG_CYCLES
-        && b.keys <= 1usize << V12_FN_LOG_KEYS
-        && within(b.add, k.add, V12_LOG_ADD)
-        && within(b.bit, k.bit, V12_LOG_BIT)
-        && within(b.lt, k.lt, V12_LOG_LT)
-        && within(b.shift, k.shift, V12_LOG_SHIFT)
-        && within(b.mul, k.mul, V12_LOG_MUL)
-        && within(b.poseidon, k.poseidon, V12_LOG_POSEIDON)
-}
-
-/// `blacksilk_tx::px::program_is_provable`, restated.
-fn v12_program_ok(p: &Program) -> bool {
-    let image = trace::image(p).len().max(MIN_HEIGHT).next_power_of_two();
-    program_table::height(p, MIN_HEIGHT) <= 1usize << V12_FN_LOG_PROGRAM
-        && image <= 1usize << V12_FN_LOG_IMAGE
-}
-
-/// Every budget field at its largest V12 value (`largest_allowed` in
-/// tx/tests/deploy_rules.rs): `K.x + MAX_FN·b.x ≤ 2^cap` for the shared
-/// tables.
-fn v12_largest() -> Budget {
-    let k = kernel_budget(MAX_FN);
-    let shared = |kx: usize, log: u32| ((1usize << log) - kx) / MAX_FN;
-    Budget {
-        cycles: 1 << V12_FN_LOG_CYCLES,
-        keys: 1 << V12_FN_LOG_KEYS,
-        add: shared(k.add, V12_LOG_ADD),
-        bit: shared(k.bit, V12_LOG_BIT),
-        lt: shared(k.lt, V12_LOG_LT),
-        shift: shared(k.shift, V12_LOG_SHIFT),
-        mul: shared(k.mul, V12_LOG_MUL),
-        poseidon: shared(k.poseidon, V12_LOG_POSEIDON),
-    }
-}
-
 /// The vault program with its code padded by `NOP`s to `code_len` words.
 /// The padding follows the vault's last instruction and is never executed;
 /// the vault has no segment above its code, so the layout stays valid.
@@ -781,7 +725,7 @@ fn image_extra() -> usize {
 ///   V12 cap; the function output tables at the vault's 2^8 rows (22 output
 ///   words; up to 2^9 are allowed with `MAX_FN_OUTPUT_WORDS` = 256 plus the
 ///   prefix, a negligible difference of about 0.04 M weighted cells). Both
-///   budgets are `v12_largest()` (the V12 table: add and lt at
+///   budgets are `largest_budget()` (the V12 table: add and lt at
 ///   2^16, bit, shift and mul at 2^14, Poseidon2 at 2^11 shared rows; cycles
 ///   2^15 and keys 2^14 per function), and both programs have their program
 ///   and image tables at 2^14 rows (`2^14 - extra - KEY_ROOM` code words).
@@ -789,8 +733,8 @@ fn image_extra() -> usize {
 fn v12_shape(name: &str) -> Shape {
     match name {
         "v12mem" => {
-            let top = v12_largest();
-            let len = (1 << V12_FN_LOG_IMAGE) - image_extra() - KEY_ROOM;
+            let top = largest_budget();
+            let len = (1 << PX_FN_LOG_IMAGE) - image_extra() - KEY_ROOM;
             Shape {
                 programs: [padded_vault(len), padded_vault(len - 1)],
                 budgets: [top, top],
@@ -846,7 +790,7 @@ fn odometer(sizes: &[usize]) -> Vec<Vec<usize>> {
 fn v12_schedule_search() -> Shape {
     let k = kernel_budget(MAX_FN);
     let v = vault::BUDGET;
-    let top = v12_largest();
+    let top = largest_budget();
     let vault_len = vault::program().code.len();
     let extra = image_extra();
     // Shared tables: (index in `fields`, index in the shape).
@@ -861,9 +805,9 @@ fn v12_schedule_search() -> Shape {
         .collect();
     // Program variants: (code length, program log, image log, least keys log).
     let mut lens = vec![vault_len];
-    for h in 12..=V12_FN_LOG_IMAGE as usize {
+    for h in 12..=PX_FN_LOG_IMAGE as usize {
         lens.push((1 << h) - extra - KEY_ROOM);
-        if h < V12_FN_LOG_IMAGE as usize {
+        if h < PX_FN_LOG_IMAGE as usize {
             lens.push(1 << h);
         }
     }
@@ -874,8 +818,8 @@ fn v12_schedule_search() -> Shape {
         let pl = program_table::height(&p, MIN_HEIGHT).trailing_zeros() as usize;
         let il = log2_ceil(image_len);
         let kl = log2_ceil(v.keys.max(image_len + KEY_ROOM));
-        if v12_program_ok(&p)
-            && kl <= V12_FN_LOG_KEYS as usize
+        if program_is_provable(&p)
+            && kl <= PX_FN_LOG_KEYS as usize
             && !variants.iter().any(|x| (x.1, x.2) == (pl, il))
         {
             variants.push((len, pl, il, kl));
@@ -883,8 +827,8 @@ fn v12_schedule_search() -> Shape {
     }
     let mut owns: Vec<Own> = Vec::new();
     for &(code_len, program_log, image_log, kl) in &variants {
-        for keys_log in kl..=V12_FN_LOG_KEYS as usize {
-            for cycles_log in log2_ceil(v.cycles)..=V12_FN_LOG_CYCLES as usize {
+        for keys_log in kl..=PX_FN_LOG_KEYS as usize {
+            for cycles_log in log2_ceil(v.cycles)..=PX_FN_LOG_CYCLES as usize {
                 owns.push(Own {
                     code_len,
                     program_log,
@@ -993,46 +937,50 @@ fn v12_schedule_search() -> Shape {
     shape
 }
 
-/// The V12 deploy rules on a shape, after self-checks of the restatement.
+/// The V12 deploy rules (`blacksilk_px::deploy_caps`, the definition
+/// consensus applies) on a shape, after run-time checks of the rules at
+/// their boundaries. The cap values and the largest budget are pinned
+/// numerically by the `deploy_caps` unit tests.
 fn v12_admit(name: &str, shape: &Shape) {
     assert_eq!(
-        FN_RUN_LOG_CYCLES, V12_FN_LOG_CYCLES,
+        FN_RUN_LOG_CYCLES, PX_FN_LOG_CYCLES,
         "the prover's cycle stop is the cycles cap"
     );
     assert_eq!(MAX_FN, 2);
-    let top = v12_largest();
-    assert_eq!(
-        fields(&top),
-        V12_TABLE,
-        "the restated caps give the pinned V12 table"
-    );
-    assert!(v12_budget_ok(&top));
+    let top = largest_budget();
+    assert!(budget_is_provable(&top));
     for (i, field) in FIELD_NAMES.iter().enumerate() {
         let mut f = fields(&top);
         f[i] += 1;
-        assert!(!v12_budget_ok(&from_fields(f)), "{field} one above its cap");
+        assert!(
+            !budget_is_provable(&from_fields(f)),
+            "{field} one above its cap"
+        );
     }
-    assert!(v12_program_ok(&vault::program()));
+    assert!(program_is_provable(&vault::program()));
     // The program rule at its boundary: an image of exactly 2^14 words is
     // allowed, one word more is refused.
-    let at_cap = (1 << V12_FN_LOG_IMAGE) - image_extra();
+    let at_cap = (1 << PX_FN_LOG_IMAGE) - image_extra();
     assert_eq!(
         trace::image(&padded_vault(at_cap)).len(),
-        1 << V12_FN_LOG_IMAGE
+        1 << PX_FN_LOG_IMAGE
     );
-    assert!(v12_program_ok(&padded_vault(at_cap)), "image at the cap");
     assert!(
-        !v12_program_ok(&padded_vault(at_cap + 1)),
+        program_is_provable(&padded_vault(at_cap)),
+        "image at the cap"
+    );
+    assert!(
+        !program_is_provable(&padded_vault(at_cap + 1)),
         "image one word above the cap"
     );
     for e in 0..2 {
         assert!(
-            v12_budget_ok(&shape.budgets[e]),
+            budget_is_provable(&shape.budgets[e]),
             "{name}: budget {e} {:?} is not allowed",
             shape.budgets[e]
         );
         assert!(
-            v12_program_ok(&shape.programs[e]),
+            program_is_provable(&shape.programs[e]),
             "{name}: program {e} is not allowed"
         );
     }
@@ -1041,7 +989,7 @@ fn v12_admit(name: &str, shape: &Shape) {
         shape.programs[1].id(),
         "{name}: two distinct programs"
     );
-    println!("{name}: both budgets and both programs pass the V12 deploy rules (restated)");
+    println!("{name}: both budgets and both programs pass the V12 deploy rules (blacksilk_px::deploy_caps)");
 }
 
 /// The native run of every function call against its budget, as the prover

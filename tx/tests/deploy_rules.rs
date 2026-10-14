@@ -179,25 +179,15 @@ const FIELDS: [Field; 8] = [
     ("poseidon", |b| &mut b.poseidon),
 ];
 
-/// The per-function maxima of the B2 research (V12), pinned: a cap or
-/// kernel-budget change shows up here. The vault fits with room on every
-/// field.
+/// The per-function maxima of the B2 research (V12): the caps consensus
+/// applies (`blacksilk_tx::params`) give, by this file's own computation,
+/// the table the B2 measurements use (`blacksilk_px::deploy_caps::
+/// largest_budget`, whose unit tests pin it numerically, record
+/// `v12-caps-single-definition`). The vault fits with room on every field.
 #[test]
 fn the_largest_allowed_budget_is_the_v12_table() {
     let top = largest_allowed();
-    assert_eq!(
-        [
-            top.cycles,
-            top.keys,
-            top.add,
-            top.bit,
-            top.lt,
-            top.shift,
-            top.mul,
-            top.poseidon
-        ],
-        [32_768, 16_384, 20_168, 7_192, 22_493, 7_367, 7_367, 948]
-    );
+    assert_eq!(top, blacksilk_px::deploy_caps::largest_budget());
     for (name, field) in FIELDS {
         let (mut a, mut b) = (VAULT_BUDGET, top);
         assert!(*field(&mut a) < *field(&mut b), "vault {name}");
