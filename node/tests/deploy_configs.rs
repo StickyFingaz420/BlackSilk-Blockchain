@@ -256,25 +256,30 @@ fn consensus_fingerprints_are_pinned() {
 /// input is recorded next to its output, the key schedule gains the samples
 /// 2E + L and 10E + L that see a dropped `- 1`, and D0 moves from the rules
 /// to the identity manifest, so testnet and mainnet share one rules value; no
-/// rule, network id, genesis id or D0 value changes).
+/// rule, network id, genesis id or D0 value changes); re-pinned by
+/// fingerprint-px-samples (rules and consensus: contextual PX verdicts for
+/// PX6, PX4 and B8 and block verdicts on the cached path, as boundary pairs;
+/// no rule changes; identity unchanged).
 const TESTNET: [&str; 3] = [
-    "77c9751b5f5bfbd13c80ee35603ce225ce64ec248124a883a1b18fc335b18631",
-    "2a8e546697e61720f13ab1db7f5513b7b056bf49b3f06627c9cdd9ebbd3f9d2d",
+    "cacbadc8768c15fc399272108e2b9fe7a44b61b638eec9464d8aea4333cba2ca",
+    "71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9",
     "fe014b5706d9b0b8737404cb45dd3489efe1a648bb1b10c8f9232308d1d1ee95",
 ];
 /// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
-/// output-root; bs-zk-4 with px-deploy-row-caps; fingerprint-sample-inputs).
+/// output-root; bs-zk-4 with px-deploy-row-caps; fingerprint-sample-inputs;
+/// fingerprint-px-samples).
 const REGTEST: [&str; 3] = [
-    "4d1e5c1ddd41f3d7805f4ec2b197ce89eba41bcd5732520e621b18166a9bd00f",
-    "ba12487a659c58c721aa0c8f55a5184f959c2c926ced3654205b261e94986a98",
+    "f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889",
+    "6ef5370540fe1388fa0fb713bca8bf4465777162f71bf7f61f13799315e469a5",
     "bc72c2dca0607b24ac771c102a6940237fcdf1a54d7294f3047624affda3bf0e",
 ];
 /// `[consensus, rules, identity]` (fingerprint v3; RT-FP3; PX-R; RX-SALT;
-/// output-root; bs-zk-4 with px-deploy-row-caps; fingerprint-sample-inputs).
+/// output-root; bs-zk-4 with px-deploy-row-caps; fingerprint-sample-inputs;
+/// fingerprint-px-samples).
 /// The mainnet parameters are provisional; mainnet is not launched. Its rules
 /// value is the testnet's (fingerprint-sample-inputs).
 const MAINNET: [&str; 3] = [
-    "e7419968a229a05a7c01f931dd32838a8032ff90f1cf800d049cfa4baead207a",
-    "2a8e546697e61720f13ab1db7f5513b7b056bf49b3f06627c9cdd9ebbd3f9d2d",
+    "d302f55e0f28079a687dacab66001af20edcc517c1324486f3058973a3cdcfac",
+    "71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9",
     "70718cc76c9b5305e3e2b524ee286ca9a573b574986b6fab9394935dd9a4759e",
 ];
