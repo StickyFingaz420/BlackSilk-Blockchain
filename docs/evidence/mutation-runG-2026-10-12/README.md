@@ -240,8 +240,10 @@ limit).
 - Oracle note: blacksilk-zk has no pinned proof-byte fixtures; every verify test
   proves toy statements. (Added 2026-10-14, after this run: node/tests/px_tamper.rs
   now sweeps single-bit changes of the golden PX transfer fixture's pinned proof,
-  verify only; a later run can use it as an oracle for the verifier paths,
-  docs/STATUS.md golden-fixture row.)
+  verify only; a later run can use it as an oracle for the binding of proof bytes
+  and statement inputs, not for soundness checks only a forged proof reaches, such
+  as the out-of-domain check or the grinding check; zk/tests/query_pow.rs covers the
+  query grinding witness. docs/STATUS.md golden-fixture row.)
 - **No survivor lets the verifier accept an invalid, forged or non-canonical proof,
   or changes a soundness parameter without a pin failing.**
 - Test gaps (13 survivors, plus 5 mutants that only stage 3 caught), killed by
