@@ -2013,3 +2013,39 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   regenerated both fixtures and all four files equal the committed ones, which were
   generated and regenerated on Windows x86-64; evidence README, "Cross-machine
   determinism (CI)"). Still open: a regeneration on aarch64.
+
+## Consensus gate: manifests, build scripts and module roots (owner-approved follow-up, 2026-10-15)
+
+- **Why:** red team F3 of `v12-caps-single-definition`: `px/src/lib.rs` (its `pub mod`
+  lines) and the crate manifests were not consensus paths, so a `#[path]` on a module
+  line, a dependency, feature, `[lib] path` or build-script change, or a root
+  `[patch]` or `[profile]` change could swap or alter gated code without a
+  `Consensus-Change` trailer. The same gap held for the other gated modules and crates.
+- **Decision:** `.github/scripts/consensus-gate.sh` also gates:
+  - the root `Cargo.toml` and a root `rust-toolchain` or `rust-toolchain.toml`;
+  - the `Cargo.toml` and `build.rs` of chain, node, p2p, px, rpc, tx, zkvm, miner,
+    wallet and tools/genesis (every workspace crate that `tools/release-build.sh`
+    compiles with the node and that was not gated whole; features unify across that
+    one cargo invocation), and `node/build_id.rs`;
+  - the module roots that declare gated modules: `chain/src/lib.rs`,
+    `chain/src/manager.rs`, `node/src/lib.rs`, `px/src/lib.rs`, `tx/src/lib.rs`,
+    `zkvm/src/lib.rs`.
+- **History:** the established mechanism. The 15 earlier commits that touched these
+  paths without a trailer are in `.github/consensus-gate-waivers.txt`, with their
+  subjects and paths. Two of them are after the old waiver horizon, so the horizon
+  (`gate-range.sh`) moves from `d5c20f7` to `432b8c2`; every earlier waiver is an
+  ancestor of `d5c20f7`.
+- **Rejected:** every `Cargo.toml` (churn for crates that are not built with the
+  release binaries); a content-aware check of module lines (fragile); a per-path
+  "gated since" table (the waiver file already does this).
+- **Tests:** `consensus-gate.sh --selftest` checks the path list (30 added paths
+  gated, 20 neighbours not), then runs a copy of the gate on a fixture repository:
+  on each added path, an untrailered commit fails and a trailered one passes; a
+  waived commit at the horizon passes; a waiver past the horizon is ignored; the
+  ungated neighbours pass.
+- **Scope:** CI gate only. No production code, rule, manifest entry, fingerprint, pin
+  or dependency change; Cargo.lock unchanged. Record: docs/reviews/v3-consensus-changes.md#gate-manifest-paths
+  (`Revision: none (commit-gate coverage only; no rule, code or pin change)`).
+- **Open:** the modules that gated code uses are not gated (`px/src/perm.rs`,
+  `zkvm/src/isa.rs` and others; record item 12): a separate decision. Internal red
+  team pending.

@@ -43,6 +43,7 @@ they are never renamed. Index:
 - fingerprint-sample-inputs (node fingerprint manifest: sample inputs, key-schedule samples, D0 as identity; lead decision 2026-10-13)
 - fingerprint-stable-verdicts (tx `TxError::fingerprint_text`, node verdict samples: stable verdict text, no manifest value changes; lead decision 2026-10-14)
 - fingerprint-px-samples (tx `BlockError::fingerprint_text`, node verdict samples for PX6, PX4 and B8 and block verdicts; lead decision 2026-10-14)
+- gate-manifest-paths (the consensus commit gate: workspace and crate manifests, build scripts, module roots; no rule change; owner-approved follow-up to red team F3 of v12-caps-single-definition)
 
 New sections are appended at the end.
 
@@ -5182,3 +5183,146 @@ of every network change (identity unchanged).
     (new minus golden), not by the new value, so it does not rely on the golden
     `bridge_out` being 0; every manifest value and pin is unchanged (the golden value
     is 0).
+
+## gate-manifest-paths: the consensus gate covers the manifests, build scripts and module roots that decide what the gated code is
+
+Revision: none (commit-gate coverage only; no rule, code or pin change)
+
+Decision: "Consensus gate: manifests, build scripts and module roots" (decisions.md),
+owner-approved follow-up 1 to red team F3 of `v12-caps-single-definition`. Branch
+`gates/consensus-paths-manifests` (from `432b8c2`). Internal engineering work, not an
+audit. No production code, rule, manifest entry, fingerprint, pin or dependency
+changes; Cargo.lock is unchanged.
+
+1. **Problem.** `.github/scripts/consensus-gate.sh` gated consensus source files by
+   path, but not the files that decide which source a gated module is or how it is
+   built. A `#[path = "…"]`, `cfg` or `include!` on a `pub mod` line of `px/src/lib.rs`
+   (likewise `tx/src/lib.rs`, `chain/src/lib.rs`, `zkvm/src/lib.rs`,
+   `node/src/lib.rs` for `fingerprint`, and `chain/src/manager.rs`, the root of the
+   gated `chain/src/manager/`) could swap a gated module for an ungated file; a
+   dependency path, feature, `[lib] path` or `build =` in a crate manifest, a new
+   `build.rs` (cargo uses one without a manifest change), or a `[patch]`,
+   `[workspace]` or `[profile.*]` change in the root `Cargo.toml` (for example
+   `panic = "abort"`, which would defeat the verifier's `catch_unwind`, or
+   `overflow-checks`) could alter gated code, all without a `Consensus-Change`
+   trailer.
+2. **Demonstrated failure.** On a scratch fixture repository, one commit that adds
+   `#[path = "evil.rs"]` to the `pub mod deploy_caps;` line of `px/src/lib.rs`, a
+   `[features]` table to `tx/Cargo.toml` and a `[patch.crates-io]` table to the root
+   `Cargo.toml`, with no trailer: the gate at `432b8c2` printed "1 commits checked, 0
+   touch consensus paths, pass" (exit 0); this change's gate fails it (exit 1,
+   "Touches: Cargo.toml, px/src/lib.rs, tx/Cargo.toml").
+3. **Prior art.** This gate's own earlier extensions (RTFP3-10, RT-TPGATE,
+   RT-TPGATE2, RT-TPGATE3: path additions, with the earlier untrailered commits in the
+   waiver file); the `.cargo/*` paths, gated because cargo honours `[patch]`,
+   `[paths]` and `[source]` there. Cargo behaviour relied on: a `build.rs` at the
+   package root is used without a `build` key; path dependencies inside the
+   workspace root become members; features are unified across the dependency graph.
+4. **Alternatives.**
+   - Gate every `Cargo.toml` (`*/Cargo.toml`): rejected as wider than needed. The
+     other `tools/*` crates, `fuzz`, `contracts` (both their own workspaces) and the
+     guest crates are not built with the release binaries (the guests' output is
+     pinned by `px/*.elf` and `px/*.id`, already gated); gating them adds trailer
+     churn without protecting a consensus check.
+   - Gate only the manifests of the node binary's own dependency closure: rejected.
+     `tools/release-build.sh` and the Dockerfile build the node with the miner, the
+     wallet and the genesis tool in one cargo invocation, so a feature that one of
+     those manifests enables on a shared dependency is unified into the node binary
+     (a feature change does not show in `Cargo.lock`).
+   - Check only the module-declaration lines of the module roots (a content-aware
+     gate): rejected. Attributes span lines and macros can declare modules; a path
+     rule is simple and cannot be talked around.
+   - A per-path "gated since" table: rejected in favour of the established mechanism.
+     Only 15 earlier commits touch the new paths without a trailer, so they go in the
+     waiver file, as for every earlier extension.
+   - Gate `p2p/src/lib.rs`, `rpc/src/lib.rs`, `node/src/main.rs` and the miner,
+     wallet and genesis sources: rejected here; they declare no gated module.
+5. **Affected components.** `.github/scripts/consensus-gate.sh` (the path list, its
+   comment, the selftest), `.github/scripts/gate-range.sh` (the waiver horizon),
+   `.github/consensus-gate-waivers.txt`, and the docs in item 14. The paths added:
+   - the workspace: the root `Cargo.toml` (members, `exclude`, `[patch.crates-io]` of
+     the Plonky3 crates, `[profile.*]`), and `rust-toolchain` or
+     `rust-toolchain.toml` at the root (neither exists; a new one would change the
+     compiler that builds the node);
+   - the manifest and any build script of every workspace crate that the release
+     build compiles with the node binary and that was not already gated whole
+     (`cargo tree -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet -p
+     blacksilk-genesis -e normal,build`, the packages of `tools/release-build.sh`:
+     chain, node, p2p, px, rpc, tx, zkvm, miner, wallet, tools/genesis; consensus,
+     crypto, px-core, randomx, zk and third_party/ were gated whole already):
+     `<crate>/Cargo.toml`, `<crate>/build.rs`, and `node/build_id.rs`, which
+     `node/build.rs` includes by `#[path]`;
+   - the module roots that declare gated modules: `chain/src/lib.rs`,
+     `chain/src/manager.rs`, `node/src/lib.rs`, `px/src/lib.rs`, `tx/src/lib.rs`,
+     `zkvm/src/lib.rs`.
+
+   Not added: `Cargo.lock` (the lockfile gate covers it), the root `.cargo/` (already
+   gated), the crates that are not built with the release binaries (item 4).
+6. **Activation.** None: CI only. The `gates` job runs the trusted copy of the gate
+   (from the merge base with rebuild/core), so the new paths are enforced from the
+   first push after the merge; the branch's own `gates-selftest` job runs the new
+   selftest.
+7. **Compatibility.** The waiver file gains 15 lines, each with the commit's subject
+   and the newly gated paths it touched; their diffs of those paths were read (module
+   additions, dependency pins, `[profile.mutants]`, a workspace member, comments: no
+   `[patch]`, release-profile, `#[path]`, `include!`, `[lib]` or `build` change). Two
+   of them (`468bb8e`, `2dd23a1`) are after the waiver horizon `d5c20f7`, so the
+   horizon moves to `432b8c2`, rebuild/core when this change was made. Every waiver
+   granted before is an ancestor of `d5c20f7` (the lockfile gate's single waiver as
+   well), so none changes effect.
+8. **Reorg, wallet, mining and P2P implications.** None. Development: a commit that
+   edits one of these files now needs a trailer, `none: <reason>` for a routine edit
+   (for example RPC code in `node/src/lib.rs`, or a dev-dependency).
+9. **Vectors.** The fixture repository of the selftest (item 10).
+10. **Tests.** `consensus-gate.sh --selftest` gains two parts. `selftest_paths`: every
+    added path is a consensus path, as are `consensus/Cargo.toml`,
+    `crypto/Cargo.toml`, `randomx/Cargo.toml`, `px-core/src/lib.rs`, `zk/build.rs`
+    and `px/src/deploy_caps.rs`; 20 neighbours are not (`README.md`,
+    `docs/STATUS.md`, `Cargo.lock`, the daa-sim, labnet, supply-audit, fuzz,
+    contracts, guests and zkvm sdk manifests, `p2p/src/lib.rs`, `rpc/src/lib.rs`,
+    `node/src/main.rs`, `miner/src/main.rs`, `px/src/vault.rs`,
+    `chain/src/mempool.rs`, `chain/src/manager.rs.orig`, `src/lib.rs`,
+    `px/src/lib.rs.bak`, `docs/Cargo.toml`). `selftest_history` runs a copy of the
+    gate, with its own waiver file, on a fixture repository: for each of the 30 added
+    paths, a commit without a trailer fails (exit 1) and one with `Consensus-Change:
+    none: …` passes; a citation of a section the record does not have fails; a
+    waived commit at the horizon passes; a commit after the horizon fails even with a
+    waiver line; each of the 20 neighbours passes without a trailer; the whole fixture
+    range fails. The earlier selftest cases are unchanged.
+11. **Suite results** (2026-10-15, this machine, Git for Windows bash, on the branch's
+    working tree before the commit):
+    - `consensus-gate.sh --selftest`: pass (about 80 s; the fixture part makes about
+      90 commits).
+    - The selftest against three mutated copies of the gate, each alone: the
+      `px/src/lib.rs` pattern removed (4 failures reported), the waiver horizon
+      check made always true (1), a `*/Cargo.toml` pattern added (5): FAIL each time.
+    - `consensus-gate.sh` over the whole history (`"" HEAD`, base `432b8c2`): 706
+      commits checked, 203 touch consensus paths, pass; the 15 new waivers print as
+      waived. `lockfile-gate.sh` over the whole history: 706 commits, 9 change locked
+      crates, pass (the horizon move changes no lockfile verdict).
+    - doc-lint (182 files clean), unicode-scan (0 findings); `cargo test --locked -p
+      blacksilk-node --lib revision_lines`: 1 passed (this section's `Revision:` line).
+    - No Rust code changed, so no other cargo suite was run.
+12. **Open review points.**
+    - Content, not redirection: gated files use ungated modules of their own crates.
+      `px/src/perm.rs` (the host Poseidon2 permutation, used by `prove.rs`, `state.rs`
+      and the tree tests) and `zkvm/src/isa.rs` (instruction decoding, used by
+      `exec.rs`, `program.rs` and `air/`) carry consensus behaviour and are not
+      consensus paths; `px/src/vault.rs` and `px/src/delivery.rs` feed manifest
+      constants; `chain/src/store.rs`, `mempool.rs`, `actor.rs` and `sync_policy.rs`
+      are used by the gated chain manager (node-local policy and storage). Whether to
+      gate them is a separate decision.
+    - A release build with other packages than `tools/release-build.sh` names (for
+      example `cargo build --workspace`) unifies features from ungated manifests
+      (`tools/labnet`, `tools/supply-audit`, ...) into the node binary; the release
+      procedure is the gated script, so this is a procedure point, not a gate one.
+    - Dev-dependency edits in the gated manifests now need a trailer, although they
+      reach test builds only; accepted for simplicity.
+    - The gate judges paths, not intent: a `none: …` trailer on a real redirect is
+      caught only by review.
+13. **Identity impact.** None.
+14. **Documentation.** This section; decisions.md; docs/STATUS.md (the
+    px-deploy-row-caps row's F3 open point); README.md (Contributing: which files are
+    consensus paths).
+15. **Review status.** Implemented and verified by the implementing agent under the
+    owner-approved follow-up; internal red team pending; not merged.

@@ -1358,7 +1358,7 @@ The decisions log reopens several topics before mainnet: the difficulty rule tog
 
 - **Security issues** go through private reporting, never a public issue ([Reporting security issues](#reporting-security-issues)). Bugs and feature requests use the templates in `.github/ISSUE_TEMPLATE/`.
 - **Consensus changes** follow the 15-step discipline of [v3-consensus-changes.md](docs/reviews/v3-consensus-changes.md): problem, demonstrated failure, prior art, alternatives, affected components, activation, compatibility, reorg, wallet, mining and P2P implications, vectors, regression tests, suite results, and open review points.
-- **Commit trailers.** Every commit that touches a consensus path (listed in `.github/scripts/consensus-gate.sh`) carries one of these trailers in the **last paragraph** of the message, together with any `Co-Authored-By:` line and with no blank line between them:
+- **Commit trailers.** Every commit that touches a consensus path (listed in `.github/scripts/consensus-gate.sh`: consensus code and fixtures, the root `Cargo.toml`, the manifests, build scripts and module roots of the crates built with the node, the commit gates and the CI and build configuration) carries one of these trailers in the **last paragraph** of the message, together with any `Co-Authored-By:` line and with no blank line between them:
   ```
   Consensus-Change: docs/reviews/v3-consensus-changes.md#<section>
   Consensus-Change: none: <why this edit does not change consensus>
