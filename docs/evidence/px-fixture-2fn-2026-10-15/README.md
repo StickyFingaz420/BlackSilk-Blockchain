@@ -1,7 +1,8 @@
 # Two-function PX fixture: generation, determinism, verification and tamper sweep (2026-10-15)
 
 This is internal engineering evidence, not an audit. Everything here was run on one
-Windows machine. The cross-machine check (CI) is listed under "Not done".
+Windows machine, except the cross-machine check, which ran later the same day in CI
+on Linux x86-64 ("Cross-machine determinism (CI)" below).
 
 Step 5(C) of the freeze-gate plan adds the PX fixture that was still missing: a proven
 transaction with two vault functions. The golden fixture `node/src/px_fixture.bin` has
@@ -210,16 +211,56 @@ directory, against `the_proof_binds_the_contract_the_budget_and_the_output_count
 - **Not run.** cargo-mutants over `statement` and `function_prefix` was optional and
   was not run.
 
+## Cross-machine determinism (CI), 2026-10-15
+
+Added after the merge into `rebuild/core` (`66f12f0`), once the workflow was on the
+default branch.
+
+- **Run:** GitHub Actions run 38683497322, workflow "PX fixture determinism"
+  (`.github/workflows/px-fixture.yml` at `66f12f0761c80f13c493f2c752d2f511511f3303`),
+  manual dispatch, job `regenerate` (job id 116253044024), 04:49:40 to 04:53:53 UTC,
+  conclusion success.
+- **Machine:** runner image ubuntu-24.04 (release 20261012.334), x86-64,
+  `MemTotal: 15989 MiB`; rustc 1.98.1 (48a229cea 2026-09-01),
+  `x86_64-unknown-linux-gnu`, `cargo test --locked --release`.
+- **What it did:** ran `regenerate_the_golden_px_fixture` and
+  `regenerate_the_two_function_px_fixture` (`--ignored --exact`, one test thread,
+  default prover threads) into `$RUNNER_TEMP/px-fixture`, then compared the SHA-256
+  of each regenerated file with the committed one. Both tests: `1 passed; 0 failed`.
+
+| File | Bytes | Committed SHA-256 = regenerated SHA-256 | Verdict |
+|---|---|---|---|
+| `node/src/px_fixture.bin` | 2,404,291 | `9ed13fe7ee8eaefaa322a71f14d81854af0e23ec8ded76a6efb9ce5c70f2e661` | same |
+| `node/src/px_fixture.txt` | 30,268 | `f9475886693554ed6da896e8c5356a7b89b50d1f6e37ca412d0c21d4952e386a` | same |
+| `node/tests/fixtures/px_fixture_2fn.bin` | 3,634,307 | `d0553badda419bd821cbc4371d4e3c41cc24f012adc7c52b57db2f78c92f6ef1` | same |
+| `node/tests/fixtures/px_fixture_2fn.txt` | 713 | `6a7ed2fbbc49f421c774099aa3eb3d37ff36d30719273c136d6adfe13023e247` | same |
+
+| Generator | Wall (`/usr/bin/time -v`) | Peak RSS |
+|---|---|---|
+| transfer fixture | 54.69 s (test 54.56 s) | 3,766,104 KB |
+| two-function fixture | 103.08 s (`build_px` 102.7 s, `validate_px` 196.5 ms) | 6,707,688 KB |
+
+- **Checked here:** the values above were read from the job log
+  (`gh api repos/StickyFingaz420/BlackSilk-Blockchain/actions/jobs/116253044024/logs`)
+  on 2026-10-15, and the committed files at `66f12f0` hash to the same four values on
+  the Windows checkout.
+- **What it shows:** the prover output for both fixtures is byte-identical between
+  Windows x86-64 (the local generations and regeneration above) and Linux x86-64
+  (this run), at the runner's default thread count.
+- **Limits:** one CI run on one runner class; x86-64 only, no aarch64 regeneration
+  (the `arm64` CI job does not run the PX-proving tests); the job log is kept by
+  GitHub, not in the repository.
+
 ## Not done
 
-- **Cross-machine determinism (CI).** `.github/workflows/px-fixture.yml` is committed,
-  but it could not be dispatched. GitHub dispatches only workflows that exist on the
-  default branch (`rebuild/core`):
+- **Cross-machine determinism (CI): done after the merge, x86-64 only.** At the time
+  of this record `.github/workflows/px-fixture.yml` could not be dispatched from the
+  branch: GitHub dispatches only workflows that exist on the default branch
+  (`rebuild/core`), and
   `gh workflow run px-fixture.yml --ref tests/px-fixture-two-function` answered
-  `HTTP 404: workflow px-fixture.yml not found on the default branch`. The workflow
-  can run once it is on `rebuild/core`, and the branch's fixtures can then be checked
-  with `--ref`. Until then, determinism is shown on one machine at two thread counts
-  only.
+  `HTTP 404: workflow px-fixture.yml not found on the default branch`. After the
+  merge, run 38683497322 on Linux x86-64 reproduced all four files (section
+  above). Not done: a regeneration on aarch64.
 - **Golden fixture status.** The transfer fixture's regeneration is reproduced locally
-  (above), not in CI. It stays consensus-pinned, and the manual workflow only compares
-  it.
+  (above) and in CI run 38683497322 on Linux x86-64. It stays consensus-pinned, and
+  the manual workflow only compares it.
