@@ -2012,7 +2012,12 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   x86-64 after the merge; CI run 38683497322, `px-fixture.yml` at `66f12f0`, ubuntu-24.04,
   regenerated both fixtures and all four files equal the committed ones, which were
   generated and regenerated on Windows x86-64; evidence README, "Cross-machine
-  determinism (CI)"). Still open: a regeneration on aarch64.
+  determinism (CI)"). ~~Still open: a regeneration on aarch64~~ (2026-10-15: CI run
+  38742854296, `px-fixture.yml` at `362b8b0`, now a matrix of ubuntu-24.04 and
+  ubuntu-24.04-arm, regenerated both fixtures on Linux x86-64 and on Linux aarch64
+  with NEON. On each leg all four files equal the committed ones, and the compare
+  step checked an explicit list of four files: "same: 4". Evidence README,
+  "Cross-architecture determinism: x86-64 and aarch64 (CI)").
 
 ## Consensus gate: manifests, build scripts and module roots (owner-approved follow-up, 2026-10-15)
 

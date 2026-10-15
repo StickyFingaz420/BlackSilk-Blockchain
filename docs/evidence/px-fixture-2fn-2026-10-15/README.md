@@ -1,8 +1,9 @@
 # Two-function PX fixture: generation, determinism, verification and tamper sweep (2026-10-15)
 
 This is internal engineering evidence, not an audit. Everything here was run on one
-Windows machine, except the cross-machine check, which ran later the same day in CI
-on Linux x86-64 ("Cross-machine determinism (CI)" below).
+Windows machine, except the cross-machine checks, which ran later the same day in CI
+on Linux x86-64 ("Cross-machine determinism (CI)" below) and then on Linux x86-64 and
+aarch64 together ("Cross-architecture determinism: x86-64 and aarch64 (CI)" below).
 
 Step 5(C) of the freeze-gate plan adds the PX fixture that was still missing: a proven
 transaction with two vault functions. The golden fixture `node/src/px_fixture.bin` has
@@ -248,8 +249,88 @@ default branch.
   Windows x86-64 (the local generations and regeneration above) and Linux x86-64
   (this run), at the runner's default thread count.
 - **Limits:** one CI run on one runner class; x86-64 only, no aarch64 regeneration
-  (the `arm64` CI job does not run the PX-proving tests); the job log is kept by
-  GitHub, not in the repository.
+  (the `arm64` CI job does not run the PX-proving tests; the aarch64 regeneration
+  followed in run 38742854296, next section); the job log is kept by GitHub, not in
+  the repository.
+
+## Cross-architecture determinism: x86-64 and aarch64 (CI), 2026-10-15
+
+- **Workflow change** (`362b8b0`, branch `ci/px-fixture-arm64` on `432b8c2`; CI files
+  only). `px-fixture.yml` became a two-leg matrix (`ubuntu-24.04` and
+  `ubuntu-24.04-arm`, fail-fast off), with the same RAM guard (15,360 MiB), the same
+  "1 passed" guard per generator, and `/usr/bin/time -v`. It added:
+  - a platform step that prints `uname -m`, `rustc -vV` and the target cfg, and
+    fails unless the architecture is the leg's (and, on aarch64, NEON is enabled);
+  - a guard that the output directory does not exist before the generators run, then
+    a start stamp;
+  - a compare step that walks an explicit list of the four expected files. It fails
+    on a missing, empty or stale file (not newer than the stamp, so not written by
+    this run). It prints each file's committed and regenerated SHA-256 and size,
+    notes any unexpected file without comparing it, and passes only if exactly four
+    files are "same";
+  - a last step that checks the checkout is unchanged (`git diff --quiet HEAD`).
+- **Local check of the compare logic** (2026-10-15, Git Bash on Windows): each
+  `run:` block was extracted from the YAML and passed `bash -n`. The compare step
+  then ran under `bash -eo pipefail` on fake files in a scratch git repository.
+  Results, all as expected:
+  - **pass:** all four same; an extra file in the output directory (noted, not
+    compared);
+  - **fail:** one regenerated file missing; one empty; one different with the same
+    size; one different with another size; one older than the stamp; the output
+    directory missing (0 of 4); every file missing; a committed file missing.
+
+  The prepare step was also run on its own: it passes with no output directory and
+  fails when one exists. No YAML parser was available locally; GitHub parsed the
+  file at dispatch.
+- **Run:** GitHub Actions run 38742854296, workflow "PX fixture determinism"
+  (`.github/workflows/px-fixture.yml` at `362b8b015c4ffd43bf0fdacce23180f7578269aa`),
+  manual dispatch on `ci/px-fixture-arm64`
+  (`gh workflow run px-fixture.yml --ref ci/px-fixture-arm64`), 13:27:31 to 13:34:38
+  UTC, conclusion success. The code tree is `432b8c2`'s. No file under `px`,
+  `px-core`, `zk`, `zkvm`, `tx`, `node/src` or `node/tests` differs from `66f12f0`,
+  the commit of run 38683497322.
+
+| Leg | Job id | Runner image | Platform lines in the log | `MemTotal` | `nproc` |
+|---|---|---|---|---|---|
+| x86-64 | 116448759313 | ubuntu-24.04, 20261012.334.1 | `x86_64`; rustc 1.98.1 (48a229cea 2026-09-01), host `x86_64-unknown-linux-gnu`; `target_arch="x86_64"` | 15,989 MiB | 4 |
+| aarch64 | 116448758891 | ubuntu-24.04-arm, 20261004.142.1 | `aarch64`; rustc 1.98.1 (48a229cea 2026-09-01), host `aarch64-unknown-linux-gnu`; `target_arch="aarch64"`, `target_feature="neon"` | 15,947 MiB | 4 |
+
+GitHub's standard `ubuntu-24.04-arm` runner passes the unchanged 15,360 MiB guard
+(15,947 MiB).
+
+Compare step, both legs. Every file was written after the leg's start stamp, and the
+step printed `checked 4 of 4 expected files; same: 4`. It noted no unexpected file:
+
+| File | Bytes | SHA-256: committed = regenerated on x86-64 = regenerated on aarch64 | Verdict |
+|---|---|---|---|
+| `node/src/px_fixture.bin` | 2,404,291 | `9ed13fe7ee8eaefaa322a71f14d81854af0e23ec8ded76a6efb9ce5c70f2e661` | same, same |
+| `node/src/px_fixture.txt` | 30,268 | `f9475886693554ed6da896e8c5356a7b89b50d1f6e37ca412d0c21d4952e386a` | same, same |
+| `node/tests/fixtures/px_fixture_2fn.bin` | 3,634,307 | `d0553badda419bd821cbc4371d4e3c41cc24f012adc7c52b57db2f78c92f6ef1` | same, same |
+| `node/tests/fixtures/px_fixture_2fn.txt` | 713 | `6a7ed2fbbc49f421c774099aa3eb3d37ff36d30719273c136d6adfe13023e247` | same, same |
+
+| Leg | Generator | Test result | Wall (`/usr/bin/time -v`) | Peak RSS |
+|---|---|---|---|---|
+| x86-64 | transfer | `1 passed; 0 failed` | 95.84 s (test 95.64 s) | 3,762,324 KB |
+| x86-64 | two-function | `1 passed; 0 failed` | 180.99 s (`build_px` 180.4 s, `validate_px` 385.5 ms) | 6,709,444 KB |
+| aarch64 | transfer | `1 passed; 0 failed` | 18.13 s (test 17.94 s) | 3,755,732 KB |
+| aarch64 | two-function | `1 passed; 0 failed` | 34.56 s (`build_px` 34.1 s, `validate_px` 215.4 ms) | 6,714,104 KB |
+
+- **Checked here:** the values above were read from both job logs
+  (`gh api repos/StickyFingaz420/BlackSilk-Blockchain/actions/jobs/<id>/logs`) on
+  2026-10-15. They are the same four hashes as in run 38683497322 and in the
+  committed files.
+- **What it shows:** the prover output for both fixtures is byte-identical across
+  Windows x86-64, Linux x86-64 and Linux aarch64 (NEON), at each runner's default
+  thread count (4 here).
+- **Timing:** the x86-64 leg was slower than in run 38683497322 (two-function
+  generator 181 s against 103 s) on the same image, so the times vary between
+  runners. They are not a benchmark.
+- **Limits:**
+  - one run per architecture class, at 4 prover threads;
+  - aarch64 means GitHub's Linux arm64 runner only; no Apple silicon, no other
+    aarch64 hardware, and no build without NEON;
+  - the regular `arm64` CI job still does not run the PX-proving tests;
+  - the job logs are kept by GitHub, not in the repository.
 
 ## Not done
 
@@ -260,7 +341,9 @@ default branch.
   `gh workflow run px-fixture.yml --ref tests/px-fixture-two-function` answered
   `HTTP 404: workflow px-fixture.yml not found on the default branch`. After the
   merge, run 38683497322 on Linux x86-64 reproduced all four files (section
-  above). Not done: a regeneration on aarch64.
+  above). The aarch64 regeneration followed in run 38742854296, which reproduced all
+  four files on both Linux x86-64 and Linux aarch64 (section above).
 - **Golden fixture status.** The transfer fixture's regeneration is reproduced locally
-  (above) and in CI run 38683497322 on Linux x86-64. It stays consensus-pinned, and
-  the manual workflow only compares it.
+  (above) and in CI on Linux x86-64 (runs 38683497322 and 38742854296) and on Linux
+  aarch64 (run 38742854296). It stays consensus-pinned, and the manual workflow only
+  compares it.

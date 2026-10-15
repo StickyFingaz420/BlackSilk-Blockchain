@@ -1,8 +1,9 @@
 name: PX fixture determinism
 
-# Regenerates both PX fixtures from their fixed seeds on a Linux runner and
-# compares them with the committed files (decisions, "Two-function PX
-# fixture: test-pinned, CI regenerates and compares hashes, never commits"):
+# Regenerates both PX fixtures from their fixed seeds on two Linux runners,
+# x86-64 (ubuntu-24.04) and aarch64 (ubuntu-24.04-arm), and compares them
+# with the committed files (decisions, "Two-function PX fixture: test-pinned,
+# CI regenerates and compares hashes, never commits"):
 #
 # - the golden transfer fixture, node/src/px_fixture.{bin,txt}
 #   (node/tests/px_fixture.rs, regenerate_the_golden_px_fixture;
@@ -12,11 +13,16 @@ name: PX fixture determinism
 #   test-pinned).
 #
 # Each generator writes into a temporary directory (PX_FIXTURE_OUT), never
-# into the checkout; the job prints the SHA-256 of every regenerated file next
-# to the committed file's and fails on any difference. Nothing is uploaded or
-# committed. Manual only: two PX proofs, the two-function one about 6.4 GB
-# peak, so the Guard step refuses a runner with less than 15 GB (15,360 MiB)
-# of MemTotal. The generators run one after the other, one test thread each.
+# into the checkout. The output directory must not exist before the first
+# generator, and every regenerated file must be newer than a stamp taken
+# then, so a file the generators did not write cannot pass. The compare step
+# walks an explicit list of the four expected files, fails on a missing or
+# empty one, prints the committed and regenerated SHA-256 and size of each,
+# and passes only if exactly four are the same. Nothing is uploaded or
+# committed. Manual only: two PX proofs, the two-function one about 6.4 to
+# 6.7 GB peak, so the Guard step refuses a runner with less than 15 GB
+# (15,360 MiB) of MemTotal. The generators run one after the other, one test
+# thread each. The two legs are independent (fail-fast off).
 on:
   workflow_dispatch:
 
@@ -28,7 +34,16 @@ env:
 
 jobs:
   regenerate:
-    runs-on: ubuntu-24.04
+    name: regenerate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     # `shell: bash` runs every step as `bash -eo pipefail`, so a failing
     # generator piped into tee fails its step.
@@ -42,6 +57,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: "1.98.1"
+      - name: Platform (the expected architecture, or fail)
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          uname -m
+          rustc -vV
+          rustc --print cfg | grep -E '^target_(arch|feature)='
+          [ "$(uname -m)" = "$ARCH" ] || { echo "::error title=px-fixture::uname -m is $(uname -m), expected $ARCH"; exit 1; }
+          rustc --print cfg | grep -qx "target_arch=\"$ARCH\"" || { echo "::error title=px-fixture::rustc does not target $ARCH"; exit 1; }
+          if [ "$ARCH" = aarch64 ]; then
+            rustc --print cfg | grep -qx 'target_feature="neon"' || { echo "::error title=px-fixture::NEON is not enabled"; exit 1; }
+          fi
       - name: Guard (runner RAM)
         run: |
           total=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
@@ -53,6 +80,15 @@ jobs:
           fi
       - name: Build
         run: cargo test --locked --release -p blacksilk-node --test px_fixture --test px_fixture_2fn --no-run
+      - name: Prepare the output directory (absent, then a start stamp)
+        run: |
+          out="$RUNNER_TEMP/px-fixture"
+          if [ -e "$out" ]; then
+            echo "::error title=px-fixture::$out exists before the generators ran"
+            exit 1
+          fi
+          touch "$RUNNER_TEMP/px-fixture.stamp"
+          stat -c '%y %n' "$RUNNER_TEMP/px-fixture.stamp"
       - name: Regenerate the transfer fixture
         env:
           PX_FIXTURE_OUT: ${{ runner.temp }}/px-fixture
@@ -78,27 +114,80 @@ jobs:
           }
           grep -E 'Maximum resident set size|Elapsed \(wall clock\)' "$RUNNER_TEMP/time-2fn.txt"
       - name: Compare with the committed files
+        env:
+          OUT: ${{ runner.temp }}/px-fixture
+          STAMP: ${{ runner.temp }}/px-fixture.stamp
+          REPORT: ${{ runner.temp }}/report.md
+          LEG: ${{ matrix.os }} (${{ matrix.arch }})
         run: |
-          out="$RUNNER_TEMP/px-fixture"
-          report="$RUNNER_TEMP/report.md"
+          # The four expected files: committed path, regenerated name.
+          expected=(
+            "node/src/px_fixture.bin px_fixture.bin"
+            "node/src/px_fixture.txt px_fixture.txt"
+            "node/tests/fixtures/px_fixture_2fn.bin px_fixture_2fn.bin"
+            "node/tests/fixtures/px_fixture_2fn.txt px_fixture_2fn.txt"
+          )
           bad=0
-          # The loop runs in this shell (not in a pipeline), so `bad` survives it.
-          echo "## PX fixture determinism ($(git rev-parse HEAD))" > "$report"
-          echo '```' >> "$report"
-          for pair in \
-            "node/src/px_fixture.bin px_fixture.bin" \
-            "node/src/px_fixture.txt px_fixture.txt" \
-            "node/tests/fixtures/px_fixture_2fn.bin px_fixture_2fn.bin" \
-            "node/tests/fixtures/px_fixture_2fn.txt px_fixture_2fn.txt"; do
+          same=0
+          checked=0
+          # The loops run in this shell (not in a pipeline), so the counters survive them.
+          echo "## PX fixture determinism, $LEG ($(git rev-parse HEAD))" > "$REPORT"
+          echo '```' >> "$REPORT"
+          for pair in "${expected[@]}"; do
             read -r committed_path name <<< "$pair"
+            regen="$OUT/$name"
+            checked=$((checked + 1))
+            if [ ! -s "$committed_path" ]; then
+              echo "$committed_path: the committed file is missing or empty: FAIL" >> "$REPORT"
+              bad=1
+              continue
+            fi
+            if [ ! -f "$regen" ]; then
+              echo "$committed_path: $regen is missing: FAIL" >> "$REPORT"
+              bad=1
+              continue
+            fi
+            if [ ! -s "$regen" ]; then
+              echo "$committed_path: $regen is empty: FAIL" >> "$REPORT"
+              bad=1
+              continue
+            fi
+            if [ ! "$regen" -nt "$STAMP" ]; then
+              echo "$committed_path: $regen is not newer than the start stamp (not written by this run): FAIL" >> "$REPORT"
+              bad=1
+              continue
+            fi
             committed=$(sha256sum "$committed_path" | cut -d' ' -f1)
-            regenerated=$(sha256sum "$out/$name" | cut -d' ' -f1)
-            if [ "$committed" = "$regenerated" ]; then verdict=same; else verdict=DIFFERENT; bad=1; fi
-            echo "$committed_path committed $committed regenerated $regenerated ($(stat -c %s "$out/$name") bytes): $verdict" >> "$report"
+            regenerated=$(sha256sum "$regen" | cut -d' ' -f1)
+            committed_size=$(stat -c %s "$committed_path")
+            regenerated_size=$(stat -c %s "$regen")
+            if [ "$committed" = "$regenerated" ] && [ "$committed_size" = "$regenerated_size" ]; then
+              verdict=same
+              same=$((same + 1))
+            else
+              verdict=DIFFERENT
+              bad=1
+            fi
+            echo "$committed_path committed $committed ($committed_size bytes) regenerated $regenerated ($regenerated_size bytes, mtime $(stat -c %y "$regen")): $verdict" >> "$REPORT"
           done
-          echo '```' >> "$report"
-          tee -a "$GITHUB_STEP_SUMMARY" < "$report"
-          if [ "$bad" != 0 ]; then
-            echo "::error title=px-fixture::a regenerated fixture differs from the committed file"
+          # A file in the output directory that is not on the list is noted, not compared.
+          for f in "$OUT"/*; do
+            [ -e "$f" ] || continue
+            listed=0
+            for pair in "${expected[@]}"; do
+              read -r _ name <<< "$pair"
+              if [ "$(basename "$f")" = "$name" ]; then listed=1; fi
+            done
+            if [ "$listed" = 0 ]; then echo "note: $f is not an expected fixture file (not compared)" >> "$REPORT"; fi
+          done
+          echo "checked $checked of ${#expected[@]} expected files; same: $same" >> "$REPORT"
+          echo '```' >> "$REPORT"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$REPORT"
+          if [ "$bad" != 0 ] || [ "$checked" != 4 ] || [ "$same" != 4 ]; then
+            echo "::error title=px-fixture::not all four regenerated fixture files equal the committed ones (same: $same of 4)"
             exit 1
           fi
+      - name: The checkout is unchanged
+        run: |
+          git status --porcelain
+          git diff --quiet HEAD -- || { echo "::error title=px-fixture::a generator changed a tracked file"; exit 1; }
