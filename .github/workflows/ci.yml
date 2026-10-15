@@ -279,7 +279,10 @@ jobs:
   # push like `test` (the verifier, zk and third_party code it pins change
   # between pushes; the sweep is deterministic, so a weekly run adds
   # nothing). The smoke subset (each field once) runs in `test` and
-  # `overflow` with the other node tests.
+  # `overflow` with the other node tests. The second step sweeps the
+  # two-function fixture's proof (node/tests/fixtures/px_fixture_2fn.bin):
+  # 53,069 cases, 95 MiB peak and about 7.3 minutes locally (Windows,
+  # release, 2026-10-15).
   px-tamper:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
@@ -305,6 +308,21 @@ jobs:
             --ignored --exact full_px_proof_tamper_sweep --nocapture --test-threads=1 | tee px-tamper.log
           grep -q '^test result: ok\. 1 passed; 0 failed' px-tamper.log || {
             echo "::error title=px-tamper::the full sweep did not run exactly one passing test"
+            exit 1
+          }
+      # The same sweep of the two-function fixture's proof
+      # (node/tests/fixtures/px_fixture_2fn.bin, CLAIM + LOCK, n_fn = 2), with
+      # its statement side (function slots, window, call outputs and ABIs).
+      - name: Full tamper sweep of the two-function PX proof
+        shell: bash
+        env:
+          ANNOTATE_TIMEOUT: 60m
+        run: |
+          set -o pipefail
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-node --test px_tamper -- \
+            --ignored --exact full_two_function_px_proof_tamper_sweep --nocapture --test-threads=1 | tee px-tamper-2fn.log
+          grep -q '^test result: ok\. 1 passed; 0 failed' px-tamper-2fn.log || {
+            echo "::error title=px-tamper::the two-function sweep did not run exactly one passing test"
             exit 1
           }
 
