@@ -2047,5 +2047,8 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   or dependency change; Cargo.lock unchanged. Record: docs/reviews/v3-consensus-changes.md#gate-manifest-paths
   (`Revision: none (commit-gate coverage only; no rule, code or pin change)`).
 - **Open:** the modules that gated code uses are not gated (`px/src/perm.rs`,
-  `zkvm/src/isa.rs` and others; record item 12): a separate decision. Internal red
-  team pending.
+  `zkvm/src/isa.rs` and others; record item 12): a separate decision.
+- **Red team:** internal red team (2026-10-15): merge with fixes (F1 the path match
+  ignores case, as checkouts on Windows and macOS do; F2 the `zeroize` feature that
+  `a5227a3` unifies into blacksilk-randomx's `aes`, benign, noted; F3 the record
+  index), applied; merged into rebuild/core after this review.

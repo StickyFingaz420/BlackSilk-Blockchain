@@ -43,6 +43,7 @@ they are never renamed. Index:
 - fingerprint-sample-inputs (node fingerprint manifest: sample inputs, key-schedule samples, D0 as identity; lead decision 2026-10-13)
 - fingerprint-stable-verdicts (tx `TxError::fingerprint_text`, node verdict samples: stable verdict text, no manifest value changes; lead decision 2026-10-14)
 - fingerprint-px-samples (tx `BlockError::fingerprint_text`, node verdict samples for PX6, PX4 and B8 and block verdicts; lead decision 2026-10-14)
+- v12-caps-single-definition (px `deploy_caps`: one definition of the V12 deploy caps and rules, used by tx, the prover and the B2 example; no rule change)
 - gate-manifest-paths (the consensus commit gate: workspace and crate manifests, build scripts, module roots; no rule change; owner-approved follow-up to red team F3 of v12-caps-single-definition)
 
 New sections are appended at the end.
@@ -5256,6 +5257,10 @@ changes; Cargo.lock is unchanged.
      `chain/src/manager.rs`, `node/src/lib.rs`, `px/src/lib.rs`, `tx/src/lib.rs`,
      `zkvm/src/lib.rs`.
 
+   The match ignores case (red team F1): on a case-insensitive checkout (Windows,
+   macOS) `px/Build.rs` is the crate's build script and `px/src/LIB.rs` is
+   `px/src/lib.rs`. `nocasematch` is set only around the match and restored.
+
    Not added: `Cargo.lock` (the lockfile gate covers it), the root `.cargo/` (already
    gated), the crates that are not built with the release binaries (item 4).
 6. **Activation.** None: CI only. The `gates` job runs the trusted copy of the gate
@@ -5265,7 +5270,11 @@ changes; Cargo.lock is unchanged.
 7. **Compatibility.** The waiver file gains 15 lines, each with the commit's subject
    and the newly gated paths it touched; their diffs of those paths were read (module
    additions, dependency pins, `[profile.mutants]`, a workspace member, comments: no
-   `[patch]`, release-profile, `#[path]`, `include!`, `[lib]` or `build` change). Two
+   `[patch]`, release-profile, `#[path]`, `include!`, `[lib]` or `build` change). One
+   reaches consensus code through feature unification: `a5227a3` enables `zeroize` on
+   `aes =0.8.4`, which is unified into the `aes` of blacksilk-randomx (the PoW). It is
+   benign: it wipes the key schedules on drop and leaves the round functions
+   unchanged (its waiver line says so). Two
    of them (`468bb8e`, `2dd23a1`) are after the waiver horizon `d5c20f7`, so the
    horizon moves to `432b8c2`, rebuild/core when this change was made. Every waiver
    granted before is an ancestor of `d5c20f7` (the lockfile gate's single waiver as
@@ -5288,7 +5297,12 @@ changes; Cargo.lock is unchanged.
     none: …` passes; a citation of a section the record does not have fails; a
     waived commit at the horizon passes; a commit after the horizon fails even with a
     waiver line; each of the 20 neighbours passes without a trailer; the whole fixture
-    range fails. The earlier selftest cases are unchanged.
+    range fails. The earlier selftest cases are unchanged. Red team F1 added: the case
+    variants `PX/SRC/LIB.RS`, `px/Build.rs`, `rpc/BUILD.rs`, `Cargo.TOML`,
+    `TX/Cargo.toml`, `Consensus/src/lib.rs` and `TX/SRC/VALIDATE.RS` are gated; the
+    upper-cased form of each of the 20 neighbours is not; the match leaves the
+    caller's `nocasematch` setting as it was; and on the fixture, an untrailered
+    commit on `px/Build.rs`, `rpc/BUILD.rs`, `Cargo.TOML` or `TX/Cargo.toml` fails.
 11. **Suite results** (2026-10-15, this machine, Git for Windows bash, on the branch's
     working tree before the commit):
     - `consensus-gate.sh --selftest`: pass (about 80 s; the fixture part makes about
@@ -5303,6 +5317,14 @@ changes; Cargo.lock is unchanged.
     - doc-lint (182 files clean), unicode-scan (0 findings); `cargo test --locked -p
       blacksilk-node --lib revision_lines`: 1 passed (this section's `Revision:` line).
     - No Rust code changed, so no other cargo suite was run.
+    - After the red-team fixes (F1 case-insensitive match): `--selftest` pass; the
+      three mutated copies above and a fourth (the match case-sensitive again) each
+      FAIL; the whole history (`"" HEAD`, 708 commits including this branch's two):
+      204 touch consensus paths, pass, and the commits flagged are the same as with
+      the case-sensitive match plus this branch's gate commit (no historical commit
+      is newly flagged, so no waiver was added); lockfile gate over the whole
+      history: pass. CI run 38745822127 (the branch before the fixes): every job
+      passed (`zkvm-stress` skipped by design).
 12. **Open review points.**
     - Content, not redirection: gated files use ungated modules of their own crates.
       `px/src/perm.rs` (the host Poseidon2 permutation, used by `prove.rs`, `state.rs`
@@ -5325,4 +5347,6 @@ changes; Cargo.lock is unchanged.
     px-deploy-row-caps row's F3 open point); README.md (Contributing: which files are
     consensus paths).
 15. **Review status.** Implemented and verified by the implementing agent under the
-    owner-approved follow-up; internal red team pending; not merged.
+    owner-approved follow-up; internal red team (2026-10-15): merge with fixes (F1
+    case-insensitive match, F2 feature note, F3 index), applied; merged into
+    rebuild/core after this review.
