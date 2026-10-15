@@ -223,9 +223,15 @@ adds nothing to them. None is decided or done.
 1. **RandomX `superscalar.rs` 742:24:** formally accept it as a documented
    test-adequacy residual, or fund further research (the descent argument). §5,
    row "Mutation-testing freeze gate"; [run G](evidence/mutation-runG-2026-10-12/README.md),
-   § Open items (a).
+   § Open items (a). A reproducible investigation plan with explicit pass/fail
+   criteria, resource estimates and the owner's decision points (budget cap, branch
+   failure, test-only draw hook, residual acceptance) is in
+   [plans-g8-742-2026-10-15.md](reviews/plans-g8-742-2026-10-15.md), Plan 2; not started.
 2. **G8, the supply audit's mutation batch:** run it before the trial, or record a
-   decision that defers it. §5, row "Mutation-testing freeze gate".
+   decision that defers it. §5, row "Mutation-testing freeze gate". A run plan (227
+   mutants at `432b8c2`, oracle, security-critical classes SC1–SC4, hand mutants
+   H1–H8, ~5–11 h compute, pass/fail criteria) is in
+   [plans-g8-742-2026-10-15.md](reviews/plans-g8-742-2026-10-15.md), Plan 1; not run.
 3. **`D0` measured on the trial hardware** (a genesis gate). §5, row "`D0` measured
    on the trial hardware"; §1, row "Testnet `D0` measured on reference hardware".
 4. **Supply audit with a PX pool, a multi-machine 72-hour run** (needs the
