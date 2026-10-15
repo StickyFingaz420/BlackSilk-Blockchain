@@ -42,7 +42,17 @@ source "$here/gate-range.sh"
 # configuration pins. v12-caps-single-definition added px/src/deploy_caps.rs,
 # the single definition of the deploy-time row caps and the deploy rules on
 # them (tx re-exports them). px-fixture-2fn added the two-function PX
-# fixture's files (node/tests/fixtures).
+# fixture's files (node/tests/fixtures). gate-manifest-paths (record
+# "gate-manifest-paths", red team F3 of v12-caps-single-definition) added
+# what decides which files the gated modules are and how they are built: the
+# workspace manifest (members, [patch], profiles) and a root toolchain file;
+# the manifest and any build script of every crate the release build builds
+# with the node binary (tools/release-build.sh: node, miner, wallet, genesis
+# and their workspace dependencies) that is not gated whole (a dependency
+# path, a feature, unified into the node binary, `[lib] path` or `build =`
+# there can swap or alter gated code); and the module roots that
+# declare gated modules (a `#[path]`, `cfg` or `include!` there redirects
+# them). The commits before it that touch them are in the waiver file.
 is_consensus_path() {
   case "$1" in
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
@@ -69,6 +79,16 @@ is_consensus_path() {
     .gitattributes | */.gitattributes | .github/cargo-config.sha256) return 0 ;;
     .github/workflows/* | tools/release-build.sh | deploy/docker/Dockerfile) return 0 ;;
     zkvm/guests/build.sh | zkvm/guests/reproduce.sh | .github/scripts/guests-reproduce.sh) return 0 ;;
+    # gate-manifest-paths. `Cargo.toml` is the root manifest only.
+    Cargo.toml | rust-toolchain | rust-toolchain.toml) return 0 ;;
+    chain/Cargo.toml | node/Cargo.toml | p2p/Cargo.toml | px/Cargo.toml) return 0 ;;
+    rpc/Cargo.toml | tx/Cargo.toml | zkvm/Cargo.toml) return 0 ;;
+    miner/Cargo.toml | wallet/Cargo.toml | tools/genesis/Cargo.toml) return 0 ;;
+    chain/build.rs | node/build.rs | node/build_id.rs | p2p/build.rs | px/build.rs) return 0 ;;
+    rpc/build.rs | tx/build.rs | zkvm/build.rs) return 0 ;;
+    miner/build.rs | wallet/build.rs | tools/genesis/build.rs) return 0 ;;
+    chain/src/lib.rs | chain/src/manager.rs | node/src/lib.rs | px/src/lib.rs) return 0 ;;
+    tx/src/lib.rs | zkvm/src/lib.rs) return 0 ;;
   esac
   return 1
 }
@@ -193,6 +213,122 @@ waiver_for() {
   gate_waiver "$here/../consensus-gate-waivers.txt" "$1"
 }
 
+# The paths gate-manifest-paths added, and paths next to them that stay
+# ungated (the list must not grow past what the record justifies).
+GATE_MANIFEST_PATHS="Cargo.toml rust-toolchain rust-toolchain.toml
+chain/Cargo.toml node/Cargo.toml p2p/Cargo.toml px/Cargo.toml rpc/Cargo.toml
+tx/Cargo.toml zkvm/Cargo.toml miner/Cargo.toml wallet/Cargo.toml
+tools/genesis/Cargo.toml chain/build.rs node/build.rs node/build_id.rs
+p2p/build.rs px/build.rs rpc/build.rs tx/build.rs zkvm/build.rs miner/build.rs
+wallet/build.rs tools/genesis/build.rs
+chain/src/lib.rs chain/src/manager.rs node/src/lib.rs px/src/lib.rs
+tx/src/lib.rs zkvm/src/lib.rs"
+GATE_UNGATED_NEIGHBOURS="README.md docs/STATUS.md Cargo.lock tools/daa-sim/Cargo.toml
+tools/labnet/Cargo.toml tools/supply-audit/Cargo.toml fuzz/Cargo.toml contracts/Cargo.toml
+zkvm/guests/Cargo.toml zkvm/sdk/Cargo.toml p2p/src/lib.rs rpc/src/lib.rs
+node/src/main.rs miner/src/main.rs px/src/vault.rs chain/src/mempool.rs
+chain/src/manager.rs.orig src/lib.rs px/src/lib.rs.bak docs/Cargo.toml"
+
+selftest_paths() {
+  local p bad=0
+  for p in $GATE_MANIFEST_PATHS consensus/Cargo.toml crypto/Cargo.toml \
+    px-core/src/lib.rs zk/build.rs randomx/Cargo.toml px/src/deploy_caps.rs; do
+    is_consensus_path "$p" || { echo "selftest: $p should be a consensus path"; bad=1; }
+  done
+  for p in $GATE_UNGATED_NEIGHBOURS; do
+    if is_consensus_path "$p"; then echo "selftest: $p should not be a consensus path"; bad=1; fi
+  done
+  return "$bad"
+}
+
+# The gate itself on a fixture repository (gate-manifest-paths): a commit
+# that touches a newly gated path fails without a trailer and passes with
+# one; a waived commit within the waiver horizon passes, the same waiver past
+# the horizon does not; an ungated file needs no trailer. The gate runs from
+# a copy outside the fixture with its own waiver file, so the fixture's
+# commits touch no gate path, and with GITHUB_ACTIONS unset, so an expected
+# failure prints no CI annotation.
+selftest_history() {
+  local t bad=0 old new p rc
+  t="$(mktemp -d)"
+  mkdir -p "$t/gate/scripts" "$t/repo"
+  cp "$here/consensus-gate.sh" "$here/gate-range.sh" "$t/gate/scripts/"
+  # The base commit (the fixture's cut-over), then a "historical" commit that
+  # touches px/src/lib.rs without a trailer: the waiver horizon, waived.
+  old="$(cd "$t/repo" &&
+    git -c init.defaultBranch=main init -q &&
+    git config user.name selftest &&
+    git config user.email selftest@invalid &&
+    git config commit.gpgsign false &&
+    git config core.autocrlf false &&
+    git config core.hooksPath /dev/null &&
+    echo base >README.md &&
+    git add -A &&
+    git commit -q -m base &&
+    mkdir -p px/src &&
+    echo 'pub mod prove;' >px/src/lib.rs &&
+    git add -A &&
+    git commit -q -m 'px: module list' &&
+    git rev-parse HEAD 2>/dev/null)" || old=""
+  [ -n "$old" ] || { echo "selftest: fixture repository setup failed"; rm -rf "$t"; return 1; }
+  printf '%s none: fixture waiver\n' "$old" >"$t/gate/consensus-gate-waivers.txt"
+  # gate_run BASE HEAD: the gate's exit status on the fixture.
+  gate_run() {
+    (cd "$t/repo" && env -u GITHUB_ACTIONS -u GATE_CMD_TOKEN \
+      GATE_CUTOVER="$(git rev-list --max-parents=0 HEAD)" GATE_WAIVER_HORIZON="$old" \
+      bash "$t/gate/scripts/consensus-gate.sh" "$1" "$2") >/dev/null 2>&1
+  }
+  # fixture_commit PATH MESSAGE: a commit that changes PATH; prints its id.
+  fixture_commit() {
+    (cd "$t/repo" &&
+      mkdir -p "$(dirname "$1")" &&
+      echo "$RANDOM $2" >>"$1" &&
+      git add -A &&
+      git commit -q -m "$2" &&
+      git rev-parse HEAD) 2>/dev/null
+  }
+  # expect WANT PATH MESSAGE: commit, run the gate on that commit alone.
+  expect() {
+    local want="$1" path="$2" msg="$3" c rc=0
+    c="$(fixture_commit "$path" "$msg")" || { echo "selftest: fixture commit on $path failed"; bad=1; return; }
+    gate_run "$c~1" "$c" || rc=$?
+    if [ "$rc" != "$want" ]; then
+      echo "selftest: gate exit $rc (want $want) on $path: $(printf '%s' "$msg" | head -n 1)"
+      bad=1
+    fi
+  }
+  local trailer=$'\n\nConsensus-Change: none: selftest fixture'
+  # (c) the waived commit before the horizon passes.
+  rc=0
+  gate_run "$old~1" "$old" || rc=$?
+  [ "$rc" = 0 ] || { echo "selftest: a waived commit within the horizon failed (exit $rc)"; bad=1; }
+  # (a), (b) every newly gated path: no trailer fails, a trailer passes.
+  for p in $GATE_MANIFEST_PATHS; do
+    expect 1 "$p" "touch $p"
+    expect 0 "$p" "touch $p$trailer"
+  done
+  # A record citation the record does not have is no trailer.
+  expect 1 px/src/lib.rs $'cite\n\nConsensus-Change: docs/reviews/v3-consensus-changes.md#no-such-section'
+  # (d) ungated paths need no trailer.
+  for p in $GATE_UNGATED_NEIGHBOURS; do
+    expect 0 "$p" "touch $p"
+  done
+  # The waiver horizon: a waiver for a commit after it is ignored.
+  new="$(fixture_commit px/src/lib.rs 'after the horizon')" || { echo "selftest: fixture commit failed"; bad=1; }
+  if [ -n "$new" ]; then
+    printf '%s none: fixture waiver\n' "$new" >>"$t/gate/consensus-gate-waivers.txt"
+    rc=0
+    gate_run "$new~1" "$new" || rc=$?
+    [ "$rc" = 1 ] || { echo "selftest: a waiver past the horizon was honoured (exit $rc)"; bad=1; }
+  fi
+  # The whole fixture range: the unwaived, untrailered commits fail it.
+  rc=0
+  gate_run "" HEAD || rc=$?
+  [ "$rc" = 1 ] || { echo "selftest: the whole fixture range passed (exit $rc)"; bad=1; }
+  rm -rf "$t"
+  return "$bad"
+}
+
 # The record-citation rules on a fixture record.
 selftest() {
   local strict loose bad=0 v
@@ -221,6 +357,8 @@ selftest() {
   v="$(GITHUB_ACTIONS=true GATE_CMD_TOKEN=tok gate_annotate $'s::x,\n::add-mask::t' $'m\n::add-mask::y' 2>/dev/null | sed -n 1,3p)"
   [ "$v" = $'::tok::\n::error title=s%3A%3Ax%2C%0A%3A%3Aadd-mask%3A%3At::m%0A::add-mask::y\n::stop-commands::tok' ] ||
     { echo "selftest: annotation escaping or command bracketing broken"; bad=1; }
+  selftest_paths || bad=1
+  selftest_history || bad=1
   echo "consensus-gate selftest: $([ "$bad" = 0 ] && echo pass || echo FAIL)"
   return "$bad"
 }

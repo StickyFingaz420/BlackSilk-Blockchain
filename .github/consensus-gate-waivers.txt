@@ -58,3 +58,30 @@ f7d07347fd56eb22617a970e397d1887808cad05 none: predates RT-TPGATE2; ci: all bran
 5c0bfab71f09e7cb3dab67cf22264a8c7e8656db none: predates RT-TPGATE3; p2p tests: the rest of admission.rs after RT-MUTD (reject caches, the node-wide bucket, relayers) (.gitattributes).
 7c44051128a22bb4e6d7e58db6389f69093b2e5d none: predates RT-TPGATE3; labnet: RT-LAB follow-up (F3 logs, F4 checks, F5 metrics) (.gitattributes).
 d5c20f74ec2337cfd01f54af6b3dbf2a5226d517 none: predates RT-TPGATE3; node: golden PX fixture round-trip, more ciphertext probes, binary attribute, STATUS (.gitattributes).
+# gate-manifest-paths (2026-10-15) extended the path list to the root
+# Cargo.toml and toolchain file; the manifests and build scripts of chain,
+# node, p2p, px, rpc, tx, zkvm, miner, wallet and tools/genesis; and the
+# module roots chain/src/lib.rs, chain/src/manager.rs, node/src/lib.rs,
+# px/src/lib.rs, tx/src/lib.rs and zkvm/src/lib.rs. The 15 commits below
+# touched those paths before they were consensus paths and carry no trailer;
+# each reason is the commit's subject and the newly gated paths it touched.
+# Their diffs of those paths were read for this change (no [patch],
+# release-profile, `#[path]`, `include!`, `[lib]` or `build` change among
+# them); the commits were reviewed at their merge and were not re-reviewed
+# for consensus effect here. The last two are after the earlier waiver
+# horizon, which moved to 432b8c2 with this change.
+0091d4a5664f3a558d7688a14dd49bfaa1fff6d4 none: predates gate-manifest-paths; tools/daa-sim: pure-Rust difficulty-rule harness (Cargo.toml: a workspace member).
+539ba302be010f49cbadbc3636de2c7f870302de none: predates gate-manifest-paths; node: RPC guard, admission, serve loop, cookie auth and /block gate (node/Cargo.toml, node/src/lib.rs).
+9270c6aae26ba8251a99750c10576852d1bf0a81 none: predates gate-manifest-paths; node, miner, labnet, deploy: the binary serves the authenticated RPC (node/src/lib.rs).
+5836a7a039d6e32db94d1c47000af4de26223a59 none: predates gate-manifest-paths; p2p: address hardening, Tor v3 checksum, onion groups, timestamped Addr (p2p/Cargo.toml: sha3).
+73cd75251d3e40a2727880c4ca2764e468543d59 none: predates gate-manifest-paths; chain, p2p, node: shared sync policy (chain/src/lib.rs: the sync_policy module; node/src/lib.rs).
+b7b508f0b3e0a1e077c55e21ec5f67a8d927c28c none: predates gate-manifest-paths; p2p, node: every chain access goes through the chain actor (node/src/lib.rs, p2p/Cargo.toml).
+1a86d26b802a5ea6d9bad5e0a470bf64b96ef287 none: predates gate-manifest-paths; Merge branch 'w2-model' into rebuild/core (chain/Cargo.toml: dev-dependencies merged).
+a5227a3797cfc1c2b66e06cca10aec57faac0a99 none: predates gate-manifest-paths; p2p, wallet: aes-gcm =0.10.3 with zeroize (p2p/Cargo.toml, wallet/Cargo.toml: AEAD pins).
+4760817256c7a73b8466a369f5091fc4550efb71 none: predates gate-manifest-paths; wallet, node, rpc: header feed from the genesis, verified registrations (node/src/lib.rs).
+6f24fff8d24ca676167720559b124b74ccec4837 none: predates gate-manifest-paths; p2p, node, docs: warn-only clock-offset monitor (node/src/lib.rs).
+5c3ad7e0eea4967874806cab390240d962964c75 none: predates gate-manifest-paths; mutation census: [profile.mutants] (Cargo.toml: a profile no release artifact uses).
+1001314e990f207d34fd30984e5dc6f977c6bea2 none: predates gate-manifest-paths; fuzz: new targets (p2p/Cargo.toml: the cfg(fuzzing) lint entry).
+ed82f30d005afd31ff8c9ea00b8b49b32ba8c214 none: predates gate-manifest-paths; wallet: seed format v1 (wallet/Cargo.toml: the bip39 dependency removed).
+468bb8ee71169e76cae3807ef71534ac637d2e82 none: predates gate-manifest-paths; build: drop research/ from the workspace exclude list (Cargo.toml).
+2dd23a1af34c861da1c1aceb24be31b9902948e7 none: predates gate-manifest-paths; p2p manifest: test-hooks comment (p2p/Cargo.toml, a comment only).
