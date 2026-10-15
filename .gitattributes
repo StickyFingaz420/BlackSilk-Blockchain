@@ -21,6 +21,12 @@ docs/evidence/mutation-*/** text eol=lf
 node/src/px_fixture.bin binary
 node/src/px_fixture.txt text eol=lf
 
+# The two-function PX fixture (node/tests/fixtures, test-pinned by SHA-256 in
+# node/tests/px_fixture_2fn.rs): the transaction is binary; the text is LF on
+# every checkout, so its pinned hash holds everywhere.
+node/tests/fixtures/px_fixture_2fn.bin binary
+node/tests/fixtures/px_fixture_2fn.txt text eol=lf
+
 # Allow-listed third-party diffs (third-party-gate.sh): byte-compared, keep LF.
 third_party/patches/*.patch text eol=lf
 third_party/patches/*.sha256 text eol=lf

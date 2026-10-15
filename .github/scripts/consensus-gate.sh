@@ -41,7 +41,8 @@ source "$here/gate-range.sh"
 # decides how git and GitHub show third_party/ changes) and the cargo
 # configuration pins. v12-caps-single-definition added px/src/deploy_caps.rs,
 # the single definition of the deploy-time row caps and the deploy rules on
-# them (tx re-exports them).
+# them (tx re-exports them). px-fixture-2fn added the two-function PX
+# fixture's files (node/tests/fixtures).
 is_consensus_path() {
   case "$1" in
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
@@ -52,6 +53,10 @@ is_consensus_path() {
     zkvm/src/program.rs | zkvm/src/exec.rs) return 0 ;; # program id, image (red team I3)
     node/src/fingerprint_fixture.txt) return 0 ;;
     node/src/px_fixture.bin | node/src/px_fixture.txt) return 0 ;;
+    # The two-function PX fixture: test-pinned, not a consensus input, but a
+    # change of its bytes is reviewed like the golden fixture's (decisions,
+    # "Two-function PX fixture: test-pinned").
+    node/tests/fixtures/px_fixture_2fn.bin | node/tests/fixtures/px_fixture_2fn.txt) return 0 ;;
     chain/src/block.rs | chain/src/emission.rs | chain/src/manager/*) return 0 ;;
     px/*.elf | px/*.id) return 0 ;;
     px/src/prove.rs | px/src/state.rs | px/src/tree.rs) return 0 ;;

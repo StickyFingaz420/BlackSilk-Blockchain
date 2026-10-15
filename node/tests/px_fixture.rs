@@ -22,9 +22,14 @@
 //! too: two regenerations at different thread counts gave identical bytes.
 //! The checked-in fixture was regenerated after that patch (commit `ee0e96f`,
 //! BS-ZK-4, after the PXDET-1 merge `451505e`; two runs gave identical
-//! bytes then). A regeneration from today's code is expected to reproduce it
-//! byte for byte, but that has not been re-checked since. Never regenerate in
-//! CI. A regenerated fixture with other bytes changes the rules fingerprint and needs the
+//! bytes then). A regeneration from 1d0f102's code into a temporary directory
+//! reproduced both files byte for byte (2026-10-15, Windows; evidence
+//! docs/evidence/px-fixture-2fn-2026-10-15). CI never commits a regenerated
+//! fixture: the manual workflow `.github/workflows/px-fixture.yml` only
+//! regenerates it (with `PX_FIXTURE_OUT=<dir>`, outside the checkout) and
+//! compares its hashes with the committed files' (decisions, "Two-function PX
+//! fixture: test-pinned, CI regenerates and compares hashes, never commits").
+//! A regenerated fixture with other bytes changes the rules fingerprint and needs the
 //! re-pin procedure (docs/reviews/v3-consensus-changes.md#fingerprint-v3).
 //!
 //! The other tests verify the checked-in proof (no proving): the full
@@ -191,16 +196,20 @@ fn generate() -> (Vec<u8>, String) {
 }
 
 /// Rewrites `src/px_fixture.bin` and `src/px_fixture.txt` (a reviewed rule
-/// change only; proves one PX transaction).
+/// change only; proves one PX transaction). With `PX_FIXTURE_OUT=<dir>` it
+/// writes them into `<dir>` instead and leaves the committed files alone
+/// (the determinism check, `.github/workflows/px-fixture.yml`).
 #[test]
 #[ignore = "proves a PX transaction: run only in a PX-proving window"]
 fn regenerate_the_golden_px_fixture() {
     let (bin, text) = generate();
     let parsed = PxFixture::parse(&bin, &text).expect("the generated fixture parses");
     assert_eq!(px_fixture_verdict(&parsed.px, true), Ok(()));
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/");
-    std::fs::write(format!("{dir}px_fixture.bin"), &bin).expect("write px_fixture.bin");
-    std::fs::write(format!("{dir}px_fixture.txt"), text).expect("write px_fixture.txt");
+    let dir = std::env::var("PX_FIXTURE_OUT")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/src").to_string());
+    std::fs::create_dir_all(&dir).expect("the output directory");
+    std::fs::write(format!("{dir}/px_fixture.bin"), &bin).expect("write px_fixture.bin");
+    std::fs::write(format!("{dir}/px_fixture.txt"), text).expect("write px_fixture.txt");
 }
 
 /// The checked-in fixture has the documented shape: one v1 input with the

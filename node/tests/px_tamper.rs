@@ -1,6 +1,6 @@
 //! Structure-aware tamper sweep over the golden PX fixture's proof
-//! (`src/px_fixture.bin`, `blacksilk_node::fingerprint::PxFixture`): verify
-//! only, no proving.
+//! (`src/px_fixture.bin`, `blacksilk_node::fingerprint::PxFixture`) and the
+//! two-function fixture's (below): verify only, no proving.
 //!
 //! **Layout map.** The fixture's proof is decoded once (the consensus decoder,
 //! `decode_px_proof`) and re-encoded field by field, in encoding order, by a
@@ -17,8 +17,8 @@
 //! wire level, then decodes and verifies through the node's path for PX5:
 //! `decode_px_proof` (`decode_proof_with` under `PROOF_LIMITS`), then
 //! `blacksilk_px::prove::verify` with the arguments `check_px_proof_decoded`
-//! passes for a transaction without functions (its statement, an empty call
-//! list, its window and `h_tx = binding(domain)`); the smoke test also runs
+//! passes (its statement, its call list (empty for the transfer fixture),
+//! its window and `h_tx = binding(domain)`); the smoke test also runs
 //! `check_px_proof` itself on every case. Statement-side cases flip one byte
 //! of `h_tx` or one word of the kernel's public statement and verify the
 //! unmodified proof. No case may verify, and each must be refused with the
@@ -81,15 +81,30 @@
 //! cargo test --release -p blacksilk-node --test px_tamper -- --ignored --nocapture full_px_proof_tamper_sweep
 //! ```
 //!
-//! Scope: the transfer fixture only (no functions); the two-function fixture
-//! is not built yet (docs/STATUS.md).
+//! **The two-function fixture** (`tests/fixtures/px_fixture_2fn.bin`,
+//! `tests/support/px_fixture_2fn.rs`: a vault CLAIM and LOCK, `n_fn = 2`, in
+//! a bounded window) gets the same layout map, smoke subset
+//! (`tamper_smoke_every_two_function_proof_field_is_refused`) and full sweep
+//! (`full_two_function_px_proof_tamper_sweep`, also in the `px-tamper` job).
+//! Its PX5 passes the fixture chain's registry and the transaction's calls.
+//! Its statement side adds every function slot word (a contract word:
+//! `Unregistered`, no program is registered to that contract; an `io_hash`
+//! word: `Invalid`), every window word, each call's first output word and
+//! each call's ABI (each `Invalid`: the function prefix carries the ABI, the
+//! window and the outputs follow it). For it the window is bound in the
+//! statement ([`known_non_binding_two_function`]).
+
+#[allow(dead_code)] // the fixture's generator and tests use other parts
+#[path = "support/px_fixture_2fn.rs"]
+mod px2;
 
 use blacksilk_node::fingerprint::{fixture_rules, px_fixture_verdict, PxFixture};
 use blacksilk_px::core::kernel::Public;
-use blacksilk_px::prove::VerifyError;
+use blacksilk_px::core::Digest;
+use blacksilk_px::prove::{FunctionCall, VerifyError};
 use blacksilk_tx::px::{PxTx, Window};
 use blacksilk_tx::state::MemoryChain;
-use blacksilk_tx::validate::{check_px_proof, decode_px_proof, PxProof};
+use blacksilk_tx::validate::{check_px_proof, decode_px_proof, ChainView, PxProof};
 use blacksilk_tx::TxError;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -695,15 +710,21 @@ fn zk_class(e: &impl std::fmt::Debug) -> Verdict {
     panic!("unknown ZkError {s}");
 }
 
-/// The verification context of the fixture transaction.
+/// The verification context of a fixture transaction: the transfer fixture
+/// (no functions, nothing read from the chain) or the two-function fixture
+/// (its calls and registry from its chain view, `px2::Chain2`).
 struct Ctx {
     tx: PxTx,
     public: Public,
     h_tx: [u8; 32],
+    calls: Vec<FunctionCall>,
+    /// The two-function fixture's chain; `None` for the transfer fixture.
+    chain: Option<px2::Chain2>,
 }
 
 impl Ctx {
-    fn new() -> Self {
+    /// The transfer fixture (`src/px_fixture.bin`).
+    fn transfer() -> Self {
         let tx = PxFixture::get().px.clone();
         assert!(
             tx.functions.is_empty(),
@@ -711,19 +732,56 @@ impl Ctx {
         );
         let public = tx.public();
         let h_tx = tx.binding(fixture_rules().domain());
-        Ctx { tx, public, h_tx }
+        Ctx {
+            tx,
+            public,
+            h_tx,
+            calls: Vec::new(),
+            chain: None,
+        }
     }
 
-    /// PX5 on `self.tx.proof`, for `public`, `window` and `h_tx`, as
-    /// `check_px_proof` runs it for a transaction without functions.
-    fn verdict_with(&self, public: &Public, window: &Window, h_tx: [u8; 32]) -> Verdict {
+    /// The two-function fixture (`tests/fixtures/px_fixture_2fn.bin`).
+    fn two_function() -> Self {
+        let f = px2::Px2Fixture::get();
+        let tx = f.px.clone();
+        assert_eq!(tx.functions.len(), 2, "the two-function fixture");
+        let chain = px2::Chain2::new(&f.record);
+        let calls = chain.calls(&tx);
+        let public = tx.public();
+        let h_tx = tx.binding(fixture_rules().domain());
+        Ctx {
+            tx,
+            public,
+            h_tx,
+            calls,
+            chain: Some(chain),
+        }
+    }
+
+    /// PX5 on `self.tx.proof`, for `public`, `calls`, `window` and `h_tx`,
+    /// as `check_px_proof` runs it: `blacksilk_px::prove::verify` with the
+    /// chain's registry (none for the transfer fixture).
+    fn verdict_with(
+        &self,
+        public: &Public,
+        calls: &[FunctionCall],
+        window: &Window,
+        h_tx: [u8; 32],
+    ) -> Verdict {
         let run = catch_unwind(AssertUnwindSafe(|| {
             let proof = match decode_px_proof(&self.tx) {
                 Ok(p) => p,
                 Err(TxError::PxProof) => return Verdict::Decode,
                 Err(e) => panic!("decode_px_proof returned {e:?}"),
             };
-            match blacksilk_px::prove::verify(public, &[], window, h_tx, &proof, |_, _| None) {
+            let registered = |c: &Digest, id: &[u8; 32]| {
+                self.chain
+                    .as_ref()
+                    .and_then(|chain| chain.px_function(c, id))
+                    .map(|r| r.budget)
+            };
+            match blacksilk_px::prove::verify(public, calls, window, h_tx, &proof, registered) {
                 Ok(()) => Verdict::Ok,
                 Err(VerifyError::Shape) => Verdict::Shape,
                 Err(VerifyError::Unregistered(_)) => Verdict::Unregistered,
@@ -734,13 +792,20 @@ impl Ctx {
     }
 
     fn verdict(&self) -> Verdict {
-        self.verdict_with(&self.public, &self.tx.window, self.h_tx)
+        self.verdict_with(&self.public, &self.calls, &self.tx.window, self.h_tx)
     }
 
     /// The node's single-call PX5 (`check_px_proof`) on `self.tx`. A
     /// transaction without functions reads nothing from the chain.
     fn node_verdict(&self) -> Result<(), TxError> {
-        check_px_proof(&self.tx, &MemoryChain::new(), &fixture_rules())
+        match &self.chain {
+            Some(chain) => check_px_proof(&self.tx, chain, &fixture_rules()),
+            None => check_px_proof(&self.tx, &MemoryChain::new(), &fixture_rules()),
+        }
+    }
+
+    fn n_fn(&self) -> usize {
+        self.public.n_fn
     }
 }
 
@@ -751,16 +816,31 @@ enum Target {
     Proof { offset: usize, region: usize },
     /// Flip bit 0 of this byte of `h_tx`.
     HTx(usize),
-    /// Flip bit 0 of this public word (see [`PUBLIC_WORDS`], [`flip_public`]).
+    /// Flip bit 0 of this public word (see [`public_words`], [`flip_public`]).
     Public(usize),
+    /// Flip bit 0 of this window word (`Window::words`: `not_before` low,
+    /// high, `not_after` low, high). With functions only: without, the
+    /// window is not in the statement ([`known_non_binding`]).
+    Window(usize),
+    /// Flip bit 0 of function `k`'s first output word.
+    CallOutput(usize),
+    /// Function `k`'s call ABI plus one.
+    Abi(usize),
 }
 
 /// The public words a test can change through `Public`, in
 /// `Public::write`'s order after the constant `VERSION` word: the anchor,
 /// the nullifiers, the commitments, `bridge_in` and `bridge_out` (low then
-/// high half) and `n_fn`. (`VERSION` is a constant of the kernel, written by
-/// `Public::write` itself; the function slots are empty for `n_fn = 0`.)
-const PUBLIC_WORDS: usize = 8 + 16 + 16 + 4 + 1;
+/// high half), `n_fn`, then per function its contract and its `io_hash`.
+/// (`VERSION` is a constant of the kernel, written by `Public::write`
+/// itself.)
+fn public_words(n_fn: usize) -> usize {
+    8 + 16 + 16 + 4 + 1 + 16 * n_fn
+}
+
+/// The first public word of the function slots (function `k`'s contract
+/// starts at `FN_WORDS + 16 k`, its `io_hash` 8 words later).
+const FN_WORDS: usize = 45;
 
 fn flip_public(p: &Public, w: usize) -> (Public, &'static str) {
     let mut p = *p;
@@ -797,7 +877,17 @@ fn flip_public(p: &Public, w: usize) -> (Public, &'static str) {
             p.n_fn ^= 1;
             "n_fn"
         }
-        _ => unreachable!(),
+        _ => {
+            let (k, i) = ((w - FN_WORDS) / 16, (w - FN_WORDS) % 16);
+            assert!(k < p.n_fn, "public word {w} past the function slots");
+            if i < 8 {
+                p.functions[k].0[i] ^= 1;
+                "function contract"
+            } else {
+                p.functions[k].1[i - 8] ^= 1;
+                "function io_hash"
+            }
+        }
     };
     (p, name)
 }
@@ -805,10 +895,17 @@ fn flip_public(p: &Public, w: usize) -> (Public, &'static str) {
 /// The class a case must be refused with (module docs).
 fn expected(target: &Target, l: &Layout) -> Verdict {
     match *target {
-        Target::HTx(_) => Verdict::Invalid,
+        Target::HTx(_) | Target::Window(_) | Target::CallOutput(_) | Target::Abi(_) => {
+            Verdict::Invalid
+        }
         Target::Public(w) => {
             if w == 44 {
+                // `n_fn` 1 or 3: another call count than the calls'
+                // (`check_shape_bits`).
                 Verdict::Shape
+            } else if w >= FN_WORDS && (w - FN_WORDS) % 16 < 8 {
+                // A function's contract: its program is not registered to it.
+                Verdict::Unregistered
             } else {
                 Verdict::Invalid
             }
@@ -875,12 +972,18 @@ fn row_width_resyncs(l: &Layout, region: usize) -> bool {
         first -= 1;
     }
     let count = &rs[first - 1];
-    // The row count is read as one raw byte: a one-byte varint.
-    assert!(
-        l.bytes[count.start] < 0x80 && count.end - count.start == 1,
-        "a query with 128 or more matrices: {count:?}"
-    );
-    let rows = l.bytes[count.start] as usize;
+    // The row count, a LEB128 varint (postcard's sequence length): one byte
+    // for the transfer fixture, two for a query of the two-function proof
+    // with 128 or more matrices (its quotient batch).
+    let mut rows = 0usize;
+    for (i, &b) in l.bytes[count.start..count.end].iter().enumerate() {
+        rows |= ((b & 0x7f) as usize) << (7 * i);
+        assert_eq!(
+            b & 0x80 == 0,
+            i + 1 == count.end - count.start,
+            "the row count region is one varint: {count:?}"
+        );
+    }
     // The end of the query's rows: the last value region of this (batch,
     // query).
     let mut last = region;
@@ -985,8 +1088,19 @@ fn summary(l: &Layout) -> BTreeMap<(Field, Kind), (usize, usize)> {
 
 #[test]
 fn the_layout_map_partitions_the_fixture_proof() {
-    let ctx = Ctx::new();
-    let l = fixture_layout(&ctx);
+    check_layout(&Ctx::transfer());
+}
+
+/// The same map on the two-function fixture's proof (23 tables).
+#[test]
+fn the_layout_map_partitions_the_two_function_proof() {
+    check_layout(&Ctx::two_function());
+}
+
+/// The layout map of `ctx`'s proof partitions it, and every field the proof
+/// carries has a value region.
+fn check_layout(ctx: &Ctx) {
+    let l = fixture_layout(ctx);
     let s = summary(&l);
     for f in VALUE_FIELDS {
         assert!(
@@ -1063,13 +1177,35 @@ fn run_case(ctx: &mut Ctx, l: &Layout, target: &Target, with_node: bool) -> Outc
         Target::HTx(i) => {
             let mut h = ctx.h_tx;
             h[i] ^= 1;
-            let v = ctx.verdict_with(&ctx.public, &ctx.tx.window, h);
+            let v = ctx.verdict_with(&ctx.public, &ctx.calls, &ctx.tx.window, h);
             (format!("h_tx byte {i}"), None, None, v)
         }
         Target::Public(w) => {
             let (p, name) = flip_public(&ctx.public, w);
-            let v = ctx.verdict_with(&p, &ctx.tx.window, ctx.h_tx);
+            let v = ctx.verdict_with(&p, &ctx.calls, &ctx.tx.window, ctx.h_tx);
             (format!("public word {w} ({name})"), None, None, v)
+        }
+        Target::Window(i) => {
+            let mut words = ctx.tx.window.words();
+            words[i] ^= 1;
+            let w = Window {
+                not_before: words[0] as u64 | (words[1] as u64) << 32,
+                not_after: words[2] as u64 | (words[3] as u64) << 32,
+            };
+            let v = ctx.verdict_with(&ctx.public, &ctx.calls, &w, ctx.h_tx);
+            (format!("window word {i}"), None, None, v)
+        }
+        Target::CallOutput(k) => {
+            let mut calls = ctx.calls.clone();
+            calls[k].outputs[0] ^= 1;
+            let v = ctx.verdict_with(&ctx.public, &calls, &ctx.tx.window, ctx.h_tx);
+            (format!("call {k} output 0"), None, None, v)
+        }
+        Target::Abi(k) => {
+            let mut calls = ctx.calls.clone();
+            calls[k].abi += 1;
+            let v = ctx.verdict_with(&ctx.public, &calls, &ctx.tx.window, ctx.h_tx);
+            (format!("call {k} abi"), None, None, v)
         }
     };
     Outcome {
@@ -1153,18 +1289,28 @@ fn sweep(ctx: &mut Ctx, l: &Layout, targets: &[Target], with_node: bool) {
     );
 }
 
-/// The statement-side cases: every byte of `h_tx`, every public word.
-fn statement_targets() -> Vec<Target> {
-    (0..32)
+/// The statement-side cases: every byte of `h_tx`, every public word; with
+/// functions also every window word and, per function, its first output
+/// word and its call ABI.
+fn statement_targets(n_fn: usize) -> Vec<Target> {
+    let mut t: Vec<Target> = (0..32)
         .map(Target::HTx)
-        .chain((0..PUBLIC_WORDS).map(Target::Public))
-        .collect()
+        .chain((0..public_words(n_fn)).map(Target::Public))
+        .collect();
+    if n_fn > 0 {
+        t.extend((0..4).map(Target::Window));
+        t.extend((0..n_fn).map(Target::CallOutput));
+        t.extend((0..n_fn).map(Target::Abi));
+    }
+    t
 }
 
 /// The smoke subset: the version byte, the first and the last value and the
 /// first length or tag of every field, the first and last byte of `h_tx`,
-/// the first anchor word and `n_fn`.
-fn smoke_targets(l: &Layout) -> Vec<Target> {
+/// the first anchor word and `n_fn`; with functions also the last
+/// function's first contract and `io_hash` words, the first `not_after` word,
+/// the last function's output and the first function's ABI.
+fn smoke_targets(l: &Layout, n_fn: usize) -> Vec<Target> {
     let mut seen = BTreeSet::new();
     let mut last: BTreeMap<Field, usize> = BTreeMap::new();
     let mut t = Vec::new();
@@ -1197,6 +1343,16 @@ fn smoke_targets(l: &Layout) -> Vec<Target> {
         Target::Public(0),
         Target::Public(44),
     ]);
+    if n_fn > 0 {
+        let last = FN_WORDS + 16 * (n_fn - 1);
+        t.extend([
+            Target::Public(last),
+            Target::Public(last + 8),
+            Target::Window(2),
+            Target::CallOutput(n_fn - 1),
+            Target::Abi(0),
+        ]);
+    }
     t
 }
 
@@ -1221,7 +1377,7 @@ fn smoke_targets(l: &Layout) -> Vec<Target> {
 ///
 /// Within a value, the flipped byte is random (seeded), except for the
 /// limbs of the commitments (byte 0 of each).
-fn full_targets(l: &Layout) -> Vec<Target> {
+fn full_targets(l: &Layout, n_fn: usize) -> Vec<Target> {
     let mut rng = ChaCha20Rng::seed_from_u64(SWEEP_SEED);
     let mut pick = |n: usize| (rng.next_u64() % n as u64) as usize;
     let mut offsets: BTreeMap<usize, usize> = BTreeMap::new();
@@ -1338,7 +1494,7 @@ fn full_targets(l: &Layout) -> Vec<Target> {
     offsets
         .into_iter()
         .map(|(offset, region)| Target::Proof { offset, region })
-        .chain(statement_targets())
+        .chain(statement_targets(n_fn))
         .collect()
 }
 
@@ -1346,9 +1502,18 @@ fn full_targets(l: &Layout) -> Vec<Target> {
 /// the node's `check_px_proof`.
 #[test]
 fn tamper_smoke_every_proof_field_is_refused() {
-    let mut ctx = Ctx::new();
+    smoke(Ctx::transfer());
+}
+
+/// The smoke subset on the two-function fixture.
+#[test]
+fn tamper_smoke_every_two_function_proof_field_is_refused() {
+    smoke(Ctx::two_function());
+}
+
+fn smoke(mut ctx: Ctx) {
     let l = fixture_layout(&ctx);
-    let targets = smoke_targets(&l);
+    let targets = smoke_targets(&l, ctx.n_fn());
     assert!(targets.len() >= 40, "{} smoke cases", targets.len());
     sweep(&mut ctx, &l, &targets, true);
 }
@@ -1357,17 +1522,65 @@ fn tamper_smoke_every_proof_field_is_refused() {
 #[test]
 #[ignore = "the full tamper sweep: several minutes in release (CI job px-tamper)"]
 fn full_px_proof_tamper_sweep() {
-    let mut ctx = Ctx::new();
+    full(Ctx::transfer());
+}
+
+/// The full sweep on the two-function fixture.
+#[test]
+#[ignore = "the full tamper sweep of the two-function proof: CI job px-tamper"]
+fn full_two_function_px_proof_tamper_sweep() {
+    full(Ctx::two_function());
+}
+
+fn full(mut ctx: Ctx) {
     let l = fixture_layout(&ctx);
-    let targets = full_targets(&l);
+    let targets = full_targets(&l, ctx.n_fn());
     println!("full sweep: {} cases", targets.len());
     sweep(&mut ctx, &l, &targets, false);
+}
+
+/// The two-function fixture's non-binding cases: as for the transfer, the
+/// range proof and the signatures are outside `h_tx` (PX5 holds without
+/// them, full validation refuses the transaction before PX5). Unlike the
+/// transfer, another window with the same `h_tx` does not verify: every
+/// function's prefix carries the window, so the statement binds it.
+#[test]
+fn known_non_binding_two_function() {
+    let ctx = Ctx::two_function();
+    let rules = fixture_rules();
+    let chain = ctx.chain.as_ref().expect("the fixture's chain");
+    for w in [
+        Window {
+            not_before: 1,
+            not_after: 2,
+        },
+        Window::UNBOUNDED,
+    ] {
+        assert_ne!(w, ctx.tx.window);
+        assert_eq!(
+            ctx.verdict_with(&ctx.public, &ctx.calls, &w, ctx.h_tx),
+            Verdict::Invalid
+        );
+    }
+    let h = blacksilk_node::fingerprint::Fixture::get().height;
+    let mut v = ctx.tx.clone();
+    assert!(v.range_proof.is_some());
+    v.range_proof = None;
+    assert_eq!(v.binding(rules.domain()), ctx.h_tx);
+    assert_eq!(check_px_proof(&v, chain, &rules), Ok(()));
+    assert!(px2::verdict(&v, h, true).is_err());
+    let mut v = ctx.tx.clone();
+    assert!(!v.signatures.is_empty());
+    v.signatures.clear();
+    assert_eq!(v.binding(rules.domain()), ctx.h_tx);
+    assert_eq!(check_px_proof(&v, chain, &rules), Ok(()));
+    assert!(px2::verdict(&v, h, true).is_err());
 }
 
 /// The known non-binding cases, asserted to verify (module docs).
 #[test]
 fn known_non_binding() {
-    let ctx = Ctx::new();
+    let ctx = Ctx::transfer();
     let rules = fixture_rules();
     let chain = MemoryChain::new();
     // Another window with the same h_tx: the statement of a transaction
@@ -1383,7 +1596,10 @@ fn known_non_binding() {
         },
     ] {
         assert_ne!(w, ctx.tx.window);
-        assert_eq!(ctx.verdict_with(&ctx.public, &w, ctx.h_tx), Verdict::Ok);
+        assert_eq!(
+            ctx.verdict_with(&ctx.public, &[], &w, ctx.h_tx),
+            Verdict::Ok
+        );
         // The transaction's own window is bound, through h_tx.
         let mut v = ctx.tx.clone();
         v.window = w;

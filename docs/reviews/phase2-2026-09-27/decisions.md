@@ -1976,3 +1976,37 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   Record: docs/reviews/v3-consensus-changes.md#fingerprint-px-samples
   (`Revision: none (fingerprint coverage only; no verdict changes)`).
 - **Red team:** internal red team (2026-10-14): merge with fixes (F1 doc comment, F2 status, F3 fixture assumption, F4 wording), applied; merged into rebuild/core after this review.
+
+## Two-function PX fixture: test-pinned, CI regenerates and compares hashes, never commits (lead decision, 2026-10-15)
+
+- **Why:** the golden PX fixture is a transfer with no functions, so no fixed proof
+  exercised function tables, function prefixes or the window binding, and the tamper
+  sweep could not reach them (STATUS §5, TM2-2 / F2). Step 5(C) of the owner-approved
+  freeze-gate plan.
+- **Decision:** a second fixture, `node/tests/fixtures/px_fixture_2fn.{bin,txt}`.
+  - **Shape:** a vault CLAIM and LOCK (`n_fn = 2`, the B2 base pair) built by
+    `build_px` as a full signed PX transaction. One v1 input, the standard fee, the
+    relock bridged in, and a bounded window `[0, h + 100]`.
+  - **Chain state:** synthetic, in a test-local chain view: one vault record in the PX
+    tree, and the golden deploy's registration.
+  - **Pinned by tests only:** SHA-256 constants and byte-for-byte round trips in
+    `node/tests/px_fixture_2fn.rs`. It is not a manifest or fingerprint input. The
+    files are included only in test binaries, and their paths join the consensus
+    gate's list, so a change of the bytes needs a trailer and review.
+  - **CI rule:** the "never regenerate in CI" rule of the golden fixture
+    (`node/tests/px_fixture.rs`) is restated for both fixtures. A manual workflow,
+    `.github/workflows/px-fixture.yml` (16 GB guard, read-only token), regenerates
+    both into a temporary directory (`PX_FIXTURE_OUT`) and compares their SHA-256
+    with the committed files. CI never uploads or commits a fixture; the committed
+    bytes come from a local generation, checked by two runs at different thread
+    counts.
+  - **Tamper sweep:** `node/tests/px_tamper.rs` is extended to the new proof (smoke
+    subset in the suite, the full sweep in CI job `px-tamper`).
+- **Rejected:** a manifest pin (PX5 start-up cost, decision "PX verdict samples in the
+  fingerprint"); a chain view in `node/src/fingerprint.rs` (a consensus path, for test
+  data); LOCK+LOCK at the empty tree (CLAIM state was feasible with a synthetic
+  tree); committing from CI.
+- **Scope:** no rule, prover, verifier, manifest, pin or dependency change; Cargo.lock
+  is unchanged. Evidence: [px-fixture-2fn-2026-10-15](../../evidence/px-fixture-2fn-2026-10-15/README.md).
+- **Open:** the cross-machine regeneration has not run. The workflow can be dispatched
+  only once it is on the default branch (`rebuild/core`).
