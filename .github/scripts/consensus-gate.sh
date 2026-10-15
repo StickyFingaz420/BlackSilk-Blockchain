@@ -53,7 +53,22 @@ source "$here/gate-range.sh"
 # there can swap or alter gated code); and the module roots that
 # declare gated modules (a `#[path]`, `cfg` or `include!` there redirects
 # them). The commits before it that touch them are in the waiver file.
+#
+# The match ignores case (red team F1 of gate-manifest-paths): checkouts on
+# Windows and macOS are case-insensitive, where `px/Build.rs` is the crate's
+# build script and `px/src/LIB.rs` is `px/src/lib.rs`. nocasematch is set
+# only around the match and restored after it.
 is_consensus_path() {
+  local restore r=0
+  restore="$(shopt -p nocasematch || true)"
+  shopt -s nocasematch
+  consensus_path_match "$1" || r=1
+  eval "$restore"
+  return "$r"
+}
+
+# The path list; call it through is_consensus_path (case-insensitive).
+consensus_path_match() {
   case "$1" in
     consensus/* | px-core/* | zk/* | zkvm/src/air/*) return 0 ;;
     tx/src/validate.rs | tx/src/px.rs | tx/src/params.rs) return 0 ;;
@@ -228,16 +243,28 @@ tools/labnet/Cargo.toml tools/supply-audit/Cargo.toml fuzz/Cargo.toml contracts/
 zkvm/guests/Cargo.toml zkvm/sdk/Cargo.toml p2p/src/lib.rs rpc/src/lib.rs
 node/src/main.rs miner/src/main.rs px/src/vault.rs chain/src/mempool.rs
 chain/src/manager.rs.orig src/lib.rs px/src/lib.rs.bak docs/Cargo.toml"
+# Case variants of gated paths (red team F1): gated, since a case-insensitive
+# checkout uses them as the gated file.
+GATE_CASE_VARIANTS="PX/SRC/LIB.RS px/Build.rs rpc/BUILD.rs Cargo.TOML TX/Cargo.toml"
 
 selftest_paths() {
   local p bad=0
   for p in $GATE_MANIFEST_PATHS consensus/Cargo.toml crypto/Cargo.toml \
-    px-core/src/lib.rs zk/build.rs randomx/Cargo.toml px/src/deploy_caps.rs; do
+    px-core/src/lib.rs zk/build.rs randomx/Cargo.toml px/src/deploy_caps.rs \
+    $GATE_CASE_VARIANTS Consensus/src/lib.rs TX/SRC/VALIDATE.RS; do
     is_consensus_path "$p" || { echo "selftest: $p should be a consensus path"; bad=1; }
   done
   for p in $GATE_UNGATED_NEIGHBOURS; do
     if is_consensus_path "$p"; then echo "selftest: $p should not be a consensus path"; bad=1; fi
+    # Ignoring case gates no neighbour.
+    if is_consensus_path "${p^^}"; then echo "selftest: ${p^^} should not be a consensus path"; bad=1; fi
   done
+  # The match leaves the caller's nocasematch setting as it was.
+  if shopt -q nocasematch; then echo "selftest: nocasematch left on"; bad=1; fi
+  shopt -s nocasematch
+  is_consensus_path README.md || true
+  shopt -q nocasematch || { echo "selftest: nocasematch turned off"; bad=1; }
+  shopt -u nocasematch
   return "$bad"
 }
 
@@ -302,6 +329,11 @@ selftest_history() {
   rc=0
   gate_run "$old~1" "$old" || rc=$?
   [ "$rc" = 0 ] || { echo "selftest: a waived commit within the horizon failed (exit $rc)"; bad=1; }
+  # Case variants of gated paths (red team F1), before the loop below creates
+  # the paths themselves (on a case-insensitive checkout they would merge).
+  for p in px/Build.rs rpc/BUILD.rs Cargo.TOML TX/Cargo.toml; do
+    expect 1 "$p" "touch $p"
+  done
   # (a), (b) every newly gated path: no trailer fails, a trailer passes.
   for p in $GATE_MANIFEST_PATHS; do
     expect 1 "$p" "touch $p"

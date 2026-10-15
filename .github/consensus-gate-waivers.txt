@@ -67,7 +67,7 @@ d5c20f74ec2337cfd01f54af6b3dbf2a5226d517 none: predates RT-TPGATE3; node: golden
 # each reason is the commit's subject and the newly gated paths it touched.
 # Their diffs of those paths were read for this change (no [patch],
 # release-profile, `#[path]`, `include!`, `[lib]` or `build` change among
-# them); the commits were reviewed at their merge and were not re-reviewed
+# them; one feature reaches consensus code, see a5227a3); the commits were reviewed at their merge and were not re-reviewed
 # for consensus effect here. The last two are after the earlier waiver
 # horizon, which moved to 432b8c2 with this change.
 0091d4a5664f3a558d7688a14dd49bfaa1fff6d4 none: predates gate-manifest-paths; tools/daa-sim: pure-Rust difficulty-rule harness (Cargo.toml: a workspace member).
@@ -77,7 +77,7 @@ d5c20f74ec2337cfd01f54af6b3dbf2a5226d517 none: predates RT-TPGATE3; node: golden
 73cd75251d3e40a2727880c4ca2764e468543d59 none: predates gate-manifest-paths; chain, p2p, node: shared sync policy (chain/src/lib.rs: the sync_policy module; node/src/lib.rs).
 b7b508f0b3e0a1e077c55e21ec5f67a8d927c28c none: predates gate-manifest-paths; p2p, node: every chain access goes through the chain actor (node/src/lib.rs, p2p/Cargo.toml).
 1a86d26b802a5ea6d9bad5e0a470bf64b96ef287 none: predates gate-manifest-paths; Merge branch 'w2-model' into rebuild/core (chain/Cargo.toml: dev-dependencies merged).
-a5227a3797cfc1c2b66e06cca10aec57faac0a99 none: predates gate-manifest-paths; p2p, wallet: aes-gcm =0.10.3 with zeroize (p2p/Cargo.toml, wallet/Cargo.toml: AEAD pins).
+a5227a3797cfc1c2b66e06cca10aec57faac0a99 none: predates gate-manifest-paths; p2p, wallet: aes-gcm =0.10.3 with zeroize (p2p/Cargo.toml, wallet/Cargo.toml: AEAD pins). Its `zeroize` feature on aes =0.8.4 is unified into blacksilk-randomx's aes (consensus PoW code): it wipes key schedules on drop and leaves the round functions unchanged.
 4760817256c7a73b8466a369f5091fc4550efb71 none: predates gate-manifest-paths; wallet, node, rpc: header feed from the genesis, verified registrations (node/src/lib.rs).
 6f24fff8d24ca676167720559b124b74ccec4837 none: predates gate-manifest-paths; p2p, node, docs: warn-only clock-offset monitor (node/src/lib.rs).
 5c3ad7e0eea4967874806cab390240d962964c75 none: predates gate-manifest-paths; mutation census: [profile.mutants] (Cargo.toml: a profile no release artifact uses).
