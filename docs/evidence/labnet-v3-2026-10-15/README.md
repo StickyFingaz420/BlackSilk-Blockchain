@@ -42,6 +42,13 @@ rerun once with a new `--out` and base port, recorded and labelled.
 
 ### 0.1 Bound change (Lead decision received 2026-10-15 between 06:55 and 07:11 UTC; recorded here before run A started at 07:14:01 UTC)
 
+- **Basis for "before run A" (added 2026-10-15, after the internal red team):** the
+  Lead's instruction to the run agent at about 07:10 UTC, in the session record, which
+  is not in the repository. Run A started at 07:14:01 UTC (`runs/A-ring12/A.meta`).
+  Supporting artefacts: `build/run.sh` and `build/table-poller.sh` (the poller this
+  bound needs) were last modified at 07:11:44 UTC, and run A's `node0-table.csv`
+  starts at 07:14:24 UTC (unix 1792048464). This README itself was last edited later
+  (09:02 UTC, after both runs), so its own timestamp does not prove the order.
 - **Superseded:** `late_joiner_getaddr_answer >= 8`.
 - **Reason:** the smoke run (§3) answered 3, which was node 0's whole table. On the
   `ring` topology node 0 learns only a few lab addresses, so ≥ 8 tests the topology,
@@ -60,11 +67,17 @@ rerun once with a new `--out` and base port, recorded and labelled.
   routability (every entry passes with `--allow-private`) and bans (loopback is never
   banned).
 - **How T is measured:** node 0's table size T is taken from its `peers.json` entry
-  count. The node saves the file within 60 s of any change in table size
-  (p2p/src/net/maintenance.rs:101, :269-278). A poller reads only the count every 5 s
-  into `node0-table.csv`; the file itself, which holds the table's secret key, is not
-  copied. T at the request is the count from the entries' first-seen times up to the
-  request, cross-checked against the poller.
+  count. After a change in table size the node saves the file on the first
+  maintenance tick more than 60 s after its last save, so within about 60 s, not
+  exactly (p2p/src/net/maintenance.rs:101, :269-278). A poller reads only the count
+  every 5 s into `node0-table.csv`; the file itself, which holds the table's secret
+  key, is not copied. T at the request is the count from the entries' first-seen
+  times up to the request, cross-checked against the poller.
+- **Corroboration in the committed evidence:** `peers.json` is not committed, so T is
+  corroborated by `node0-table.csv` and by the order in `node0.log`: the inbound peer
+  is registered (`connected inbound peer N`; the node adds an inbound peer's own
+  listen address to its table on connection, p2p/src/net/conn.rs:324) before the
+  `getaddr answered with K addresses` line.
 - **If T never exceeds 8 in a run,** the "table larger than 8 entries" check is
   recorded as NOT EXERCISED for that run: not passed, not failed.
 - All other bounds are unchanged.
@@ -152,6 +165,8 @@ by `tools/release-build.sh`; byte-reproducibility of these binaries was not re-c
 
 The owner closed Chrome. This agent ran the full check itself immediately before each run
 (`build/prereqs.txt`). "≥ 10 GB" is read as ≥ 10,000 MB, as in the Lead's own 07:10 measurement.
+Both measured values pass on that reading (10,182 and 10,168 MB) and both are below
+10 GiB (10,240 MiB), so they would fail a 10 GiB reading.
 
 | Check | Before A (07:11:52–07:13:54 UTC) | Before B (08:16:57–08:18:59 UTC) |
 |---|---|---|
@@ -233,8 +248,11 @@ bin/blacksilk-labnet.exe --bin-dir C:/bszkeval/labnet-v3/bin --out runs/A-ring12
 - GetAddr: node 0 answered with 3 addresses at 08:11:32.379.
   - Node 0's `peers.json` count went from 2 to 3 at 08:11:32: the joiner's own
     address. So T = 3, and the rule gives min(8, 3) = 3: **equal**.
-  - Node 0's table peaked at 6 entries in this run, so the "table larger than 8
-    entries" check is **NOT EXERCISED**.
+  - The 5 s poller saw at most 6 entries in node 0's table. Node 0's GetAddr
+    answers to the relay nodes and e2 at the end of the run (4, 5, 6 and 7
+    addresses, `node0.log` about lines 1068–1349, the last `getaddr answered with 7
+    addresses` at 08:16:30) show that its table reached 7. It was never above 8, so
+    the "table larger than 8 entries" check is **NOT EXERCISED**.
 - Relay discovery: the joiner had 12 peers before and 15 at the end. The relay nodes
   were reached after 70.8, 47.0 and 17.7 s.
 - All 528 final-chain blocks appear (`accepted` or `received`) in every one of the 12
@@ -346,7 +364,7 @@ store holds both sides)
 | `warmup.reached` | PASS (700 s) | PASS (632 s) |
 | Binaries: 66f12f0, no `-dirty`, `build flags: none`, SHA-256 = SHA256SUMS | PASS (labnet, node, miner) | PASS |
 | GetAddr answer = rule(T at request) (§0.1) | PASS (3 = min(8, 3)) | PASS (8 = min(8, 8)) |
-| Table larger than 8 at the request | NOT EXERCISED (T = 3; max 6) | NOT EXERCISED (T = 8) |
+| Table larger than 8 at the request | NOT EXERCISED (T = 3; poller max 6, answers show 7; never above 8) | NOT EXERCISED (T = 8) |
 | Every final-chain block reached all 12 nodes | PASS (528) | PASS (395) |
 | `RandomX self-test passed` in every node log | PASS (12 lab nodes + late, e2, 3 relay) | PASS (same) |
 | `is invalid`, `misbehaved (+`, `inbound limit reached`, panic, `ERROR`, halt | PASS (0 each) | PASS (0 each) |
@@ -380,6 +398,9 @@ WARN lines (`acceptance.json` `warn_lines`), and nothing else:
   - `acceptance.json` (from `build/analyze.py`), `load.csv`, `node0-table.csv`;
   - the console log, `meta` (command, environment, UTC start and end, PIDs) and exit
     status;
+  - the load sampler's own output, `A.sampler.log`, `B.sampler.log` (and
+    `smoke.sampler.log`): empty in all three runs, so the sampler printed no error (a
+    memory-guard stop would be recorded in `load.csv`, and none is);
   - run B only: `node1-blocks.dat` and `report-node1-store.json`/`.txt`.
 - Not included: the node data directories. `peers.json` holds the address table's secret
   key; `rpc.cookie` and `bans.json` are left out too. `node0-table.csv` records only
@@ -387,8 +408,10 @@ WARN lines (`acceptance.json` `warn_lines`), and nothing else:
 - `load.csv`'s first column is `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()`: true
   Unix time, unlike W4's `Get-Date -UFormat %s`.
 - Line ends: git stores the text files here with LF. Eight files were written with CRLF
-  (`load.csv` ×3, `acceptance.json` and `*.analyze.txt` of runs A and B, `build/run.sh`);
-  a Windows checkout with `core.autocrlf=true` gives them back CRLF, a Linux checkout LF.
+  (`load.csv` ×3, `acceptance.json` and `*.analyze.txt` of runs A and B, `build/run.sh`).
+  Seven of them come back CRLF on a Windows checkout with `core.autocrlf=true` and LF on
+  a Linux checkout. `build/run.sh` matches `*.sh text eol=lf` (`.gitattributes`) and is
+  LF on every checkout.
 - One change made when committing this record to the repository (2026-10-15): the three
   `load.csv` files were written by PowerShell 5.1 `Out-File -Encoding utf8`, which puts
   a UTF-8 byte order mark (U+FEFF) before the header. The repository's invisible-Unicode
