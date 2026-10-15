@@ -170,6 +170,11 @@ fn sha256_matches_known_answers() {
             &[b'a'; 64][..],
             "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb",
         ),
+        // 55 bytes: the longest message whose padding fits one block.
+        (
+            &[b'a'; 55][..],
+            "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318",
+        ),
     ] {
         assert_eq!(sha256_hex(msg), digest);
     }
@@ -444,9 +449,19 @@ fn the_two_function_fixture_has_its_shape() {
     for i in px.inputs[0].ring {
         assert!(f.outputs.contains_key(&i), "ring member {i}");
     }
-    // Nothing in common with the golden PX transaction but its v1 input.
+    // Nothing in common with the golden PX transaction but its v1 input: all
+    // three fixture transactions (the fingerprint transfer, the golden PX
+    // transaction and this one) spend coinbase output 0, so they share its
+    // key image; each is valid on its own chain view, none with another.
     let golden = &PxFixture::get().px;
     assert_eq!(golden.inputs[0].key_image, px.inputs[0].key_image);
+    assert!(
+        f.transfer
+            .inputs
+            .iter()
+            .any(|i| i.key_image == px.inputs[0].key_image),
+        "the fingerprint transfer spends coinbase output 0 too"
+    );
     assert_ne!(golden.anchor, px.anchor);
 }
 
@@ -576,6 +591,70 @@ fn the_proof_binds_both_functions_and_the_window() {
         blacksilk_px::prove::verify_transfer(&px.public(), h_tx, &proof),
         Err(VerifyError::Shape)
     );
+}
+
+/// The proof, not only the registry, binds each function's contract and
+/// outputs, and the registered budget fixes the statement's shape:
+///
+/// - a permissive registry (the vault program under any contract) with a
+///   function's contract word changed: the registry accepts, the statement
+///   differs, the proof refuses (`Invalid`);
+/// - another budget for the same program: `check_shape_bits` refuses the
+///   proof's table heights (`Shape`) before any cryptography;
+/// - a call with one output word more or less than the proof's (the
+///   registration's `out_words` is 1): the statement's public output
+///   differs (`Invalid`), and the node refuses it earlier, at PX3
+///   (`PxOutputWords`).
+#[test]
+fn the_proof_binds_the_contract_the_budget_and_the_output_count() {
+    let p = Px2Fixture::get();
+    let px = &p.px;
+    let chain = Chain2::new(&p.record);
+    let h_tx = px.binding(fixture_rules().domain());
+    let proof = decode_px_proof(px).expect("the proof decodes");
+    let calls = chain.calls(px);
+    let vault_id = vault::program().id();
+
+    // (a) A permissive registry and another contract for function 1.
+    let permissive =
+        |_: &blacksilk_px::core::Digest, id: &[u8; 32]| (*id == vault_id).then_some(vault::BUDGET);
+    let control =
+        blacksilk_px::prove::verify(&px.public(), &calls, &px.window, h_tx, &proof, permissive);
+    assert_eq!(control, Ok(()), "control under the permissive registry");
+    let mut public = px.public();
+    public.functions[1].0[0] ^= 1;
+    let r = blacksilk_px::prove::verify(&public, &calls, &px.window, h_tx, &proof, permissive);
+    assert_eq!(zk_variant(&r), "Invalid", "contract word: {r:?}");
+
+    // (b) Another budget for the same program (four times the cycles, so
+    // the function's tables are taller).
+    let mut other = vault::BUDGET;
+    other.cycles *= 4;
+    assert_ne!(other, vault::BUDGET);
+    let r = blacksilk_px::prove::verify(
+        &px.public(),
+        &calls,
+        &px.window,
+        h_tx,
+        &proof,
+        |c: &blacksilk_px::core::Digest, id: &[u8; 32]| chain.px_function(c, id).map(|_| other),
+    );
+    assert_eq!(zk_variant(&r), "Shape", "another budget: {r:?}");
+
+    // (c) One output word more, or none, on function 1.
+    for (name, outputs) in [("one more", vec![vault::LOCK, 0]), ("none", Vec::new())] {
+        let mut changed = calls.clone();
+        changed[1].outputs = outputs.clone();
+        let r = chain.verify(px, &changed, &px.window, h_tx, &proof);
+        assert_eq!(zk_variant(&r), "Invalid", "{name}: {r:?}");
+        let mut v = px.clone();
+        v.functions[1].outputs = outputs;
+        assert_eq!(
+            px2::verdict(&v, Fixture::get().height, false),
+            Err(TxError::PxOutputWords { function: 1 }),
+            "{name}"
+        );
+    }
 }
 
 /// The node's own path on the registration: a transaction naming another
