@@ -53,10 +53,11 @@ Shape:
   - no spent nullifier;
   - a pool equal to the record's value;
   - the golden deploy's registration.
-- **Shared key image.** The v1 input is the same output as the golden PX
-  transaction's input, so the two share a key image. Each fixture is validated on its
-  own chain view, so this does not matter for the tests, but the two transactions
-  cannot both be in one block.
+- **Shared key image.** The v1 input is coinbase output 0. The golden PX transaction
+  and the fingerprint fixture transfer spend the same output too: the transfer spends
+  both coinbase outputs. So all three fixture transactions share that key image, and
+  the shape test asserts it. Each is validated on its own chain view, so this does not
+  matter for the tests, but no two of them can be in one block.
 
 ## Generation and determinism (PXDET), local
 
@@ -90,16 +91,26 @@ machine.
 
 ## Verify-only tests (`node/tests/px_fixture_2fn.rs`)
 
-All six tests pass. The full test binary takes 2.0 s wall and peaks at 33 MiB.
+All tests pass: six at `7206d64` (2.0 s wall, 33 MiB peak), seven since the red-team
+fixes at `4c8dcc5`.
+
+**What the refusal tests show.** They show that each field is bound to the statement:
+a changed field changes the public statement, or the Fiat–Shamir transcript it is
+absorbed into, and the committed proof then fails to verify. They do not show that
+the circuit enforces anything. Whether the AIR constraints hold a prover to these
+values is a separate question, covered by the BVM-1 AIR mutation census
+([mutation-air-2026-10-02](../mutation-air-2026-10-02/README.md)), not here. The same
+applies to the tamper sweep below.
 
 | Test | What it checks |
 |---|---|
-| `sha256_matches_known_answers` | The test-local SHA-256 (no new dependency) on FIPS 180-4 vectors, the empty message and a 64-byte message |
+| `sha256_matches_known_answers` | The test-local SHA-256 (no new dependency) on FIPS 180-4 vectors, the empty message, and 55-byte (since `4c8dcc5`) and 64-byte messages. The 55-byte value is from `sha256sum` |
 | `the_two_function_fixture_is_pinned_and_round_trips_byte_for_byte` | The files' SHA-256 equal the pins; the decoded transaction re-encodes to the `.bin`; the record re-renders the `.txt` |
 | `the_two_function_fixture_has_its_shape` | Two functions of the golden registration, outputs `[CLAIM]` and `[LOCK]`, the program id equal to `vault.id`, budget, ABI, out words, the window, fee and bridge amounts, the ring; anchor = root of the one-record tree; nullifier 0 = the record's contract nullifier |
 | `the_two_function_transaction_is_valid_in_its_window_only` | `validate_px` returns `Ok` at h (341 ms, PX5 included); without PX5 it returns `Ok` at `not_after` = 200; at 201 it returns `PxWindow`, with and without PX5 |
 | `the_proof_binds_both_functions_and_the_window` | `prove::verify`, called with the arguments `check_px_proof_decoded` passes, with one input changed per case (results in the next table) |
 | `the_node_refuses_an_unregistered_function_and_an_unknown_anchor` | Another `program_id` for function 1 gives `PxUnregistered { function: 1 }` (with and without PX5); another anchor gives `PxUnknownAnchor` |
+| `the_proof_binds_the_contract_the_budget_and_the_output_count` (red-team fix, `4c8dcc5`) | Three cases. (1) A permissive registry (the vault program under any contract) with function 1's first contract word changed: the registry accepts, but the proof refuses it (`Proof(Invalid)`); the control under that registry is `Ok`. (2) Another budget for the same program (4× cycles): `Proof(Shape)`. (3) One output word more, or none, on function 1: `Proof(Invalid)`; at the node, PX3 refuses it as `PxOutputWords { function: 1 }` |
 
 Refusals of `prove::verify` on the committed proof. The variant is the `ZkError`
 variant from its `Debug` text, which is how the tamper sweep classifies it too.
@@ -174,6 +185,28 @@ committed.
 - **Outputs test.** The "outputs[1][0] changed" test is killed only through the
   control (M4). No verifier change can ignore the outputs and still accept the honest
   proof.
+
+Red-team follow-up mutants, run at `4c8dcc5` in a scratch worktree with its own target
+directory, against `the_proof_binds_the_contract_the_budget_and_the_output_count`:
+
+| Mutant | Change | Result |
+|---|---|---|
+| N2 px shape check skipped | `px/src/prove.rs` `check_shape_bits`: `if ok \|\| true` | **Survives, as expected**: `blacksilk_zkvm::prove::verify` checks the same degree bits again and returns `Shape`. The two checks are redundant on purpose (defence in depth) |
+| N2b both shape checks skipped | N2 plus `zkvm/src/prove.rs` `verify`: the degree-bits check disabled | **Killed**: the 4× budget then verifies (`Ok`) |
+| N3 PX3 output count skipped | `tx/src/validate.rs` `check_px_state`: the `out_words` comparison disabled | **Killed**: the node returns `InvalidSignature` instead of `PxOutputWords` |
+
+- **Budget binding (N2b).** A registered budget enters the proof check only through
+  the table heights it implies. Those are compared with the proof's degree bits twice,
+  in `check_shape_bits` and again in `zkvm::prove::verify`, and nowhere else: with both
+  comparisons removed, a proof made under one budget verifies under another. This is
+  not a finding (heights are all a budget determines), but the binding rests entirely
+  on those two explicit comparisons.
+- **Contract test (case 1).** No discriminating mutant was built for it. The argument
+  from the code: `statement` puts the kernel's `(contract, io_hash)` into each
+  function's prefix (`function_prefix(call.abi, io_hash, contract, window)`), so a
+  changed contract word changes the expected public output whatever the registry
+  says. A verifier that left the contract out of the prefix would fail the honest
+  control as well (as M3 and M4 do).
 - **Not run.** cargo-mutants over `statement` and `function_prefix` was optional and
   was not run.
 
