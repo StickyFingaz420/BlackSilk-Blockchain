@@ -71,8 +71,11 @@ gate_annotate() {
 # ancestor of this published rebuild/core head, so a waiver can never cover a
 # commit written after it was granted. GATE_WAIVER_HORIZON overrides it
 # (fixture tests only). Moving it is a reviewed change of the gate.
-# d5c20f7: rebuild/core when the horizon was set (2026-10-04).
-GATE_WAIVER_HORIZON_DEFAULT=d5c20f74ec2337cfd01f54af6b3dbf2a5226d517
+# d5c20f7: rebuild/core when the horizon was set (2026-10-04). 432b8c2:
+# rebuild/core when gate-manifest-paths added paths that two later commits
+# had touched without a trailer (2026-10-15); every waiver granted before it
+# is an ancestor of d5c20f7.
+GATE_WAIVER_HORIZON_DEFAULT=432b8c2ec99503e9d8a5c6889c0eb5f4c1a745a2
 
 # gate_waivable SHA: 0 when SHA is an ancestor of (or is) the waiver horizon.
 gate_waivable() {
