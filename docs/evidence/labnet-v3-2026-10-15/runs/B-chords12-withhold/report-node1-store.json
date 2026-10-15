@@ -1,0 +1,672 @@
+{
+  "build_flags": "build flags: none",
+  "nodes": 12,
+  "difficulty_min": 24,
+  "difficulty_max": 41,
+  "difficulty_first_third": 31.272727272727273,
+  "difficulty_last_third": 31.393939393939394,
+  "propagation": {
+    "blocks": 113,
+    "contested_heights": 30,
+    "median_ms": 1961,
+    "p90_ms": 2031,
+    "max_ms": 2183
+  },
+  "propagation_with_contested": {
+    "blocks": 119,
+    "contested_heights": 30,
+    "median_ms": 1963,
+    "p90_ms": 2039,
+    "max_ms": 33231
+  },
+  "arrivals": {
+    "blocks": 127,
+    "not_seen_by_every_node": 7,
+    "all": {
+      "n": 1340,
+      "median_ms": 1298,
+      "p90_ms": 1960,
+      "max_ms": 204465
+    },
+    "receivers": [
+      {
+        "node": 0,
+        "blocks": 57,
+        "never_seen": 4,
+        "arrival": {
+          "n": 53,
+          "median_ms": 650,
+          "p90_ms": 690,
+          "max_ms": 11139
+        }
+      },
+      {
+        "node": 1,
+        "blocks": 70,
+        "never_seen": 3,
+        "arrival": {
+          "n": 67,
+          "median_ms": 659,
+          "p90_ms": 701,
+          "max_ms": 196890
+        }
+      },
+      {
+        "node": 2,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 663,
+          "p90_ms": 694,
+          "max_ms": 49897
+        }
+      },
+      {
+        "node": 3,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 1267,
+          "p90_ms": 1342,
+          "max_ms": 200804
+        }
+      },
+      {
+        "node": 4,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 1315,
+          "p90_ms": 1387,
+          "max_ms": 50556
+        }
+      },
+      {
+        "node": 5,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 1886,
+          "p90_ms": 1997,
+          "max_ms": 204465
+        }
+      },
+      {
+        "node": 6,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 1938,
+          "p90_ms": 2026,
+          "max_ms": 51376
+        }
+      },
+      {
+        "node": 7,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 1935,
+          "p90_ms": 2024,
+          "max_ms": 51482
+        }
+      },
+      {
+        "node": 8,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 1374,
+          "p90_ms": 1970,
+          "max_ms": 51604
+        }
+      },
+      {
+        "node": 9,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 1305,
+          "p90_ms": 1368,
+          "max_ms": 50953
+        }
+      },
+      {
+        "node": 10,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 691,
+          "p90_ms": 1334,
+          "max_ms": 50872
+        }
+      },
+      {
+        "node": 11,
+        "blocks": 127,
+        "never_seen": 5,
+        "arrival": {
+          "n": 122,
+          "median_ms": 662,
+          "p90_ms": 689,
+          "max_ms": 50098
+        }
+      }
+    ]
+  },
+  "found_after_warmup": 195,
+  "on_final_chain_after_warmup": 164,
+  "stale_after_warmup": 31,
+  "found_by_phase": {
+    "connected": {
+      "found": 127,
+      "on_final_chain": 120,
+      "stale": 7
+    },
+    "final": {
+      "found": 3,
+      "on_final_chain": 3,
+      "stale": 0
+    },
+    "heal": {
+      "found": 16,
+      "on_final_chain": 14,
+      "stale": 2
+    },
+    "partition": {
+      "found": 49,
+      "on_final_chain": 28,
+      "stale": 21
+    },
+    "warmup": {
+      "found": 230,
+      "on_final_chain": 230,
+      "stale": 0
+    }
+  },
+  "refused_at_rpc": 0,
+  "templates_abandoned_after_warmup": 120,
+  "heals": [
+    {
+      "unix": 1792053533,
+      "converged_after_secs": 36,
+      "reorgs": [
+        [
+          1,
+          8,
+          14.4
+        ],
+        [
+          2,
+          8,
+          14.4
+        ],
+        [
+          3,
+          8,
+          18.1
+        ],
+        [
+          4,
+          8,
+          18.2
+        ],
+        [
+          5,
+          8,
+          21.7
+        ],
+        [
+          6,
+          8,
+          21.9
+        ],
+        [
+          7,
+          8,
+          22.4
+        ],
+        [
+          8,
+          8,
+          20.3
+        ],
+        [
+          9,
+          8,
+          18.8
+        ],
+        [
+          10,
+          8,
+          15.2
+        ],
+        [
+          11,
+          8,
+          15.1
+        ]
+      ],
+      "heights_before": "298/293/293/293/293/293/293/293/293/293/293/293"
+    },
+    {
+      "unix": 1792054074,
+      "converged_after_secs": 54,
+      "reorgs": [
+        [
+          1,
+          12,
+          15.2
+        ],
+        [
+          2,
+          12,
+          15.3
+        ],
+        [
+          3,
+          12,
+          19.3
+        ],
+        [
+          4,
+          12,
+          20.0
+        ],
+        [
+          5,
+          12,
+          22.8
+        ],
+        [
+          6,
+          12,
+          22.9
+        ],
+        [
+          7,
+          12,
+          23.0
+        ],
+        [
+          8,
+          12,
+          19.9
+        ],
+        [
+          9,
+          12,
+          19.0
+        ],
+        [
+          10,
+          12,
+          15.0
+        ],
+        [
+          11,
+          12,
+          15.3
+        ]
+      ],
+      "heights_before": "344/344/344/344/344/344/344/344/344/344/344/344"
+    }
+  ],
+  "side_branches": [
+    {
+      "fork_height": 256,
+      "tip_height": 257,
+      "tip": "e137743249bfc65e67c95dc8e9476fb80bc258350f5009373a61a082509f8615",
+      "work": [
+        [
+          257,
+          28
+        ]
+      ],
+      "final_chain_work": [
+        [
+          257,
+          28
+        ]
+      ]
+    },
+    {
+      "fork_height": 268,
+      "tip_height": 269,
+      "tip": "193d56f53a8889a46073c56f688b8fe8c4d710d4b132d5652380e9d843636db2",
+      "work": [
+        [
+          269,
+          29
+        ]
+      ],
+      "final_chain_work": [
+        [
+          269,
+          29
+        ]
+      ]
+    },
+    {
+      "fork_height": 285,
+      "tip_height": 293,
+      "tip": "a64971d6e4e29fe758da66a44e6a788f61d844d5e6ac353c2f458be74b1613ba",
+      "work": [
+        [
+          286,
+          39
+        ],
+        [
+          287,
+          79
+        ],
+        [
+          288,
+          114
+        ],
+        [
+          289,
+          146
+        ],
+        [
+          290,
+          177
+        ],
+        [
+          291,
+          208
+        ],
+        [
+          292,
+          240
+        ],
+        [
+          293,
+          273
+        ]
+      ],
+      "final_chain_work": [
+        [
+          286,
+          39
+        ],
+        [
+          287,
+          79
+        ],
+        [
+          288,
+          120
+        ],
+        [
+          289,
+          160
+        ],
+        [
+          290,
+          196
+        ],
+        [
+          291,
+          233
+        ],
+        [
+          292,
+          270
+        ],
+        [
+          293,
+          308
+        ]
+      ]
+    },
+    {
+      "fork_height": 329,
+      "tip_height": 330,
+      "tip": "4506f61dc99c11a8dd341394e709c39474a3c278b0b57fa287a586cf7ee14b03",
+      "work": [
+        [
+          330,
+          35
+        ]
+      ],
+      "final_chain_work": [
+        [
+          330,
+          35
+        ]
+      ]
+    },
+    {
+      "fork_height": 333,
+      "tip_height": 345,
+      "tip": "02262b2a948a3759770f1b487fac4ee317845eb9497ea69e7a3ce9d749c415e6",
+      "work": [
+        [
+          334,
+          32
+        ],
+        [
+          335,
+          63
+        ],
+        [
+          336,
+          95
+        ],
+        [
+          337,
+          127
+        ],
+        [
+          338,
+          159
+        ],
+        [
+          339,
+          191
+        ],
+        [
+          340,
+          221
+        ],
+        [
+          341,
+          251
+        ],
+        [
+          342,
+          279
+        ],
+        [
+          343,
+          307
+        ],
+        [
+          344,
+          336
+        ],
+        [
+          345,
+          364
+        ]
+      ],
+      "final_chain_work": [
+        [
+          334,
+          32
+        ],
+        [
+          335,
+          64
+        ],
+        [
+          336,
+          96
+        ],
+        [
+          337,
+          128
+        ],
+        [
+          338,
+          160
+        ],
+        [
+          339,
+          193
+        ],
+        [
+          340,
+          224
+        ],
+        [
+          341,
+          254
+        ],
+        [
+          342,
+          284
+        ],
+        [
+          343,
+          313
+        ],
+        [
+          344,
+          342
+        ],
+        [
+          345,
+          370
+        ]
+      ]
+    },
+    {
+      "fork_height": 387,
+      "tip_height": 390,
+      "tip": "d000d4ce9fd59636529694bb0d9f008a15be91c639537fbba4fa71136b069cbc",
+      "work": [
+        [
+          388,
+          33
+        ],
+        [
+          389,
+          64
+        ],
+        [
+          390,
+          94
+        ]
+      ],
+      "final_chain_work": [
+        [
+          388,
+          33
+        ],
+        [
+          389,
+          65
+        ],
+        [
+          390,
+          97
+        ]
+      ]
+    }
+  ],
+  "late_joiner_getaddr_answer": 8,
+  "late_joiner": [
+    "    0.27 s  connected outbound peer 1 (height 395) -> 1 peers",
+    "    0.27 s  peer 1: addr with 1 entries",
+    "    0.27 s  peer 1: addr with 8 entries",
+    "    2.42 s  connected block-relay-only outbound peer 2 (height 395) -> 2 peers",
+    "    2.42 s  connected block-relay-only outbound peer 3 (height 395) -> 3 peers",
+    "    2.42 s  connected outbound peer 6 (height 395) -> 4 peers",
+    "    2.42 s  connected outbound peer 5 (height 395) -> 5 peers",
+    "    2.42 s  connected outbound peer 4 (height 395) -> 6 peers",
+    "    2.42 s  peer 6: addr with 1 entries",
+    "    2.42 s  peer 5: addr with 1 entries",
+    "    2.42 s  peer 4: addr with 1 entries",
+    "    2.42 s  peer 6: addr with 6 entries",
+    "    2.42 s  peer 4: addr with 8 entries",
+    "    2.42 s  peer 5: addr with 8 entries",
+    "   91.62 s  connected outbound peer 7 (height 395) -> 7 peers",
+    "   91.62 s  peer 7: addr with 1 entries",
+    "   91.62 s  peer 7: addr with 8 entries",
+    "  122.06 s  disconnected peer 7 -> 6 peers"
+  ],
+  "relay_joiner": [
+    "    0.27 s  connected outbound peer 1 (height 395) -> 1 peers",
+    "    0.27 s  peer 1: addr with 1 entries",
+    "    0.27 s  peer 1: addr with 8 entries",
+    "    2.38 s  connected outbound peer 2 (height 395) -> 2 peers",
+    "    2.38 s  peer 2: addr with 1 entries",
+    "    2.38 s  peer 2: addr with 8 entries",
+    "    2.38 s  connected outbound peer 3 (height 395) -> 3 peers",
+    "    2.38 s  connected outbound peer 4 (height 395) -> 4 peers",
+    "    2.38 s  peer 3: addr with 1 entries",
+    "    2.38 s  peer 4: addr with 1 entries",
+    "    2.38 s  peer 3: addr with 7 entries",
+    "    2.38 s  connected outbound peer 5 (height 395) -> 5 peers",
+    "    2.38 s  peer 5: addr with 1 entries",
+    "    2.38 s  connected outbound peer 6 (height 395) -> 6 peers",
+    "    2.38 s  peer 4: addr with 8 entries",
+    "    2.38 s  peer 6: addr with 1 entries",
+    "    2.38 s  peer 5: addr with 8 entries",
+    "    2.38 s  peer 6: addr with 7 entries",
+    "    2.38 s  connected outbound peer 7 (height 395) -> 7 peers",
+    "    2.38 s  peer 7: addr with 1 entries",
+    "    2.38 s  peer 7: addr with 8 entries",
+    "    4.50 s  connected outbound peer 8 (height 395) -> 8 peers",
+    "    4.50 s  peer 8: addr with 1 entries",
+    "    4.50 s  connected outbound peer 9 (height 395) -> 9 peers",
+    "    4.50 s  connected outbound peer 10 (height 395) -> 10 peers",
+    "    4.50 s  peer 8: addr with 7 entries",
+    "    4.50 s  peer 9: addr with 1 entries",
+    "    4.50 s  connected outbound peer 11 (height 395) -> 11 peers",
+    "    4.50 s  peer 9: addr with 8 entries",
+    "    4.50 s  peer 11: addr with 1 entries",
+    "    4.50 s  peer 10: addr with 1 entries",
+    "    4.50 s  peer 10: addr with 8 entries",
+    "    4.50 s  peer 11: addr with 8 entries",
+    "    4.50 s  connected outbound peer 12 (height 395) -> 12 peers",
+    "    4.50 s  peer 12: addr with 1 entries",
+    "    4.50 s  peer 12: addr with 7 entries",
+    "   14.66 s  peer 6: addr with 1 entries",
+    "   14.66 s  peer 9: addr with 1 entries",
+    "   14.75 s  peer 4: addr with 1 entries",
+    "   14.75 s  peer 2: addr with 1 entries",
+    "   14.88 s  peer 12: addr with 1 entries",
+    "   14.88 s  peer 11: addr with 1 entries",
+    "   15.40 s  connected outbound peer 13 (height 0) -> 13 peers",
+    "   15.40 s  peer 13: addr with 1 entries",
+    "   15.40 s  peer 13: addr with 8 entries",
+    "   47.37 s  peer 1: addr with 1 entries",
+    "   47.52 s  peer 8: addr with 1 entries",
+    "   47.52 s  peer 12: addr with 1 entries",
+    "   47.55 s  peer 5: addr with 1 entries",
+    "   47.65 s  peer 6: addr with 1 entries",
+    "   49.11 s  connected outbound peer 14 (height 0) -> 14 peers",
+    "   49.11 s  peer 14: addr with 1 entries",
+    "   49.11 s  peer 14: addr with 8 entries",
+    "   79.19 s  peer 1: addr with 1 entries",
+    "   79.32 s  peer 13: addr with 1 entries",
+    "   79.37 s  peer 2: addr with 1 entries",
+    "   79.38 s  peer 4: addr with 1 entries",
+    "   79.40 s  peer 6: addr with 1 entries",
+    "   80.23 s  connected outbound peer 15 (height 0) -> 15 peers",
+    "   80.23 s  peer 15: addr with 1 entries",
+    "   80.23 s  peer 15: addr with 8 entries"
+  ]
+}

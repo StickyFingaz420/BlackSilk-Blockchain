@@ -1,0 +1,1464 @@
+[2026-10-15T08:19:17.566Z INFO  blacksilk_node] RandomX self-test passed: 9 known answers (reference and BlackSilk, light mode) in 12.5s
+[2026-10-15T08:19:17.567Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 66f12f0761c80f13c493f2c752d2f511511f3303, build flags: none
+[2026-10-15T08:19:17.567Z INFO  blacksilk_node] regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141, consensus fingerprint f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889
+[2026-10-15T08:19:17.567Z INFO  blacksilk_node] regtest: loading runs/B-chords12-withhold\node8
+[2026-10-15T08:19:17.571Z INFO  blacksilk_node] chain loaded in 4.4ms: height 0, tip 3dbdba2aca8842cd
+[2026-10-15T08:19:17.730Z INFO  blacksilk_node] P2P listening on 127.0.0.1:38161
+[2026-10-15T08:19:17.767Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:38160
+[2026-10-15T08:19:17.819Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\node8 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-10-15T08:19:17.866Z INFO  blacksilk_node::serve] RPC credential written to runs/B-chords12-withhold\node8\rpc.cookie (clients read it: --rpc-cookie)
+[2026-10-15T08:19:18.744Z DEBUG blacksilk_p2p::net::conn] peer 1 is 127.0.0.1:40329
+[2026-10-15T08:19:18.745Z INFO  blacksilk_p2p::net::conn] connected outbound peer 1 (height 0)
+[2026-10-15T08:19:18.745Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-10-15T08:19:18.825Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-10-15T08:19:19.856Z DEBUG blacksilk_p2p::net::conn] peer 2 is 127.0.0.1:40330
+[2026-10-15T08:19:19.857Z INFO  blacksilk_p2p::net::conn] connected outbound peer 2 (height 0)
+[2026-10-15T08:19:19.902Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T08:19:19.940Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T08:19:20.154Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T08:19:20.985Z DEBUG blacksilk_p2p::net::conn] peer 3 is 127.0.0.1:38618
+[2026-10-15T08:19:20.985Z INFO  blacksilk_p2p::net::conn] connected inbound peer 3 (height 0)
+[2026-10-15T08:19:21.049Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: getaddr answered with 3 addresses
+[2026-10-15T08:19:21.049Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: addr with 1 entries
+[2026-10-15T08:19:21.288Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: addr with 1 entries
+[2026-10-15T08:19:21.288Z DEBUG blacksilk_p2p::net::addr_relay] peer 127.0.0.1:38618: 1 addresses over the rate limit dropped
+[2026-10-15T08:19:21.795Z DEBUG blacksilk_p2p::net::conn] peer 4 is 127.0.0.1:38641
+[2026-10-15T08:19:21.795Z INFO  blacksilk_p2p::net::conn] connected inbound peer 4 (height 0)
+[2026-10-15T08:19:21.862Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: getaddr answered with 4 addresses
+[2026-10-15T08:19:21.863Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-10-15T08:19:21.929Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-10-15T08:19:28.596Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: addr with 1 entries
+[2026-10-15T08:19:28.596Z DEBUG blacksilk_p2p::net::addr_relay] peer 127.0.0.1:38618: 1 addresses over the rate limit dropped
+[2026-10-15T08:19:28.596Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-10-15T08:19:28.596Z DEBUG blacksilk_p2p::net::addr_relay] peer 127.0.0.1:38641: 1 addresses over the rate limit dropped
+[2026-10-15T08:19:29.086Z INFO  blacksilk_chain::manager::template] caught up at height 0: block templates are served from now on
+[2026-10-15T08:19:29.086Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 1 accepted (new: true)
+[2026-10-15T08:19:29.150Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 036e07b8767c at height 1 received
+[2026-10-15T08:19:30.256Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 2 accepted (new: true)
+[2026-10-15T08:19:30.333Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2beb11b1f87b at height 2 received
+[2026-10-15T08:19:30.373Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 2 accepted (new: false)
+[2026-10-15T08:19:31.423Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 3 accepted (new: true)
+[2026-10-15T08:19:31.466Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 3 accepted (new: false)
+[2026-10-15T08:19:31.506Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 843f8af25c44 at height 3 received
+[2026-10-15T08:19:32.571Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 4 accepted (new: true)
+[2026-10-15T08:19:32.632Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a7a602257158 at height 4 received
+[2026-10-15T08:19:32.671Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 4 accepted (new: false)
+[2026-10-15T08:19:33.660Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 5 accepted (new: true)
+[2026-10-15T08:19:33.738Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1b693d072e09 at height 5 received
+[2026-10-15T08:19:33.738Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 5 accepted (new: false)
+[2026-10-15T08:19:34.805Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 6 accepted (new: true)
+[2026-10-15T08:19:34.883Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2507ad2ad61a at height 6 received
+[2026-10-15T08:19:34.923Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 6 accepted (new: false)
+[2026-10-15T08:19:35.952Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 7 accepted (new: true)
+[2026-10-15T08:19:36.026Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 31095adf4486 at height 7 received
+[2026-10-15T08:19:36.026Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 7 accepted (new: false)
+[2026-10-15T08:19:37.036Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 8 accepted (new: true)
+[2026-10-15T08:19:37.118Z DEBUG blacksilk_p2p::net::blocks] peer 2: block aace8603f7ab at height 8 received
+[2026-10-15T08:19:37.163Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 8 accepted (new: false)
+[2026-10-15T08:19:38.371Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 9 accepted (new: true)
+[2026-10-15T08:19:38.431Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5aa89d7afada at height 9 received
+[2026-10-15T08:19:38.433Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 9 accepted (new: false)
+[2026-10-15T08:19:39.669Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 10 accepted (new: true)
+[2026-10-15T08:19:39.740Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9b27b3f31521 at height 10 received
+[2026-10-15T08:19:39.742Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 10 accepted (new: false)
+[2026-10-15T08:19:40.843Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 11 accepted (new: true)
+[2026-10-15T08:19:40.931Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1337bda2953f at height 11 received
+[2026-10-15T08:19:40.973Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 11 accepted (new: false)
+[2026-10-15T08:19:41.959Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 12 accepted (new: true)
+[2026-10-15T08:19:42.005Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ea68f4176b4e at height 12 received
+[2026-10-15T08:19:42.039Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 12 accepted (new: false)
+[2026-10-15T08:19:43.022Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 13 accepted (new: true)
+[2026-10-15T08:19:43.086Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0f753f27ae90 at height 13 received
+[2026-10-15T08:19:44.208Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 14 accepted (new: true)
+[2026-10-15T08:19:44.290Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 107b16fed906 at height 14 received
+[2026-10-15T08:19:44.292Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 14 accepted (new: false)
+[2026-10-15T08:19:45.266Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 15 accepted (new: true)
+[2026-10-15T08:19:45.321Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c7957db5b3ce at height 15 received
+[2026-10-15T08:19:46.464Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 16 accepted (new: true)
+[2026-10-15T08:19:46.536Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b822da280312 at height 16 received
+[2026-10-15T08:19:46.598Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 16 accepted (new: false)
+[2026-10-15T08:19:47.601Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 17 accepted (new: true)
+[2026-10-15T08:19:47.673Z DEBUG blacksilk_p2p::net::blocks] peer 2: block acb86afb8e97 at height 17 received
+[2026-10-15T08:19:47.714Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 17 accepted (new: false)
+[2026-10-15T08:19:48.733Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 18 accepted (new: true)
+[2026-10-15T08:19:48.800Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 740fa0b2a63b at height 18 received
+[2026-10-15T08:19:48.859Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 18 accepted (new: false)
+[2026-10-15T08:19:49.851Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 19 accepted (new: true)
+[2026-10-15T08:19:49.913Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 20b15b424109 at height 19 received
+[2026-10-15T08:19:51.014Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 20 accepted (new: true)
+[2026-10-15T08:19:51.103Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 27518b87dc46 at height 20 received
+[2026-10-15T08:19:51.105Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 20 accepted (new: false)
+[2026-10-15T08:19:52.151Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 21 accepted (new: true)
+[2026-10-15T08:19:52.167Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 21 accepted (new: false)
+[2026-10-15T08:19:52.231Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 91fc5821d396 at height 21 received
+[2026-10-15T08:19:53.309Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 22 accepted (new: true)
+[2026-10-15T08:19:53.359Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 22 accepted (new: false)
+[2026-10-15T08:19:53.362Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d4aacc72a6dc at height 22 received
+[2026-10-15T08:19:54.463Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 23 accepted (new: true)
+[2026-10-15T08:19:54.546Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 05320d1b6051 at height 23 received
+[2026-10-15T08:19:55.641Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 24 accepted (new: true)
+[2026-10-15T08:19:55.672Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 24 accepted (new: false)
+[2026-10-15T08:19:55.712Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b7c175150dcd at height 24 received
+[2026-10-15T08:19:56.776Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 25 accepted (new: true)
+[2026-10-15T08:19:56.810Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 25 accepted (new: false)
+[2026-10-15T08:19:56.851Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 26d32b03c57c at height 25 received
+[2026-10-15T08:19:57.865Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 26 accepted (new: true)
+[2026-10-15T08:19:57.924Z DEBUG blacksilk_p2p::net::blocks] peer 2: block fa7e4763a1b7 at height 26 received
+[2026-10-15T08:19:59.019Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 27 accepted (new: true)
+[2026-10-15T08:19:59.085Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4931bd3ef720 at height 27 received
+[2026-10-15T08:19:59.126Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 27 accepted (new: false)
+[2026-10-15T08:20:00.049Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 28 accepted (new: true)
+[2026-10-15T08:20:00.108Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2375e345138f at height 28 received
+[2026-10-15T08:20:01.240Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 29 accepted (new: true)
+[2026-10-15T08:20:01.318Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f69d057406d5 at height 29 received
+[2026-10-15T08:20:02.318Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 30 accepted (new: true)
+[2026-10-15T08:20:02.390Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9ee0ba501285 at height 30 received
+[2026-10-15T08:20:02.459Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 30 accepted (new: false)
+[2026-10-15T08:20:03.557Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 31 accepted (new: true)
+[2026-10-15T08:20:03.570Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 31 accepted (new: false)
+[2026-10-15T08:20:03.628Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 726135a204be at height 31 received
+[2026-10-15T08:20:04.639Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 32 accepted (new: true)
+[2026-10-15T08:20:04.708Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9a58821cd525 at height 32 received
+[2026-10-15T08:20:04.764Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 32 accepted (new: false)
+[2026-10-15T08:20:05.842Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 33 accepted (new: true)
+[2026-10-15T08:20:05.913Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 733b6bb23f7a at height 33 received
+[2026-10-15T08:20:05.976Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 33 accepted (new: false)
+[2026-10-15T08:20:06.945Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 34 accepted (new: true)
+[2026-10-15T08:20:07.028Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7fed9eab58bd at height 34 received
+[2026-10-15T08:20:07.030Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 34 accepted (new: false)
+[2026-10-15T08:20:08.144Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 35 accepted (new: true)
+[2026-10-15T08:20:08.210Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 35 accepted (new: false)
+[2026-10-15T08:20:08.246Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 740e9982a72d at height 35 received
+[2026-10-15T08:20:09.318Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 36 accepted (new: true)
+[2026-10-15T08:20:09.392Z DEBUG blacksilk_p2p::net::blocks] peer 2: block fac0cbed5358 at height 36 received
+[2026-10-15T08:20:09.412Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 36 accepted (new: false)
+[2026-10-15T08:20:10.542Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 37 accepted (new: true)
+[2026-10-15T08:20:10.599Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9553bb391cf7 at height 37 received
+[2026-10-15T08:20:10.602Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 37 accepted (new: false)
+[2026-10-15T08:20:11.877Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 38 accepted (new: true)
+[2026-10-15T08:20:11.947Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 77b060da5577 at height 38 received
+[2026-10-15T08:20:11.949Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 38 accepted (new: false)
+[2026-10-15T08:20:12.998Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 39 accepted (new: true)
+[2026-10-15T08:20:13.071Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8ebd4059d138 at height 39 received
+[2026-10-15T08:20:13.109Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 39 accepted (new: false)
+[2026-10-15T08:20:14.123Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 40 accepted (new: true)
+[2026-10-15T08:20:14.208Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 734aeeb834f7 at height 40 received
+[2026-10-15T08:20:14.248Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 40 accepted (new: false)
+[2026-10-15T08:20:15.201Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 41 accepted (new: true)
+[2026-10-15T08:20:15.268Z DEBUG blacksilk_p2p::net::blocks] peer 2: block fafd3ee1c29b at height 41 received
+[2026-10-15T08:20:15.321Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 41 accepted (new: false)
+[2026-10-15T08:20:16.435Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 42 accepted (new: true)
+[2026-10-15T08:20:16.495Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 42 accepted (new: false)
+[2026-10-15T08:20:16.515Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 07fcd3432720 at height 42 received
+[2026-10-15T08:20:17.570Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 43 accepted (new: true)
+[2026-10-15T08:20:17.613Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 43 accepted (new: false)
+[2026-10-15T08:20:17.631Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 89fafbd35191 at height 43 received
+[2026-10-15T08:20:18.696Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 44 accepted (new: true)
+[2026-10-15T08:20:18.763Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b371e0872606 at height 44 received
+[2026-10-15T08:20:18.763Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 44 accepted (new: false)
+[2026-10-15T08:20:19.771Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 45 accepted (new: true)
+[2026-10-15T08:20:19.840Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c0f527db29ba at height 45 received
+[2026-10-15T08:20:19.877Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 45 accepted (new: false)
+[2026-10-15T08:20:20.901Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 46 accepted (new: true)
+[2026-10-15T08:20:20.972Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4d4bfb9749b0 at height 46 received
+[2026-10-15T08:20:21.013Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 46 accepted (new: false)
+[2026-10-15T08:20:22.103Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 47 accepted (new: true)
+[2026-10-15T08:20:22.183Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2da8648733f9 at height 47 received
+[2026-10-15T08:20:22.223Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 47 accepted (new: false)
+[2026-10-15T08:20:23.235Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 48 accepted (new: true)
+[2026-10-15T08:20:23.302Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 48 accepted (new: false)
+[2026-10-15T08:20:23.304Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 162d42f8bfc2 at height 48 received
+[2026-10-15T08:20:24.388Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 49 accepted (new: true)
+[2026-10-15T08:20:24.459Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a714b5d65a50 at height 49 received
+[2026-10-15T08:20:24.495Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 49 accepted (new: false)
+[2026-10-15T08:20:25.567Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 50 accepted (new: true)
+[2026-10-15T08:20:25.634Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d51c7d9e7ff3 at height 50 received
+[2026-10-15T08:20:25.675Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 50 accepted (new: false)
+[2026-10-15T08:20:26.793Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 51 accepted (new: true)
+[2026-10-15T08:20:26.842Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d62e1320e517 at height 51 received
+[2026-10-15T08:20:26.878Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 51 accepted (new: false)
+[2026-10-15T08:20:27.905Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 52 accepted (new: true)
+[2026-10-15T08:20:27.971Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e339ee9ac21f at height 52 received
+[2026-10-15T08:20:28.012Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 52 accepted (new: false)
+[2026-10-15T08:20:29.016Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 53 accepted (new: true)
+[2026-10-15T08:20:29.094Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d6b51706f377 at height 53 received
+[2026-10-15T08:20:29.173Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 53 accepted (new: false)
+[2026-10-15T08:20:30.136Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 54 accepted (new: true)
+[2026-10-15T08:20:30.238Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a89e8d2b6cbc at height 54 received
+[2026-10-15T08:20:30.240Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 54 accepted (new: false)
+[2026-10-15T08:20:31.285Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 55 accepted (new: true)
+[2026-10-15T08:20:31.363Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4efb60659a9d at height 55 received
+[2026-10-15T08:20:31.363Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 55 accepted (new: false)
+[2026-10-15T08:20:32.416Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 56 accepted (new: true)
+[2026-10-15T08:20:32.487Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4d655442fad1 at height 56 received
+[2026-10-15T08:20:32.527Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 56 accepted (new: false)
+[2026-10-15T08:20:33.502Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 57 accepted (new: true)
+[2026-10-15T08:20:33.564Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 75bc9138d4c3 at height 57 received
+[2026-10-15T08:20:33.631Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 57 accepted (new: false)
+[2026-10-15T08:20:34.664Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 58 accepted (new: true)
+[2026-10-15T08:20:34.715Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c2546368d743 at height 58 received
+[2026-10-15T08:20:35.795Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 59 accepted (new: true)
+[2026-10-15T08:20:35.864Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 90c9e84057ab at height 59 received
+[2026-10-15T08:20:35.966Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 59 accepted (new: false)
+[2026-10-15T08:20:36.940Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 60 accepted (new: true)
+[2026-10-15T08:20:37.005Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 40e0d654e448 at height 60 received
+[2026-10-15T08:20:37.008Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 60 accepted (new: false)
+[2026-10-15T08:20:38.107Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 61 accepted (new: true)
+[2026-10-15T08:20:38.193Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a01a48220aaa at height 61 received
+[2026-10-15T08:20:38.194Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 61 accepted (new: false)
+[2026-10-15T08:20:39.225Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 62 accepted (new: true)
+[2026-10-15T08:20:39.295Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b04ac31f83b8 at height 62 received
+[2026-10-15T08:20:39.336Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 62 accepted (new: false)
+[2026-10-15T08:20:40.370Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 63 accepted (new: true)
+[2026-10-15T08:20:40.441Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 30f7c30086c3 at height 63 received
+[2026-10-15T08:20:40.474Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 63 accepted (new: false)
+[2026-10-15T08:20:41.627Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 64 accepted (new: true)
+[2026-10-15T08:20:41.712Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7edd45d0966b at height 64 received
+[2026-10-15T08:20:41.754Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 64 accepted (new: false)
+[2026-10-15T08:20:42.886Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 65 accepted (new: true)
+[2026-10-15T08:20:42.960Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0940628535f8 at height 65 received
+[2026-10-15T08:20:42.962Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 65 accepted (new: false)
+[2026-10-15T08:20:44.109Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 66 accepted (new: true)
+[2026-10-15T08:20:44.174Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 167b84bd748f at height 66 received
+[2026-10-15T08:20:44.174Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 66 accepted (new: false)
+[2026-10-15T08:20:45.235Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 67 accepted (new: true)
+[2026-10-15T08:20:45.306Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0c6030070fbd at height 67 received
+[2026-10-15T08:20:45.353Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 67 accepted (new: false)
+[2026-10-15T08:20:46.404Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 68 accepted (new: true)
+[2026-10-15T08:20:46.475Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4d2a77d1f7fc at height 68 received
+[2026-10-15T08:20:46.478Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 68 accepted (new: false)
+[2026-10-15T08:20:47.539Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 69 accepted (new: true)
+[2026-10-15T08:20:47.615Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1615c5bba9ab at height 69 received
+[2026-10-15T08:20:47.615Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 69 accepted (new: false)
+[2026-10-15T08:20:48.616Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 70 accepted (new: true)
+[2026-10-15T08:20:48.678Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 70 accepted (new: false)
+[2026-10-15T08:20:48.696Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 11a307201b27 at height 70 received
+[2026-10-15T08:20:49.725Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 71 accepted (new: true)
+[2026-10-15T08:20:49.787Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 98c51b6310c5 at height 71 received
+[2026-10-15T08:20:49.845Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 71 accepted (new: false)
+[2026-10-15T08:20:50.990Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 72 accepted (new: true)
+[2026-10-15T08:20:51.027Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 72 accepted (new: false)
+[2026-10-15T08:20:51.062Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a74d6fc95b53 at height 72 received
+[2026-10-15T08:20:52.018Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 73 accepted (new: true)
+[2026-10-15T08:20:52.087Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c0107072bde6 at height 73 received
+[2026-10-15T08:20:52.152Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 73 accepted (new: false)
+[2026-10-15T08:20:53.155Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 74 accepted (new: true)
+[2026-10-15T08:20:53.236Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0d213c7ac06d at height 74 received
+[2026-10-15T08:20:54.278Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 75 accepted (new: true)
+[2026-10-15T08:20:54.334Z DEBUG blacksilk_p2p::net::blocks] peer 2: block bddefe2ec656 at height 75 received
+[2026-10-15T08:20:55.518Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 76 accepted (new: true)
+[2026-10-15T08:20:55.568Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 72ff59713fc7 at height 76 received
+[2026-10-15T08:20:55.576Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 76 accepted (new: false)
+[2026-10-15T08:20:56.674Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 77 accepted (new: true)
+[2026-10-15T08:20:56.744Z DEBUG blacksilk_p2p::net::blocks] peer 2: block dfc9ac059db6 at height 77 received
+[2026-10-15T08:20:58.725Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 78 accepted (new: true)
+[2026-10-15T08:20:58.805Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c6ad0edb9e0a at height 78 received
+[2026-10-15T08:20:58.805Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 78 accepted (new: false)
+[2026-10-15T08:21:01.457Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 79 accepted (new: true)
+[2026-10-15T08:21:01.514Z DEBUG blacksilk_p2p::net::blocks] peer 2: block bae7cab853c0 at height 79 received
+[2026-10-15T08:21:01.516Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 79 accepted (new: false)
+[2026-10-15T08:21:03.031Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 80 accepted (new: true)
+[2026-10-15T08:21:03.088Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f8b5d4e99938 at height 80 received
+[2026-10-15T08:21:03.090Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 80 accepted (new: false)
+[2026-10-15T08:21:04.584Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 81 accepted (new: true)
+[2026-10-15T08:21:04.643Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 81 accepted (new: false)
+[2026-10-15T08:21:04.661Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b5dcf460f78b at height 81 received
+[2026-10-15T08:21:06.495Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 82 accepted (new: true)
+[2026-10-15T08:21:06.558Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9d5eb574ef5b at height 82 received
+[2026-10-15T08:21:08.885Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 83 accepted (new: true)
+[2026-10-15T08:21:08.964Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0580ec5d0c32 at height 83 received
+[2026-10-15T08:21:09.009Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 83 accepted (new: false)
+[2026-10-15T08:21:09.872Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 84 accepted (new: true)
+[2026-10-15T08:21:09.942Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f7c2d28d03b9 at height 84 received
+[2026-10-15T08:21:11.224Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 85 accepted (new: true)
+[2026-10-15T08:21:11.225Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 85 accepted (new: false)
+[2026-10-15T08:21:11.342Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5169ca50e7c2 at height 85 received
+[2026-10-15T08:21:12.333Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 86 accepted (new: true)
+[2026-10-15T08:21:12.392Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8d5d5bb1df3e at height 86 received
+[2026-10-15T08:21:12.463Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 86 accepted (new: false)
+[2026-10-15T08:21:13.574Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 87 accepted (new: true)
+[2026-10-15T08:21:13.634Z DEBUG blacksilk_p2p::net::blocks] peer 2: block dff22e319eab at height 87 received
+[2026-10-15T08:21:13.636Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 87 accepted (new: false)
+[2026-10-15T08:21:16.718Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 88 accepted (new: true)
+[2026-10-15T08:21:16.781Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 31e0aac52958 at height 88 received
+[2026-10-15T08:21:16.824Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 88 accepted (new: false)
+[2026-10-15T08:21:17.954Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 89 accepted (new: true)
+[2026-10-15T08:21:18.029Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 960d1d95b75c at height 89 received
+[2026-10-15T08:21:18.070Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 89 accepted (new: false)
+[2026-10-15T08:21:19.882Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 90 accepted (new: true)
+[2026-10-15T08:21:19.955Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 00d806d436ce at height 90 received
+[2026-10-15T08:21:19.955Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 90 accepted (new: false)
+[2026-10-15T08:21:21.021Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 91 accepted (new: true)
+[2026-10-15T08:21:21.098Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7ef224313684 at height 91 received
+[2026-10-15T08:21:21.129Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 91 accepted (new: false)
+[2026-10-15T08:21:22.244Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 92 accepted (new: true)
+[2026-10-15T08:21:22.296Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5895c9e04bac at height 92 received
+[2026-10-15T08:21:22.318Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 92 accepted (new: false)
+[2026-10-15T08:21:23.327Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 93 accepted (new: true)
+[2026-10-15T08:21:23.415Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 170cc3b20d19 at height 93 received
+[2026-10-15T08:21:23.417Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 93 accepted (new: false)
+[2026-10-15T08:21:24.457Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 94 accepted (new: true)
+[2026-10-15T08:21:24.525Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c9f869c505dc at height 94 received
+[2026-10-15T08:21:24.546Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 94 accepted (new: false)
+[2026-10-15T08:21:25.938Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 95 accepted (new: true)
+[2026-10-15T08:21:26.009Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 017508fc92d0 at height 95 received
+[2026-10-15T08:21:27.655Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 96 accepted (new: true)
+[2026-10-15T08:21:27.706Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4bc8351b3d0a at height 96 received
+[2026-10-15T08:21:28.848Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 97 accepted (new: true)
+[2026-10-15T08:21:28.914Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 93ed7d0b2015 at height 97 received
+[2026-10-15T08:21:28.916Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 97 accepted (new: false)
+[2026-10-15T08:21:31.265Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 98 accepted (new: true)
+[2026-10-15T08:21:31.339Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 27521d91de74 at height 98 received
+[2026-10-15T08:21:31.425Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 98 accepted (new: false)
+[2026-10-15T08:21:32.387Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 99 accepted (new: true)
+[2026-10-15T08:21:32.458Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8c0a848866bf at height 99 received
+[2026-10-15T08:21:32.477Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 99 accepted (new: false)
+[2026-10-15T08:21:34.420Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 100 accepted (new: true)
+[2026-10-15T08:21:34.475Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c4a483ad2f98 at height 100 received
+[2026-10-15T08:21:34.525Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 100 accepted (new: false)
+[2026-10-15T08:21:35.900Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 101 accepted (new: true)
+[2026-10-15T08:21:35.979Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 117a7a05f437 at height 101 received
+[2026-10-15T08:21:36.015Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 101 accepted (new: false)
+[2026-10-15T08:21:37.074Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 102 accepted (new: true)
+[2026-10-15T08:21:37.130Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 508939a423c7 at height 102 received
+[2026-10-15T08:21:37.170Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 102 accepted (new: false)
+[2026-10-15T08:21:39.488Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 103 accepted (new: true)
+[2026-10-15T08:21:39.564Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b95a83272fef at height 103 received
+[2026-10-15T08:21:39.606Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 103 accepted (new: false)
+[2026-10-15T08:21:41.926Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 104 accepted (new: true)
+[2026-10-15T08:21:41.970Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 104 accepted (new: false)
+[2026-10-15T08:21:42.001Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4853dcc64f7d at height 104 received
+[2026-10-15T08:21:43.424Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 105 accepted (new: true)
+[2026-10-15T08:21:43.491Z DEBUG blacksilk_p2p::net::blocks] peer 2: block bfcd253768d0 at height 105 received
+[2026-10-15T08:21:43.575Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 105 accepted (new: false)
+[2026-10-15T08:21:44.597Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 106 accepted (new: true)
+[2026-10-15T08:21:44.665Z DEBUG blacksilk_p2p::net::blocks] peer 2: block adc090b1e793 at height 106 received
+[2026-10-15T08:21:45.862Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 107 accepted (new: true)
+[2026-10-15T08:21:45.897Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 107 accepted (new: false)
+[2026-10-15T08:21:45.929Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 172591eb3c9a at height 107 received
+[2026-10-15T08:21:47.436Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 108 accepted (new: true)
+[2026-10-15T08:21:47.523Z DEBUG blacksilk_p2p::net::blocks] peer 2: block addf035b49da at height 108 received
+[2026-10-15T08:21:49.565Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 109 accepted (new: true)
+[2026-10-15T08:21:49.623Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6e7d5152d818 at height 109 received
+[2026-10-15T08:21:49.638Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 109 accepted (new: false)
+[2026-10-15T08:21:50.633Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 110 accepted (new: true)
+[2026-10-15T08:21:50.706Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 25fac32506fb at height 110 received
+[2026-10-15T08:21:50.771Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 110 accepted (new: false)
+[2026-10-15T08:21:51.791Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 111 accepted (new: true)
+[2026-10-15T08:21:51.884Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6cbb9dbffde5 at height 111 received
+[2026-10-15T08:21:51.884Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 111 accepted (new: false)
+[2026-10-15T08:21:53.795Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 112 accepted (new: true)
+[2026-10-15T08:21:53.855Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 112 accepted (new: false)
+[2026-10-15T08:21:53.879Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 22b64d165c0d at height 112 received
+[2026-10-15T08:21:54.860Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 113 accepted (new: true)
+[2026-10-15T08:21:54.940Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ad08dc20d034 at height 113 received
+[2026-10-15T08:21:54.961Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 113 accepted (new: false)
+[2026-10-15T08:21:55.963Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 114 accepted (new: true)
+[2026-10-15T08:21:56.038Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b267d4261098 at height 114 received
+[2026-10-15T08:21:57.108Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 115 accepted (new: true)
+[2026-10-15T08:21:57.174Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 962c7bb1c1a2 at height 115 received
+[2026-10-15T08:21:57.214Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 115 accepted (new: false)
+[2026-10-15T08:21:58.827Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 116 accepted (new: true)
+[2026-10-15T08:21:58.907Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f1d1dde1fa0a at height 116 received
+[2026-10-15T08:21:58.910Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 116 accepted (new: false)
+[2026-10-15T08:22:00.754Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 117 accepted (new: true)
+[2026-10-15T08:22:00.814Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f848c1c51bda at height 117 received
+[2026-10-15T08:22:02.291Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 118 accepted (new: true)
+[2026-10-15T08:22:02.362Z DEBUG blacksilk_p2p::net::blocks] peer 2: block eb3ddf2ea7c1 at height 118 received
+[2026-10-15T08:22:02.400Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 118 accepted (new: false)
+[2026-10-15T08:22:04.800Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 119 accepted (new: true)
+[2026-10-15T08:22:04.851Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8347065c696d at height 119 received
+[2026-10-15T08:22:05.834Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 120 accepted (new: true)
+[2026-10-15T08:22:05.899Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 887a6a1813a0 at height 120 received
+[2026-10-15T08:22:05.967Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 120 accepted (new: false)
+[2026-10-15T08:22:07.006Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 121 accepted (new: true)
+[2026-10-15T08:22:07.071Z DEBUG blacksilk_p2p::net::blocks] peer 2: block cf0a31edc4a6 at height 121 received
+[2026-10-15T08:22:07.073Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 121 accepted (new: false)
+[2026-10-15T08:22:10.560Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 122 accepted (new: true)
+[2026-10-15T08:22:10.629Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f5b5af4d7b80 at height 122 received
+[2026-10-15T08:22:10.670Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 122 accepted (new: false)
+[2026-10-15T08:22:11.639Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 123 accepted (new: true)
+[2026-10-15T08:22:11.695Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d8e613b0189a at height 123 received
+[2026-10-15T08:22:11.761Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 123 accepted (new: false)
+[2026-10-15T08:22:12.814Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 124 accepted (new: true)
+[2026-10-15T08:22:12.874Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6be70b12481c at height 124 received
+[2026-10-15T08:22:12.889Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 124 accepted (new: false)
+[2026-10-15T08:22:13.945Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 125 accepted (new: true)
+[2026-10-15T08:22:14.018Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 032ad8ff186c at height 125 received
+[2026-10-15T08:22:14.061Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 125 accepted (new: false)
+[2026-10-15T08:22:15.099Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 126 accepted (new: true)
+[2026-10-15T08:22:15.169Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d961ccc0945f at height 126 received
+[2026-10-15T08:22:19.009Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 127 accepted (new: true)
+[2026-10-15T08:22:19.095Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6b3457cca8f9 at height 127 received
+[2026-10-15T08:22:19.095Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 127 accepted (new: false)
+[2026-10-15T08:22:21.359Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 128 accepted (new: true)
+[2026-10-15T08:22:21.436Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5cdf604a65dc at height 128 received
+[2026-10-15T08:22:21.457Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 128 accepted (new: false)
+[2026-10-15T08:22:23.422Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 129 accepted (new: true)
+[2026-10-15T08:22:23.492Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f48c5dc2ba10 at height 129 received
+[2026-10-15T08:22:23.533Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 129 accepted (new: false)
+[2026-10-15T08:22:25.396Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 130 accepted (new: true)
+[2026-10-15T08:22:25.465Z DEBUG blacksilk_p2p::net::blocks] peer 2: block dbf4ca78e25d at height 130 received
+[2026-10-15T08:22:25.466Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 130 accepted (new: false)
+[2026-10-15T08:22:26.969Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 131 accepted (new: true)
+[2026-10-15T08:22:27.039Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c843fd3132e9 at height 131 received
+[2026-10-15T08:22:27.081Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 131 accepted (new: false)
+[2026-10-15T08:22:30.376Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 132 accepted (new: true)
+[2026-10-15T08:22:30.454Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7905b4ca37a7 at height 132 received
+[2026-10-15T08:22:30.486Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 132 accepted (new: false)
+[2026-10-15T08:22:31.906Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 133 accepted (new: true)
+[2026-10-15T08:22:31.964Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 155bfed604a7 at height 133 received
+[2026-10-15T08:22:37.266Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 134 accepted (new: true)
+[2026-10-15T08:22:37.311Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 134 accepted (new: false)
+[2026-10-15T08:22:37.347Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6ea1a4277665 at height 134 received
+[2026-10-15T08:22:38.344Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 135 accepted (new: true)
+[2026-10-15T08:22:38.402Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 84facec48ec7 at height 135 received
+[2026-10-15T08:22:38.418Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 135 accepted (new: false)
+[2026-10-15T08:22:40.723Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 136 accepted (new: true)
+[2026-10-15T08:22:40.819Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6e51346466a9 at height 136 received
+[2026-10-15T08:22:40.860Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 136 accepted (new: false)
+[2026-10-15T08:22:41.905Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 137 accepted (new: true)
+[2026-10-15T08:22:41.982Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 356895424c3f at height 137 received
+[2026-10-15T08:22:42.082Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 137 accepted (new: false)
+[2026-10-15T08:22:43.033Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 138 accepted (new: true)
+[2026-10-15T08:22:43.103Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 87085179716c at height 138 received
+[2026-10-15T08:22:43.156Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 138 accepted (new: false)
+[2026-10-15T08:22:44.710Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 139 accepted (new: true)
+[2026-10-15T08:22:44.791Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d3221d293812 at height 139 received
+[2026-10-15T08:22:44.832Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 139 accepted (new: false)
+[2026-10-15T08:22:47.620Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 140 accepted (new: true)
+[2026-10-15T08:22:47.697Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 100623820e89 at height 140 received
+[2026-10-15T08:22:47.697Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 140 accepted (new: false)
+[2026-10-15T08:22:53.170Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 141 accepted (new: true)
+[2026-10-15T08:22:53.192Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 141 accepted (new: false)
+[2026-10-15T08:22:53.224Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0f0fc0c1d94c at height 141 received
+[2026-10-15T08:22:55.918Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 142 accepted (new: true)
+[2026-10-15T08:22:55.989Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7e5e1edf5a55 at height 142 received
+[2026-10-15T08:22:57.074Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 143 accepted (new: true)
+[2026-10-15T08:22:57.142Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 02aa1c7d69a1 at height 143 received
+[2026-10-15T08:22:57.174Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 143 accepted (new: false)
+[2026-10-15T08:22:58.646Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 144 accepted (new: true)
+[2026-10-15T08:22:58.721Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 522c51dfcf53 at height 144 received
+[2026-10-15T08:22:58.762Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 144 accepted (new: false)
+[2026-10-15T08:23:00.551Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 145 accepted (new: true)
+[2026-10-15T08:23:00.619Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7d26d98fa937 at height 145 received
+[2026-10-15T08:23:01.790Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 146 accepted (new: true)
+[2026-10-15T08:23:01.869Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ee1a1d5aa37c at height 146 received
+[2026-10-15T08:23:01.869Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 146 accepted (new: false)
+[2026-10-15T08:23:04.217Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 147 accepted (new: true)
+[2026-10-15T08:23:04.277Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0330b1982d5e at height 147 received
+[2026-10-15T08:23:04.339Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 147 accepted (new: false)
+[2026-10-15T08:23:08.274Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 148 accepted (new: true)
+[2026-10-15T08:23:08.343Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b17af796bf59 at height 148 received
+[2026-10-15T08:23:08.387Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 148 accepted (new: false)
+[2026-10-15T08:23:10.324Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 149 accepted (new: true)
+[2026-10-15T08:23:10.359Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 149 accepted (new: false)
+[2026-10-15T08:23:10.390Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 281b79dea2c7 at height 149 received
+[2026-10-15T08:23:11.436Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 150 accepted (new: true)
+[2026-10-15T08:23:11.489Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9979cc0119b9 at height 150 received
+[2026-10-15T08:23:11.553Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 150 accepted (new: false)
+[2026-10-15T08:23:12.552Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 151 accepted (new: true)
+[2026-10-15T08:23:12.602Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 151 accepted (new: false)
+[2026-10-15T08:23:12.624Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ccd04532cfca at height 151 received
+[2026-10-15T08:23:17.466Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 152 accepted (new: true)
+[2026-10-15T08:23:17.522Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 974b9d5ab2dd at height 152 received
+[2026-10-15T08:23:17.556Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 152 accepted (new: false)
+[2026-10-15T08:23:22.265Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 153 accepted (new: true)
+[2026-10-15T08:23:22.328Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2069be28d3c4 at height 153 received
+[2026-10-15T08:23:26.666Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 154 accepted (new: true)
+[2026-10-15T08:23:26.698Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 154 accepted (new: false)
+[2026-10-15T08:23:26.722Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7241428d06fe at height 154 received
+[2026-10-15T08:23:29.154Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 155 accepted (new: true)
+[2026-10-15T08:23:29.220Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8ef1b8b456d9 at height 155 received
+[2026-10-15T08:23:29.260Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 155 accepted (new: false)
+[2026-10-15T08:23:34.120Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 156 accepted (new: true)
+[2026-10-15T08:23:34.121Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 156 accepted (new: false)
+[2026-10-15T08:23:34.190Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 3829ccfc9a81 at height 156 received
+[2026-10-15T08:23:35.136Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 157 accepted (new: true)
+[2026-10-15T08:23:35.210Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0fadde69c044 at height 157 received
+[2026-10-15T08:23:36.293Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 158 accepted (new: true)
+[2026-10-15T08:23:36.361Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ad57c648ddac at height 158 received
+[2026-10-15T08:23:36.402Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 158 accepted (new: false)
+[2026-10-15T08:23:39.619Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 159 accepted (new: true)
+[2026-10-15T08:23:39.698Z DEBUG blacksilk_p2p::net::blocks] peer 2: block cb9768c9c930 at height 159 received
+[2026-10-15T08:23:40.749Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 160 accepted (new: true)
+[2026-10-15T08:23:40.824Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c4ad55fb0c8f at height 160 received
+[2026-10-15T08:23:40.865Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 160 accepted (new: false)
+[2026-10-15T08:23:41.889Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 161 accepted (new: true)
+[2026-10-15T08:23:41.925Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 161 accepted (new: false)
+[2026-10-15T08:23:41.970Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ca868582e145 at height 161 received
+[2026-10-15T08:23:45.197Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 162 accepted (new: true)
+[2026-10-15T08:23:45.280Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5ae7a9b1d200 at height 162 received
+[2026-10-15T08:23:45.301Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 162 accepted (new: false)
+[2026-10-15T08:23:51.054Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 163 accepted (new: true)
+[2026-10-15T08:23:51.113Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 71417e3a744d at height 163 received
+[2026-10-15T08:23:51.115Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 163 accepted (new: false)
+[2026-10-15T08:23:52.097Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 164 accepted (new: true)
+[2026-10-15T08:23:52.174Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0651986956a0 at height 164 received
+[2026-10-15T08:23:52.215Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 164 accepted (new: false)
+[2026-10-15T08:23:54.481Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 165 accepted (new: true)
+[2026-10-15T08:23:54.567Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b17a7768a31c at height 165 received
+[2026-10-15T08:23:54.605Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 165 accepted (new: false)
+[2026-10-15T08:24:03.076Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 166 accepted (new: true)
+[2026-10-15T08:24:03.121Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b17b2f5054ea at height 166 received
+[2026-10-15T08:24:03.143Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 166 accepted (new: false)
+[2026-10-15T08:24:05.825Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 167 accepted (new: true)
+[2026-10-15T08:24:05.889Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 85db1c0d9779 at height 167 received
+[2026-10-15T08:24:05.925Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 167 accepted (new: false)
+[2026-10-15T08:24:08.990Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 168 accepted (new: true)
+[2026-10-15T08:24:09.055Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2d7d648a7f1d at height 168 received
+[2026-10-15T08:24:13.737Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 169 accepted (new: true)
+[2026-10-15T08:24:13.797Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9d7ff6198e86 at height 169 received
+[2026-10-15T08:24:15.366Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 170 accepted (new: true)
+[2026-10-15T08:24:15.453Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2a4aa4f4005b at height 170 received
+[2026-10-15T08:24:15.453Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 170 accepted (new: false)
+[2026-10-15T08:24:16.611Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 171 accepted (new: true)
+[2026-10-15T08:24:16.660Z DEBUG blacksilk_p2p::net::blocks] peer 2: block fd823fc9f21d at height 171 received
+[2026-10-15T08:24:16.703Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 171 accepted (new: false)
+[2026-10-15T08:24:17.767Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 172 accepted (new: true)
+[2026-10-15T08:24:17.840Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d79cf93236f4 at height 172 received
+[2026-10-15T08:24:17.880Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 172 accepted (new: false)
+[2026-10-15T08:24:19.308Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 173 accepted (new: true)
+[2026-10-15T08:24:19.376Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c28621b1de7d at height 173 received
+[2026-10-15T08:24:19.412Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 173 accepted (new: false)
+[2026-10-15T08:24:21.288Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 174 accepted (new: true)
+[2026-10-15T08:24:21.362Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 38c67b1c62aa at height 174 received
+[2026-10-15T08:24:21.418Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 174 accepted (new: false)
+[2026-10-15T08:24:26.681Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 175 accepted (new: true)
+[2026-10-15T08:24:26.720Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 175 accepted (new: false)
+[2026-10-15T08:24:26.740Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1160a252380a at height 175 received
+[2026-10-15T08:24:28.695Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 176 accepted (new: true)
+[2026-10-15T08:24:28.742Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 176 accepted (new: false)
+[2026-10-15T08:24:28.762Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8f93178b2127 at height 176 received
+[2026-10-15T08:24:31.972Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 177 accepted (new: true)
+[2026-10-15T08:24:32.000Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 177 accepted (new: false)
+[2026-10-15T08:24:32.033Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8098c57e898d at height 177 received
+[2026-10-15T08:24:33.528Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 178 accepted (new: true)
+[2026-10-15T08:24:33.587Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4485f328385c at height 178 received
+[2026-10-15T08:24:39.626Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 179 accepted (new: true)
+[2026-10-15T08:24:39.626Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 179 accepted (new: false)
+[2026-10-15T08:24:39.690Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 252c9d9d85f7 at height 179 received
+[2026-10-15T08:24:45.554Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 180 accepted (new: true)
+[2026-10-15T08:24:45.625Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1fe448cf1fa0 at height 180 received
+[2026-10-15T08:24:45.673Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 180 accepted (new: false)
+[2026-10-15T08:24:52.957Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 181 accepted (new: true)
+[2026-10-15T08:24:53.020Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2391b32d0057 at height 181 received
+[2026-10-15T08:24:53.035Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 181 accepted (new: false)
+[2026-10-15T08:24:55.029Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 182 accepted (new: true)
+[2026-10-15T08:24:55.103Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ecf836b0b6c5 at height 182 received
+[2026-10-15T08:24:55.118Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 182 accepted (new: false)
+[2026-10-15T08:24:57.942Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 183 accepted (new: true)
+[2026-10-15T08:24:58.002Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5d7d27f09a70 at height 183 received
+[2026-10-15T08:24:58.043Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 183 accepted (new: false)
+[2026-10-15T08:24:59.540Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 184 accepted (new: true)
+[2026-10-15T08:24:59.609Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0bf9234ee2da at height 184 received
+[2026-10-15T08:24:59.609Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 184 accepted (new: false)
+[2026-10-15T08:25:00.649Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 185 accepted (new: true)
+[2026-10-15T08:25:00.725Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b04300abcaf1 at height 185 received
+[2026-10-15T08:25:00.773Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 185 accepted (new: false)
+[2026-10-15T08:25:04.365Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 186 accepted (new: true)
+[2026-10-15T08:25:04.439Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ff7208cddde3 at height 186 received
+[2026-10-15T08:25:04.441Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 186 accepted (new: false)
+[2026-10-15T08:25:07.186Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 187 accepted (new: true)
+[2026-10-15T08:25:07.268Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8015491bf32d at height 187 received
+[2026-10-15T08:25:07.308Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 187 accepted (new: false)
+[2026-10-15T08:25:10.842Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 188 accepted (new: true)
+[2026-10-15T08:25:10.904Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 51c26e367a84 at height 188 received
+[2026-10-15T08:25:10.939Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 188 accepted (new: false)
+[2026-10-15T08:25:11.892Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 189 accepted (new: true)
+[2026-10-15T08:25:11.947Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ea780b553b7d at height 189 received
+[2026-10-15T08:25:11.974Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 189 accepted (new: false)
+[2026-10-15T08:25:17.704Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 190 accepted (new: true)
+[2026-10-15T08:25:17.775Z DEBUG blacksilk_p2p::net::blocks] peer 2: block bf3e4233a899 at height 190 received
+[2026-10-15T08:25:17.778Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 190 accepted (new: false)
+[2026-10-15T08:25:24.204Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 191 accepted (new: true)
+[2026-10-15T08:25:24.284Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 90fe58924bc9 at height 191 received
+[2026-10-15T08:25:24.309Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 191 accepted (new: false)
+[2026-10-15T08:25:27.835Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 192 accepted (new: true)
+[2026-10-15T08:25:27.904Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 931a3bb4d11f at height 192 received
+[2026-10-15T08:25:27.906Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 192 accepted (new: false)
+[2026-10-15T08:25:30.986Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 193 accepted (new: true)
+[2026-10-15T08:25:31.060Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b0cb767aae20 at height 193 received
+[2026-10-15T08:25:31.137Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 193 accepted (new: false)
+[2026-10-15T08:25:34.844Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 194 accepted (new: true)
+[2026-10-15T08:25:34.887Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 194 accepted (new: false)
+[2026-10-15T08:25:34.907Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 87dd1afd6838 at height 194 received
+[2026-10-15T08:25:36.907Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 195 accepted (new: true)
+[2026-10-15T08:25:36.969Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 566e7cef9f9a at height 195 received
+[2026-10-15T08:25:37.009Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 195 accepted (new: false)
+[2026-10-15T08:25:39.738Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 196 accepted (new: true)
+[2026-10-15T08:25:39.797Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7b70ae7520da at height 196 received
+[2026-10-15T08:25:39.834Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 196 accepted (new: false)
+[2026-10-15T08:25:52.304Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 197 accepted (new: true)
+[2026-10-15T08:25:52.367Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 3fa9d43aeacb at height 197 received
+[2026-10-15T08:25:52.407Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 197 accepted (new: false)
+[2026-10-15T08:25:54.914Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 198 accepted (new: true)
+[2026-10-15T08:25:54.979Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5e80709665ae at height 198 received
+[2026-10-15T08:25:56.009Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 199 accepted (new: true)
+[2026-10-15T08:25:56.080Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d0303aefe1fd at height 199 received
+[2026-10-15T08:25:56.082Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 199 accepted (new: false)
+[2026-10-15T08:25:57.760Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 200 accepted (new: true)
+[2026-10-15T08:25:57.839Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f5d6049ca0d2 at height 200 received
+[2026-10-15T08:25:57.870Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 200 accepted (new: false)
+[2026-10-15T08:25:59.407Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 201 accepted (new: true)
+[2026-10-15T08:25:59.432Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 201 accepted (new: false)
+[2026-10-15T08:25:59.483Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5c5cc1963961 at height 201 received
+[2026-10-15T08:26:08.260Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 202 accepted (new: true)
+[2026-10-15T08:26:08.326Z DEBUG blacksilk_p2p::net::blocks] peer 2: block cc6bfa17bf48 at height 202 received
+[2026-10-15T08:26:10.332Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 203 accepted (new: true)
+[2026-10-15T08:26:10.387Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 691acd102c4a at height 203 received
+[2026-10-15T08:26:14.444Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 204 accepted (new: true)
+[2026-10-15T08:26:14.526Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 945b97e7972e at height 204 received
+[2026-10-15T08:26:14.529Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 204 accepted (new: false)
+[2026-10-15T08:26:18.584Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 205 accepted (new: true)
+[2026-10-15T08:26:18.646Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 41ad20d37821 at height 205 received
+[2026-10-15T08:26:18.685Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 205 accepted (new: false)
+[2026-10-15T08:26:20.642Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 206 accepted (new: true)
+[2026-10-15T08:26:20.660Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 206 accepted (new: false)
+[2026-10-15T08:26:20.721Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5507780d00e8 at height 206 received
+[2026-10-15T08:26:33.785Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 207 accepted (new: true)
+[2026-10-15T08:26:33.855Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 29705261f511 at height 207 received
+[2026-10-15T08:26:33.894Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 207 accepted (new: false)
+[2026-10-15T08:26:47.287Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 208 accepted (new: true)
+[2026-10-15T08:26:47.360Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a7e26829f46b at height 208 received
+[2026-10-15T08:26:47.400Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 208 accepted (new: false)
+[2026-10-15T08:26:57.254Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 209 accepted (new: true)
+[2026-10-15T08:26:57.318Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a85bb9ca67e5 at height 209 received
+[2026-10-15T08:27:06.433Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 210 accepted (new: true)
+[2026-10-15T08:27:06.502Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6015ff064e8f at height 210 received
+[2026-10-15T08:27:06.504Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 210 accepted (new: false)
+[2026-10-15T08:27:12.801Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 211 accepted (new: true)
+[2026-10-15T08:27:12.888Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 681922e54510 at height 211 received
+[2026-10-15T08:27:12.893Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 211 accepted (new: false)
+[2026-10-15T08:27:16.035Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 212 accepted (new: true)
+[2026-10-15T08:27:16.103Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 16c78837dd8f at height 212 received
+[2026-10-15T08:27:16.106Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 212 accepted (new: false)
+[2026-10-15T08:27:23.685Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 213 accepted (new: true)
+[2026-10-15T08:27:23.750Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6a4a1c0dc53c at height 213 received
+[2026-10-15T08:27:23.765Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 213 accepted (new: false)
+[2026-10-15T08:27:29.929Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 214 accepted (new: true)
+[2026-10-15T08:27:29.995Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 252ec1ae6768 at height 214 received
+[2026-10-15T08:27:29.995Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 214 accepted (new: false)
+[2026-10-15T08:27:38.018Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 215 accepted (new: true)
+[2026-10-15T08:27:38.077Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2675889c46d9 at height 215 received
+[2026-10-15T08:27:38.124Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 215 accepted (new: false)
+[2026-10-15T08:27:39.560Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 216 accepted (new: true)
+[2026-10-15T08:27:39.640Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ab0bd5970c45 at height 216 received
+[2026-10-15T08:27:39.681Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 216 accepted (new: false)
+[2026-10-15T08:27:43.146Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 217 accepted (new: true)
+[2026-10-15T08:27:43.204Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b09b0d35af10 at height 217 received
+[2026-10-15T08:27:44.733Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 218 accepted (new: true)
+[2026-10-15T08:27:44.786Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 911e07136d5f at height 218 received
+[2026-10-15T08:27:44.820Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 218 accepted (new: false)
+[2026-10-15T08:27:48.338Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 219 accepted (new: true)
+[2026-10-15T08:27:48.418Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 59386c5a3282 at height 219 received
+[2026-10-15T08:27:48.458Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 219 accepted (new: false)
+[2026-10-15T08:28:09.197Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 220 accepted (new: true)
+[2026-10-15T08:28:09.252Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 220 accepted (new: false)
+[2026-10-15T08:28:09.277Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b237d34d647f at height 220 received
+[2026-10-15T08:28:21.908Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 221 accepted (new: true)
+[2026-10-15T08:28:21.909Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 221 accepted (new: false)
+[2026-10-15T08:28:21.978Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e1f519f4df9a at height 221 received
+[2026-10-15T08:28:27.434Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 222 accepted (new: true)
+[2026-10-15T08:28:27.506Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d998ef053a73 at height 222 received
+[2026-10-15T08:28:27.547Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 222 accepted (new: false)
+[2026-10-15T08:28:33.708Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 223 accepted (new: true)
+[2026-10-15T08:28:33.791Z DEBUG blacksilk_p2p::net::blocks] peer 2: block bfc019bafc69 at height 223 received
+[2026-10-15T08:28:33.807Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 223 accepted (new: false)
+[2026-10-15T08:28:41.056Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 224 accepted (new: true)
+[2026-10-15T08:28:41.108Z DEBUG blacksilk_p2p::net::blocks] peer 2: block de8a7807e1ee at height 224 received
+[2026-10-15T08:28:42.158Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 225 accepted (new: true)
+[2026-10-15T08:28:42.228Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0f050a999eca at height 225 received
+[2026-10-15T08:28:51.198Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 226 accepted (new: true)
+[2026-10-15T08:28:51.273Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5b8486eee5ff at height 226 received
+[2026-10-15T08:28:51.306Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 226 accepted (new: false)
+[2026-10-15T08:28:55.254Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 227 accepted (new: true)
+[2026-10-15T08:28:55.309Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 227 accepted (new: false)
+[2026-10-15T08:28:55.334Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8ef73f514c2a at height 227 received
+[2026-10-15T08:29:11.620Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 228 accepted (new: true)
+[2026-10-15T08:29:11.675Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b148a5c9c3c5 at height 228 received
+[2026-10-15T08:29:11.744Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 228 accepted (new: false)
+[2026-10-15T08:29:18.893Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 229 accepted (new: true)
+[2026-10-15T08:29:18.962Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f9fce3d90fbd at height 229 received
+[2026-10-15T08:29:19.023Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 229 accepted (new: false)
+[2026-10-15T08:29:28.492Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 230 accepted (new: true)
+[2026-10-15T08:29:28.560Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5652551b95ac at height 230 received
+[2026-10-15T08:29:28.560Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 230 accepted (new: false)
+[2026-10-15T08:29:54.712Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 231 accepted (new: true)
+[2026-10-15T08:29:54.770Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b8ae674e3548 at height 231 received
+[2026-10-15T08:29:54.810Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 231 accepted (new: false)
+[2026-10-15T08:30:08.296Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 232 accepted (new: true)
+[2026-10-15T08:30:08.296Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 232 accepted (new: false)
+[2026-10-15T08:30:08.383Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 49435ede839a at height 232 received
+[2026-10-15T08:30:08.423Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 232 accepted (new: false)
+[2026-10-15T08:30:08.423Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 232 accepted (new: false)
+[2026-10-15T08:30:16.735Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 233 accepted (new: true)
+[2026-10-15T08:30:16.803Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 325e8c9ae892 at height 233 received
+[2026-10-15T08:30:16.843Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 233 accepted (new: false)
+[2026-10-15T08:30:18.802Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 234 accepted (new: true)
+[2026-10-15T08:30:18.865Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1ceaeba3d099 at height 234 received
+[2026-10-15T08:30:18.938Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 234 accepted (new: false)
+[2026-10-15T08:30:22.913Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 235 accepted (new: true)
+[2026-10-15T08:30:22.914Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 235 accepted (new: false)
+[2026-10-15T08:30:22.994Z DEBUG blacksilk_p2p::net::blocks] peer 1: block a2f8341eaccd at height 235 received
+[2026-10-15T08:30:22.994Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 235 accepted (new: false)
+[2026-10-15T08:30:23.034Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 235 accepted (new: false)
+[2026-10-15T08:30:24.821Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 236 accepted (new: true)
+[2026-10-15T08:30:24.902Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 906795d89595 at height 236 received
+[2026-10-15T08:30:24.964Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 236 accepted (new: false)
+[2026-10-15T08:30:31.187Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 237 accepted (new: true)
+[2026-10-15T08:30:31.187Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 237 accepted (new: false)
+[2026-10-15T08:30:31.226Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 237 accepted (new: false)
+[2026-10-15T08:30:31.267Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 2555e0001319 at height 237 received
+[2026-10-15T08:30:31.312Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 237 accepted (new: false)
+[2026-10-15T08:30:43.451Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 238 accepted (new: true)
+[2026-10-15T08:30:43.487Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 238 accepted (new: false)
+[2026-10-15T08:30:43.529Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a21665d49438 at height 238 received
+[2026-10-15T08:30:49.436Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 239 accepted (new: true)
+[2026-10-15T08:30:49.436Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 239 accepted (new: false)
+[2026-10-15T08:30:49.511Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6b0c4e8a4611 at height 239 received
+[2026-10-15T08:30:49.554Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 239 accepted (new: false)
+[2026-10-15T08:30:49.554Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 239 accepted (new: false)
+[2026-10-15T08:31:07.223Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 240 accepted (new: true)
+[2026-10-15T08:31:07.224Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 240 accepted (new: false)
+[2026-10-15T08:31:07.284Z DEBUG blacksilk_p2p::net::blocks] peer 2: block cf4b1970baee at height 240 received
+[2026-10-15T08:31:07.305Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 240 accepted (new: false)
+[2026-10-15T08:31:07.305Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 240 accepted (new: false)
+[2026-10-15T08:31:11.451Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 241 accepted (new: true)
+[2026-10-15T08:31:11.527Z DEBUG blacksilk_p2p::net::blocks] peer 2: block be23af3383ab at height 241 received
+[2026-10-15T08:31:11.568Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 241 accepted (new: false)
+[2026-10-15T08:31:14.082Z DEBUG blacksilk_p2p::net::stem] stem tx 9425d18db63e -> peer 2
+[2026-10-15T08:31:19.586Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 242 accepted (new: true)
+[2026-10-15T08:31:19.653Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e3080f8f0712 at height 242 received
+[2026-10-15T08:31:19.734Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 242 accepted (new: false)
+[2026-10-15T08:31:28.699Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 243 accepted (new: true)
+[2026-10-15T08:31:28.699Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 243 accepted (new: false)
+[2026-10-15T08:31:28.725Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 243 accepted (new: false)
+[2026-10-15T08:31:28.749Z DEBUG blacksilk_p2p::net::blocks] peer 1: block e5d5aee8adfd at height 243 received
+[2026-10-15T08:31:28.766Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 243 accepted (new: false)
+[2026-10-15T08:31:30.824Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 244 accepted (new: true)
+[2026-10-15T08:31:30.882Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b71a7aa92bce at height 244 received
+[2026-10-15T08:31:30.919Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 244 accepted (new: false)
+[2026-10-15T08:31:34.262Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 245 accepted (new: true)
+[2026-10-15T08:31:34.331Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 245 accepted (new: false)
+[2026-10-15T08:31:34.346Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 27750ceeeb41 at height 245 received
+[2026-10-15T08:31:39.809Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 246 accepted (new: true)
+[2026-10-15T08:31:39.809Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 246 accepted (new: false)
+[2026-10-15T08:31:39.893Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c9361977ae9d at height 246 received
+[2026-10-15T08:31:44.569Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 247 accepted (new: true)
+[2026-10-15T08:31:44.645Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e34b83e611ab at height 247 received
+[2026-10-15T08:31:45.094Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 247 accepted (new: true)
+[2026-10-15T08:31:45.094Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 247 accepted (new: true)
+[2026-10-15T08:31:45.094Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 247 accepted (new: true)
+[2026-10-15T08:31:55.270Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 248 accepted (new: true)
+[2026-10-15T08:31:55.270Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 248 accepted (new: false)
+[2026-10-15T08:31:55.335Z DEBUG blacksilk_p2p::net::blocks] peer 3: block 483cf4bdf286 at height 247 received
+[2026-10-15T08:31:55.356Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d2462652a89f at height 248 received
+[2026-10-15T08:31:55.358Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 246
+[2026-10-15T08:31:55.358Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-10-15T08:31:55.376Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 248 accepted (new: false)
+[2026-10-15T08:31:55.418Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 248 accepted (new: false)
+[2026-10-15T08:31:59.854Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 249 accepted (new: true)
+[2026-10-15T08:31:59.854Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 249 accepted (new: false)
+[2026-10-15T08:31:59.931Z DEBUG blacksilk_p2p::net::blocks] peer 1: block f4830aa469ea at height 249 received
+[2026-10-15T08:31:59.963Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 249 accepted (new: false)
+[2026-10-15T08:32:00.793Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 250 accepted (new: true)
+[2026-10-15T08:32:00.793Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 250 accepted (new: false)
+[2026-10-15T08:32:00.871Z DEBUG blacksilk_p2p::net::blocks] peer 1: block a7e08b459af1 at height 250 received
+[2026-10-15T08:32:00.912Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 250 accepted (new: false)
+[2026-10-15T08:32:00.952Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 250 accepted (new: false)
+[2026-10-15T08:32:04.767Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 251 accepted (new: true)
+[2026-10-15T08:32:04.836Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9aa213bdfe36 at height 251 received
+[2026-10-15T08:32:04.876Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 251 accepted (new: false)
+[2026-10-15T08:32:07.683Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 252 accepted (new: true)
+[2026-10-15T08:32:07.683Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 252 accepted (new: false)
+[2026-10-15T08:32:07.728Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 252 accepted (new: false)
+[2026-10-15T08:32:07.769Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 9ef757def265 at height 252 received
+[2026-10-15T08:32:07.771Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 252 accepted (new: false)
+[2026-10-15T08:32:12.828Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 253 accepted (new: true)
+[2026-10-15T08:32:12.885Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f8b6c585daee at height 253 received
+[2026-10-15T08:32:12.965Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 253 accepted (new: false)
+[2026-10-15T08:32:34.170Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 254 accepted (new: true)
+[2026-10-15T08:32:34.171Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 254 accepted (new: false)
+[2026-10-15T08:32:34.242Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 96cfb69ebd38 at height 254 received
+[2026-10-15T08:32:34.282Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 254 accepted (new: false)
+[2026-10-15T08:32:34.298Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 254 accepted (new: false)
+[2026-10-15T08:32:37.712Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 255 accepted (new: true)
+[2026-10-15T08:32:37.771Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 96659db5d201 at height 255 received
+[2026-10-15T08:32:37.831Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 255 accepted (new: false)
+[2026-10-15T08:32:44.533Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 256 accepted (new: true)
+[2026-10-15T08:32:44.588Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d16cbf245856 at height 256 received
+[2026-10-15T08:32:44.608Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 256 accepted (new: false)
+[2026-10-15T08:32:55.241Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 257 accepted (new: true)
+[2026-10-15T08:32:55.317Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e46d6da6ad3e at height 257 received
+[2026-10-15T08:32:55.319Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 257 accepted (new: false)
+[2026-10-15T08:33:05.891Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 258 accepted (new: true)
+[2026-10-15T08:33:05.971Z DEBUG blacksilk_p2p::net::blocks] peer 2: block be9d3417fbfe at height 258 received
+[2026-10-15T08:33:06.008Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 258 accepted (new: false)
+[2026-10-15T08:33:07.618Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 259 accepted (new: true)
+[2026-10-15T08:33:07.691Z DEBUG blacksilk_p2p::net::blocks] peer 2: block fe6f35922db8 at height 259 received
+[2026-10-15T08:33:07.693Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 259 accepted (new: false)
+[2026-10-15T08:33:13.763Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 260 accepted (new: true)
+[2026-10-15T08:33:13.764Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 260 accepted (new: false)
+[2026-10-15T08:33:13.828Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1c4a82f8da1a at height 260 received
+[2026-10-15T08:33:13.867Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 260 accepted (new: false)
+[2026-10-15T08:33:13.890Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 260 accepted (new: false)
+[2026-10-15T08:33:18.633Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 261 accepted (new: true)
+[2026-10-15T08:33:18.633Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 261 accepted (new: false)
+[2026-10-15T08:33:18.701Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f31b421cd09a at height 261 received
+[2026-10-15T08:33:18.745Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 261 accepted (new: false)
+[2026-10-15T08:33:22.877Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 262 accepted (new: true)
+[2026-10-15T08:33:22.877Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 262 accepted (new: false)
+[2026-10-15T08:33:22.878Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 262 accepted (new: false)
+[2026-10-15T08:33:22.926Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 262 accepted (new: false)
+[2026-10-15T08:33:22.965Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f2d678f96cd5 at height 262 received
+[2026-10-15T08:33:26.807Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 263 accepted (new: true)
+[2026-10-15T08:33:26.807Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 263 accepted (new: false)
+[2026-10-15T08:33:26.875Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 00e5731a024e at height 263 received
+[2026-10-15T08:33:26.916Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 263 accepted (new: false)
+[2026-10-15T08:33:35.452Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 264 accepted (new: true)
+[2026-10-15T08:33:35.452Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 264 accepted (new: false)
+[2026-10-15T08:33:35.529Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6376d82feec4 at height 264 received
+[2026-10-15T08:33:35.594Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 264 accepted (new: false)
+[2026-10-15T08:33:53.016Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 265 accepted (new: true)
+[2026-10-15T08:33:53.016Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 265 accepted (new: false)
+[2026-10-15T08:33:53.098Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 96fb155ceb51 at height 265 received
+[2026-10-15T08:33:53.139Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 265 accepted (new: false)
+[2026-10-15T08:33:53.159Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 265 accepted (new: false)
+[2026-10-15T08:34:02.753Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 266 accepted (new: true)
+[2026-10-15T08:34:02.753Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 266 accepted (new: false)
+[2026-10-15T08:34:02.822Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9150dba688d3 at height 266 received
+[2026-10-15T08:34:02.853Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 266 accepted (new: false)
+[2026-10-15T08:34:04.394Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 267 accepted (new: true)
+[2026-10-15T08:34:04.394Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 267 accepted (new: false)
+[2026-10-15T08:34:04.455Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 267 accepted (new: false)
+[2026-10-15T08:34:04.474Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f7629ce10013 at height 267 received
+[2026-10-15T08:34:04.511Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 267 accepted (new: false)
+[2026-10-15T08:34:25.548Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 268 accepted (new: true)
+[2026-10-15T08:34:25.548Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 268 accepted (new: false)
+[2026-10-15T08:34:25.612Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e020f33dcf50 at height 268 received
+[2026-10-15T08:34:25.614Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 268 accepted (new: false)
+[2026-10-15T08:34:25.614Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 268 accepted (new: false)
+[2026-10-15T08:34:27.871Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 269 accepted (new: true)
+[2026-10-15T08:34:27.915Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 269 accepted (new: false)
+[2026-10-15T08:34:27.952Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6038d5f19e13 at height 269 received
+[2026-10-15T08:34:30.140Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 270 accepted (new: true)
+[2026-10-15T08:34:30.140Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 270 accepted (new: false)
+[2026-10-15T08:34:30.223Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 8870aef37003 at height 270 received
+[2026-10-15T08:34:30.286Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 270 accepted (new: false)
+[2026-10-15T08:34:33.557Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 271 accepted (new: true)
+[2026-10-15T08:34:33.557Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 271 accepted (new: false)
+[2026-10-15T08:34:33.614Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a234d019f57e at height 271 received
+[2026-10-15T08:34:33.692Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 271 accepted (new: false)
+[2026-10-15T08:34:35.211Z DEBUG blacksilk_p2p::net::stem] stem tx 032265655195 -> peer 2
+[2026-10-15T08:34:36.169Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 272 accepted (new: true)
+[2026-10-15T08:34:36.169Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 272 accepted (new: false)
+[2026-10-15T08:34:36.244Z DEBUG blacksilk_p2p::net::blocks] peer 1: block b751daa823a3 at height 272 received
+[2026-10-15T08:34:36.287Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 272 accepted (new: false)
+[2026-10-15T08:34:36.287Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 272 accepted (new: false)
+[2026-10-15T08:34:44.982Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 273 accepted (new: true)
+[2026-10-15T08:34:44.983Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 273 accepted (new: false)
+[2026-10-15T08:34:45.024Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 273 accepted (new: false)
+[2026-10-15T08:34:45.049Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 5d3582459040 at height 273 received
+[2026-10-15T08:34:45.085Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 273 accepted (new: false)
+[2026-10-15T08:34:47.987Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 274 accepted (new: true)
+[2026-10-15T08:34:47.987Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 274 accepted (new: false)
+[2026-10-15T08:34:48.058Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6e2a333f2078 at height 274 received
+[2026-10-15T08:34:48.098Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 274 accepted (new: false)
+[2026-10-15T08:34:48.141Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 274 accepted (new: false)
+[2026-10-15T08:34:49.498Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 275 accepted (new: true)
+[2026-10-15T08:34:49.550Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0e47db46e256 at height 275 received
+[2026-10-15T08:34:49.588Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 275 accepted (new: false)
+[2026-10-15T08:34:52.157Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 276 accepted (new: true)
+[2026-10-15T08:34:52.157Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 276 accepted (new: false)
+[2026-10-15T08:34:52.221Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 836a98017a9f at height 276 received
+[2026-10-15T08:34:52.221Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 276 accepted (new: false)
+[2026-10-15T08:34:52.262Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 276 accepted (new: false)
+[2026-10-15T08:35:00.913Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 277 accepted (new: true)
+[2026-10-15T08:35:00.913Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 277 accepted (new: false)
+[2026-10-15T08:35:00.989Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 4599bf799eb6 at height 277 received
+[2026-10-15T08:35:00.989Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 277 accepted (new: false)
+[2026-10-15T08:35:00.992Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 277 accepted (new: false)
+[2026-10-15T08:35:09.356Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 278 accepted (new: true)
+[2026-10-15T08:35:09.425Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9357c726363f at height 278 received
+[2026-10-15T08:35:12.513Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 279 accepted (new: true)
+[2026-10-15T08:35:12.579Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 3d3ff678c23f at height 279 received
+[2026-10-15T08:35:12.624Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 279 accepted (new: false)
+[2026-10-15T08:35:19.944Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 280 accepted (new: true)
+[2026-10-15T08:35:20.014Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1065bd221390 at height 280 received
+[2026-10-15T08:35:20.015Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 280 accepted (new: false)
+[2026-10-15T08:35:25.759Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 281 accepted (new: true)
+[2026-10-15T08:35:25.835Z DEBUG blacksilk_p2p::net::blocks] peer 2: block cd0097553ac3 at height 281 received
+[2026-10-15T08:35:25.837Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 281 accepted (new: false)
+[2026-10-15T08:35:28.708Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 282 accepted (new: true)
+[2026-10-15T08:35:28.708Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 282 accepted (new: false)
+[2026-10-15T08:35:28.791Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 889da35b6ce1 at height 282 received
+[2026-10-15T08:35:28.826Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 282 accepted (new: false)
+[2026-10-15T08:35:28.870Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 282 accepted (new: false)
+[2026-10-15T08:35:32.969Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 283 accepted (new: true)
+[2026-10-15T08:35:32.969Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 283 accepted (new: false)
+[2026-10-15T08:35:33.031Z DEBUG blacksilk_p2p::net::blocks] peer 1: block c7dc3fc5ecfa at height 283 received
+[2026-10-15T08:35:43.059Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 284 accepted (new: true)
+[2026-10-15T08:35:43.111Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 61359c465050 at height 284 received
+[2026-10-15T08:35:43.152Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 284 accepted (new: false)
+[2026-10-15T08:35:46.901Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 285 accepted (new: true)
+[2026-10-15T08:35:46.901Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 285 accepted (new: false)
+[2026-10-15T08:35:46.967Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 23d989d3b150 at height 285 received
+[2026-10-15T08:35:46.995Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 285 accepted (new: false)
+[2026-10-15T08:35:47.021Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 285 accepted (new: false)
+[2026-10-15T08:35:51.475Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 286 accepted (new: true)
+[2026-10-15T08:35:51.550Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ab4d129e07b5 at height 286 received
+[2026-10-15T08:36:41.937Z DEBUG blacksilk_p2p::net::headers] peer 2: 2 headers up to height 287 accepted (new: true)
+[2026-10-15T08:36:41.937Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 287 accepted (new: false)
+[2026-10-15T08:36:41.937Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 287 accepted (new: false)
+[2026-10-15T08:36:41.938Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 287 accepted (new: false)
+[2026-10-15T08:36:42.013Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 84c58f039319 at height 286 received
+[2026-10-15T08:36:42.014Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 921a7a42e07d at height 287 received
+[2026-10-15T08:36:42.018Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 285
+[2026-10-15T08:36:42.024Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-10-15T08:37:16.465Z DEBUG blacksilk_p2p::net::stem] stem tx fd95c95c567a -> peer 2
+[2026-10-15T08:37:23.992Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 288 accepted (new: true)
+[2026-10-15T08:37:23.992Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 288 accepted (new: false)
+[2026-10-15T08:37:24.085Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9b40fd29faa5 at height 288 received
+[2026-10-15T08:37:24.085Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 288 accepted (new: false)
+[2026-10-15T08:37:24.105Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 288 accepted (new: false)
+[2026-10-15T08:37:35.252Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 289 accepted (new: true)
+[2026-10-15T08:37:35.252Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 289 accepted (new: false)
+[2026-10-15T08:37:35.322Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 30e36f548230 at height 289 received
+[2026-10-15T08:37:35.324Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 289 accepted (new: false)
+[2026-10-15T08:37:35.404Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 289 accepted (new: false)
+[2026-10-15T08:37:36.671Z DEBUG blacksilk_p2p::net::stem] stem tx 47c3ab7dccb0 -> peer 2
+[2026-10-15T08:37:42.477Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 290 accepted (new: true)
+[2026-10-15T08:37:42.477Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 290 accepted (new: false)
+[2026-10-15T08:37:42.543Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b8f5240c3c6c at height 290 received
+[2026-10-15T08:37:42.583Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 290 accepted (new: false)
+[2026-10-15T08:37:44.258Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 291 accepted (new: true)
+[2026-10-15T08:37:44.258Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 291 accepted (new: false)
+[2026-10-15T08:37:44.289Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 291 accepted (new: false)
+[2026-10-15T08:37:44.330Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 144dfe1fc4d3 at height 291 received
+[2026-10-15T08:37:44.369Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 291 accepted (new: false)
+[2026-10-15T08:37:46.353Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 292 accepted (new: true)
+[2026-10-15T08:37:46.353Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 292 accepted (new: false)
+[2026-10-15T08:37:46.444Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 292 accepted (new: false)
+[2026-10-15T08:37:46.444Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 8ea74e293f16 at height 292 received
+[2026-10-15T08:37:46.501Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 292 accepted (new: false)
+[2026-10-15T08:37:52.010Z DEBUG blacksilk_p2p::net::maintenance] embargo expired for fd95c95c567a
+[2026-10-15T08:37:52.012Z DEBUG blacksilk_p2p::net::stem] fluffing fd95c95c567a failed: Invalid(KeyImageSpent { input: 0 })
+[2026-10-15T08:37:53.800Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 293 accepted (new: true)
+[2026-10-15T08:37:53.800Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 293 accepted (new: false)
+[2026-10-15T08:37:53.877Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a64971d6e4e2 at height 293 received
+[2026-10-15T08:37:53.877Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 293 accepted (new: false)
+[2026-10-15T08:37:56.451Z DEBUG blacksilk_p2p::net::stem] stem tx a8b0d69c4f50 -> peer 2
+[2026-10-15T08:39:04.234Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-10-15T08:39:04.331Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-10-15T08:39:04.399Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T08:39:11.511Z DEBUG blacksilk_p2p::net::headers] peer 2: 9 headers up to height 294 accepted (new: true)
+[2026-10-15T08:39:11.594Z DEBUG blacksilk_p2p::net::blocks] peer 1: block fd5ce054fbaa at height 290 received
+[2026-10-15T08:39:11.654Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 67ad9313343a at height 291 received
+[2026-10-15T08:39:11.654Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 9942bfb3ce9b at height 294 received
+[2026-10-15T08:39:11.741Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 829d01f0eb59 at height 287 received
+[2026-10-15T08:39:11.808Z DEBUG blacksilk_p2p::net::blocks] peer 1: block afbd9b3aecc4 at height 292 received
+[2026-10-15T08:39:11.808Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 8d95b4471799 at height 289 received
+[2026-10-15T08:39:12.739Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5f80ce9c3252 at height 288 received
+[2026-10-15T08:39:13.305Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6ee08e7a8827 at height 293 received
+[2026-10-15T08:39:13.308Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 8 block(s) above height 285
+[2026-10-15T08:39:13.310Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 3, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 3, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-10-15T08:39:14.150Z DEBUG blacksilk_p2p::net::headers] peer 2: 5 headers up to height 299 accepted (new: true)
+[2026-10-15T08:39:14.151Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 293 accepted (new: false)
+[2026-10-15T08:39:14.288Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 13f2d4687b05 at height 295 received
+[2026-10-15T08:39:14.288Z DEBUG blacksilk_p2p::net::blocks] peer 2: block fe636be10a1d at height 296 received
+[2026-10-15T08:39:14.288Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5c5115a83686 at height 297 received
+[2026-10-15T08:39:14.383Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0a424b840e20 at height 298 received
+[2026-10-15T08:39:14.383Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4811dbf05c93 at height 299 received
+[2026-10-15T08:39:14.487Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 299 accepted (new: false)
+[2026-10-15T08:39:15.007Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 294 accepted (new: false)
+[2026-10-15T08:39:15.513Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 294 accepted (new: false)
+[2026-10-15T08:39:19.785Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 300 accepted (new: true)
+[2026-10-15T08:39:19.872Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f1f4bb2c7f65 at height 300 received
+[2026-10-15T08:39:19.872Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 300 accepted (new: false)
+[2026-10-15T08:39:30.450Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 301 accepted (new: true)
+[2026-10-15T08:39:30.450Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 301 accepted (new: false)
+[2026-10-15T08:39:30.503Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 228c8482a329 at height 301 received
+[2026-10-15T08:39:30.550Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 301 accepted (new: false)
+[2026-10-15T08:39:30.612Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 301 accepted (new: false)
+[2026-10-15T08:39:32.093Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 302 accepted (new: true)
+[2026-10-15T08:39:32.093Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 302 accepted (new: false)
+[2026-10-15T08:39:32.168Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f30c353e6530 at height 302 received
+[2026-10-15T08:39:32.204Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 302 accepted (new: false)
+[2026-10-15T08:39:32.233Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 302 accepted (new: false)
+[2026-10-15T08:39:44.590Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 303 accepted (new: true)
+[2026-10-15T08:39:44.653Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6eda907bd726 at height 303 received
+[2026-10-15T08:39:44.690Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 303 accepted (new: false)
+[2026-10-15T08:39:49.955Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 304 accepted (new: true)
+[2026-10-15T08:39:49.955Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 304 accepted (new: false)
+[2026-10-15T08:39:50.010Z DEBUG blacksilk_p2p::net::blocks] peer 1: block c9c0dd31a04b at height 304 received
+[2026-10-15T08:39:50.016Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 304 accepted (new: false)
+[2026-10-15T08:39:50.017Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 304 accepted (new: false)
+[2026-10-15T08:39:53.974Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 305 accepted (new: true)
+[2026-10-15T08:39:54.026Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0014e756d3f3 at height 305 received
+[2026-10-15T08:40:03.867Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 306 accepted (new: true)
+[2026-10-15T08:40:03.867Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 306 accepted (new: false)
+[2026-10-15T08:40:03.939Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 43460e9b307e at height 306 received
+[2026-10-15T08:40:03.939Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 306 accepted (new: false)
+[2026-10-15T08:40:03.980Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 306 accepted (new: false)
+[2026-10-15T08:40:16.343Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 307 accepted (new: true)
+[2026-10-15T08:40:16.405Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ea35d1ff5449 at height 307 received
+[2026-10-15T08:40:16.487Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 307 accepted (new: false)
+[2026-10-15T08:40:17.916Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 308 accepted (new: true)
+[2026-10-15T08:40:17.998Z DEBUG blacksilk_p2p::net::blocks] peer 2: block cdd84b5e1c00 at height 308 received
+[2026-10-15T08:40:18.018Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 308 accepted (new: false)
+[2026-10-15T08:40:33.408Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 309 accepted (new: true)
+[2026-10-15T08:40:33.440Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 309 accepted (new: false)
+[2026-10-15T08:40:33.473Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 335e22df4267 at height 309 received
+[2026-10-15T08:40:34.490Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 310 accepted (new: true)
+[2026-10-15T08:40:34.577Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8192c8c28f0e at height 310 received
+[2026-10-15T08:40:34.594Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 310 accepted (new: false)
+[2026-10-15T08:40:37.714Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 311 accepted (new: true)
+[2026-10-15T08:40:37.715Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 311 accepted (new: false)
+[2026-10-15T08:40:37.715Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 311 accepted (new: false)
+[2026-10-15T08:40:37.785Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a8dde05fd221 at height 311 received
+[2026-10-15T08:40:37.803Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 311 accepted (new: false)
+[2026-10-15T08:40:41.910Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 312 accepted (new: true)
+[2026-10-15T08:40:41.968Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a2c327334948 at height 312 received
+[2026-10-15T08:40:42.021Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 312 accepted (new: false)
+[2026-10-15T08:40:55.685Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 313 accepted (new: true)
+[2026-10-15T08:40:55.685Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 313 accepted (new: false)
+[2026-10-15T08:40:55.767Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d60b762b9e43 at height 313 received
+[2026-10-15T08:40:55.786Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 313 accepted (new: false)
+[2026-10-15T08:40:57.793Z DEBUG blacksilk_p2p::net::stem] stem tx 4eac82d3b6e1 -> peer 1
+[2026-10-15T08:40:57.819Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 314 accepted (new: true)
+[2026-10-15T08:40:57.819Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 314 accepted (new: false)
+[2026-10-15T08:40:57.908Z DEBUG blacksilk_p2p::net::blocks] peer 2: block eb01579b75d1 at height 314 received
+[2026-10-15T08:40:57.908Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 314 accepted (new: false)
+[2026-10-15T08:40:57.949Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 314 accepted (new: false)
+[2026-10-15T08:41:04.824Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 315 accepted (new: true)
+[2026-10-15T08:41:04.824Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 315 accepted (new: false)
+[2026-10-15T08:41:04.856Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 315 accepted (new: false)
+[2026-10-15T08:41:04.896Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c54b0e229565 at height 315 received
+[2026-10-15T08:41:04.896Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 315 accepted (new: false)
+[2026-10-15T08:41:10.365Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 316 accepted (new: true)
+[2026-10-15T08:41:10.442Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4d29ffab7dae at height 316 received
+[2026-10-15T08:41:10.483Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 316 accepted (new: false)
+[2026-10-15T08:41:24.877Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 317 accepted (new: true)
+[2026-10-15T08:41:24.943Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 41f329c59108 at height 317 received
+[2026-10-15T08:41:24.963Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 317 accepted (new: false)
+[2026-10-15T08:41:28.359Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 318 accepted (new: true)
+[2026-10-15T08:41:28.359Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 318 accepted (new: false)
+[2026-10-15T08:41:28.428Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 613020cd7e93 at height 318 received
+[2026-10-15T08:41:36.470Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 319 accepted (new: true)
+[2026-10-15T08:41:36.471Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 319 accepted (new: false)
+[2026-10-15T08:41:36.530Z DEBUG blacksilk_p2p::net::blocks] peer 1: block bb47fcd0b748 at height 319 received
+[2026-10-15T08:41:45.356Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 320 accepted (new: true)
+[2026-10-15T08:41:45.356Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 320 accepted (new: false)
+[2026-10-15T08:41:45.410Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 91d1cfe52231 at height 320 received
+[2026-10-15T08:41:45.451Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 320 accepted (new: false)
+[2026-10-15T08:41:48.292Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 321 accepted (new: true)
+[2026-10-15T08:41:48.352Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 05e927f002d0 at height 321 received
+[2026-10-15T08:41:48.407Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 321 accepted (new: false)
+[2026-10-15T08:41:58.105Z DEBUG blacksilk_p2p::net::stem] stem tx 67e561858948 -> peer 1
+[2026-10-15T08:42:11.034Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 322 accepted (new: true)
+[2026-10-15T08:42:11.055Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 322 accepted (new: false)
+[2026-10-15T08:42:11.115Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1aa4b08acb75 at height 322 received
+[2026-10-15T08:42:14.842Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 323 accepted (new: true)
+[2026-10-15T08:42:14.917Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c73df8fba164 at height 323 received
+[2026-10-15T08:42:14.938Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 323 accepted (new: false)
+[2026-10-15T08:42:27.415Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 324 accepted (new: true)
+[2026-10-15T08:42:27.482Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ff1f342ea160 at height 324 received
+[2026-10-15T08:42:27.508Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 324 accepted (new: false)
+[2026-10-15T08:42:35.861Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 325 accepted (new: true)
+[2026-10-15T08:42:35.909Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1206ad39044d at height 325 received
+[2026-10-15T08:42:35.911Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 325 accepted (new: false)
+[2026-10-15T08:42:39.752Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 326 accepted (new: true)
+[2026-10-15T08:42:39.824Z DEBUG blacksilk_p2p::net::blocks] peer 2: block c118395b77b4 at height 326 received
+[2026-10-15T08:42:39.824Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 326 accepted (new: false)
+[2026-10-15T08:43:09.936Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 327 accepted (new: true)
+[2026-10-15T08:43:09.998Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d436d6f3088e at height 327 received
+[2026-10-15T08:43:10.012Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 327 accepted (new: false)
+[2026-10-15T08:43:22.880Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 328 accepted (new: true)
+[2026-10-15T08:43:22.944Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d6b42c00c5b5 at height 328 received
+[2026-10-15T08:43:23.003Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 328 accepted (new: false)
+[2026-10-15T08:43:30.270Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 329 accepted (new: true)
+[2026-10-15T08:43:30.329Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 647adc814cfa at height 329 received
+[2026-10-15T08:43:30.370Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 329 accepted (new: false)
+[2026-10-15T08:43:53.646Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 330 accepted (new: true)
+[2026-10-15T08:43:53.719Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 533c5d1eafd2 at height 330 received
+[2026-10-15T08:43:54.190Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 330 accepted (new: true)
+[2026-10-15T08:43:54.190Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 330 accepted (new: true)
+[2026-10-15T08:43:54.190Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 330 accepted (new: true)
+[2026-10-15T08:43:58.908Z DEBUG blacksilk_p2p::net::stem] stem tx 94f625d05a1c -> peer 1
+[2026-10-15T08:44:18.914Z DEBUG blacksilk_p2p::net::stem] stem tx a566fd8e243c -> peer 1
+[2026-10-15T08:44:24.700Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 331 accepted (new: true)
+[2026-10-15T08:44:24.778Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1c37250c67ad at height 331 received
+[2026-10-15T08:44:24.824Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 331 accepted (new: false)
+[2026-10-15T08:44:36.135Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 332 accepted (new: true)
+[2026-10-15T08:44:36.212Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4e7de8d06030 at height 332 received
+[2026-10-15T08:44:36.212Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 332 accepted (new: false)
+[2026-10-15T08:44:43.197Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 333 accepted (new: true)
+[2026-10-15T08:44:43.260Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7b286c3c1440 at height 333 received
+[2026-10-15T08:44:43.297Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 333 accepted (new: false)
+[2026-10-15T08:45:09.657Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 334 accepted (new: true)
+[2026-10-15T08:45:09.658Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 334 accepted (new: false)
+[2026-10-15T08:45:09.658Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 334 accepted (new: false)
+[2026-10-15T08:45:09.692Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 334 accepted (new: false)
+[2026-10-15T08:45:09.715Z DEBUG blacksilk_p2p::net::blocks] peer 1: block c02c1c6ded7f at height 334 received
+[2026-10-15T08:45:12.178Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 335 accepted (new: true)
+[2026-10-15T08:45:12.178Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 335 accepted (new: false)
+[2026-10-15T08:45:12.241Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 6fce9be4e5a5 at height 335 received
+[2026-10-15T08:45:12.282Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 335 accepted (new: false)
+[2026-10-15T08:45:12.301Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 335 accepted (new: false)
+[2026-10-15T08:45:21.275Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 336 accepted (new: true)
+[2026-10-15T08:45:21.275Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 336 accepted (new: false)
+[2026-10-15T08:45:21.366Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 7edaf24bb5f6 at height 336 received
+[2026-10-15T08:45:22.916Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 337 accepted (new: true)
+[2026-10-15T08:45:22.916Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 337 accepted (new: false)
+[2026-10-15T08:45:22.971Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f181162feed1 at height 337 received
+[2026-10-15T08:45:23.011Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 337 accepted (new: false)
+[2026-10-15T08:45:37.138Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 338 accepted (new: true)
+[2026-10-15T08:45:37.138Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 338 accepted (new: false)
+[2026-10-15T08:45:37.203Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 6cef52567708 at height 338 received
+[2026-10-15T08:45:37.236Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 338 accepted (new: false)
+[2026-10-15T08:45:37.236Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 338 accepted (new: false)
+[2026-10-15T08:46:13.680Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 339 accepted (new: true)
+[2026-10-15T08:46:13.680Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 339 accepted (new: false)
+[2026-10-15T08:46:13.680Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 339 accepted (new: false)
+[2026-10-15T08:46:13.758Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 339 accepted (new: false)
+[2026-10-15T08:46:13.758Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5a1dea92e587 at height 339 received
+[2026-10-15T08:46:35.371Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 340 accepted (new: true)
+[2026-10-15T08:46:35.371Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 340 accepted (new: false)
+[2026-10-15T08:46:35.431Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 340 accepted (new: false)
+[2026-10-15T08:46:35.431Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4a6283e981e0 at height 340 received
+[2026-10-15T08:46:35.473Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 340 accepted (new: false)
+[2026-10-15T08:47:07.304Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 341 accepted (new: true)
+[2026-10-15T08:47:07.304Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 341 accepted (new: false)
+[2026-10-15T08:47:07.368Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f893d47aa69e at height 341 received
+[2026-10-15T08:47:09.845Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 342 accepted (new: true)
+[2026-10-15T08:47:09.845Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 342 accepted (new: false)
+[2026-10-15T08:47:09.916Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b9873ba7809f at height 342 received
+[2026-10-15T08:47:09.916Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 342 accepted (new: false)
+[2026-10-15T08:47:09.958Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 342 accepted (new: false)
+[2026-10-15T08:47:12.714Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 343 accepted (new: true)
+[2026-10-15T08:47:12.714Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 343 accepted (new: false)
+[2026-10-15T08:47:12.783Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0e013c3b0e96 at height 343 received
+[2026-10-15T08:47:12.824Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 343 accepted (new: false)
+[2026-10-15T08:47:12.868Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 343 accepted (new: false)
+[2026-10-15T08:47:32.935Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 344 accepted (new: true)
+[2026-10-15T08:47:32.936Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 344 accepted (new: false)
+[2026-10-15T08:47:33.006Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 8fd19e1ba04f at height 344 received
+[2026-10-15T08:47:33.051Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 344 accepted (new: false)
+[2026-10-15T08:47:33.051Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 344 accepted (new: false)
+[2026-10-15T08:47:58.430Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 345 accepted (new: true)
+[2026-10-15T08:47:58.431Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 345 accepted (new: false)
+[2026-10-15T08:47:58.481Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 345 accepted (new: false)
+[2026-10-15T08:47:58.501Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 345 accepted (new: false)
+[2026-10-15T08:47:58.501Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 02262b2a948a at height 345 received
+[2026-10-15T08:48:12.937Z DEBUG blacksilk_p2p::net::headers] peer 2: 15 headers up to height 345 accepted (new: true)
+[2026-10-15T08:48:13.013Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1a96f7a43968 at height 335 received
+[2026-10-15T08:48:13.013Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 1e7e24760351 at height 338 received
+[2026-10-15T08:48:13.013Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1846dff256c6 at height 339 received
+[2026-10-15T08:48:13.013Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0de149c63996 at height 342 received
+[2026-10-15T08:48:13.078Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 333f6e112aa0 at height 340 received
+[2026-10-15T08:48:13.078Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 11f105157089 at height 341 received
+[2026-10-15T08:48:13.078Z DEBUG blacksilk_p2p::net::blocks] peer 1: block e1d7ab41136c at height 334 received
+[2026-10-15T08:48:13.084Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 63a3841e836e at height 337 received
+[2026-10-15T08:48:13.202Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d370faafad43 at height 344 received
+[2026-10-15T08:48:13.202Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e440f9213f37 at height 345 received
+[2026-10-15T08:48:13.610Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 61f461f878fd at height 336 received
+[2026-10-15T08:48:13.901Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6ef233f8cd21 at height 343 received
+[2026-10-15T08:48:13.907Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies
+[2026-10-15T08:48:13.910Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 3, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-10-15T08:48:13.911Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 346 accepted (new: true)
+[2026-10-15T08:48:13.911Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 345 accepted (new: false)
+[2026-10-15T08:48:13.944Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 346 accepted (new: false)
+[2026-10-15T08:48:13.979Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 50508eb7dba1 at height 346 received
+[2026-10-15T08:48:16.915Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 345 accepted (new: false)
+[2026-10-15T08:48:18.110Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 347 accepted (new: true)
+[2026-10-15T08:48:18.110Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 347 accepted (new: false)
+[2026-10-15T08:48:18.185Z DEBUG blacksilk_p2p::net::blocks] peer 1: block ee2664552942 at height 347 received
+[2026-10-15T08:48:18.234Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 347 accepted (new: false)
+[2026-10-15T08:48:18.263Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 347 accepted (new: false)
+[2026-10-15T08:48:31.406Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 348 accepted (new: true)
+[2026-10-15T08:48:31.434Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 348 accepted (new: false)
+[2026-10-15T08:48:31.500Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 3e1863e64442 at height 348 received
+[2026-10-15T08:48:33.185Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 349 accepted (new: true)
+[2026-10-15T08:48:33.268Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6dea08c8cbcf at height 349 received
+[2026-10-15T08:48:33.313Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 349 accepted (new: false)
+[2026-10-15T08:48:38.346Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 350 accepted (new: true)
+[2026-10-15T08:48:38.413Z DEBUG blacksilk_p2p::net::blocks] peer 2: block a10ae167e399 at height 350 received
+[2026-10-15T08:48:38.454Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 350 accepted (new: false)
+[2026-10-15T08:48:49.638Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 351 accepted (new: true)
+[2026-10-15T08:48:49.723Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 25a6cf11eb0a at height 351 received
+[2026-10-15T08:48:49.763Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 351 accepted (new: false)
+[2026-10-15T08:48:56.576Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 352 accepted (new: true)
+[2026-10-15T08:48:56.603Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 352 accepted (new: false)
+[2026-10-15T08:48:56.644Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7f34f581c21f at height 352 received
+[2026-10-15T08:49:00.075Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 353 accepted (new: true)
+[2026-10-15T08:49:00.075Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 353 accepted (new: false)
+[2026-10-15T08:49:00.139Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 2a2312507da5 at height 353 received
+[2026-10-15T08:49:00.305Z DEBUG blacksilk_p2p::net::stem] stem tx f81848360cb7 -> peer 1
+[2026-10-15T08:49:09.766Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 354 accepted (new: true)
+[2026-10-15T08:49:09.842Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 35c63fbe886d at height 354 received
+[2026-10-15T08:49:09.880Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 354 accepted (new: false)
+[2026-10-15T08:49:13.677Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 355 accepted (new: true)
+[2026-10-15T08:49:13.742Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 3ac10ca0a93f at height 355 received
+[2026-10-15T08:49:22.053Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 356 accepted (new: true)
+[2026-10-15T08:49:22.053Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 356 accepted (new: false)
+[2026-10-15T08:49:22.071Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 356 accepted (new: false)
+[2026-10-15T08:49:22.133Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 693334c51ad2 at height 356 received
+[2026-10-15T08:49:22.174Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 356 accepted (new: false)
+[2026-10-15T08:49:24.888Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 357 accepted (new: true)
+[2026-10-15T08:49:24.888Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 357 accepted (new: false)
+[2026-10-15T08:49:24.966Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 6774f6e9d509 at height 357 received
+[2026-10-15T08:49:25.007Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 357 accepted (new: false)
+[2026-10-15T08:49:28.903Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 358 accepted (new: true)
+[2026-10-15T08:49:28.971Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b1a7df5acbe0 at height 358 received
+[2026-10-15T08:49:30.610Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 359 accepted (new: true)
+[2026-10-15T08:49:30.648Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 359 accepted (new: false)
+[2026-10-15T08:49:30.686Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 992056fa4a24 at height 359 received
+[2026-10-15T08:49:33.939Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 360 accepted (new: true)
+[2026-10-15T08:49:33.939Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 360 accepted (new: false)
+[2026-10-15T08:49:34.011Z DEBUG blacksilk_p2p::net::blocks] peer 1: block c9bab85d32cd at height 360 received
+[2026-10-15T08:49:34.011Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 360 accepted (new: false)
+[2026-10-15T08:49:34.068Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 360 accepted (new: false)
+[2026-10-15T08:49:39.063Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 361 accepted (new: true)
+[2026-10-15T08:49:39.064Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 361 accepted (new: false)
+[2026-10-15T08:49:39.129Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 361 accepted (new: false)
+[2026-10-15T08:49:39.146Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0d0258e62e4d at height 361 received
+[2026-10-15T08:49:40.608Z DEBUG blacksilk_p2p::net::stem] stem tx 0611174be7ff -> peer 1
+[2026-10-15T08:49:51.441Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 362 accepted (new: true)
+[2026-10-15T08:49:51.482Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 362 accepted (new: false)
+[2026-10-15T08:49:51.525Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4be0f2b1c75e at height 362 received
+[2026-10-15T08:50:00.409Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 363 accepted (new: true)
+[2026-10-15T08:50:00.409Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 363 accepted (new: false)
+[2026-10-15T08:50:00.475Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 6ff65b5998ec at height 363 received
+[2026-10-15T08:50:00.475Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 363 accepted (new: false)
+[2026-10-15T08:50:00.486Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 363 accepted (new: false)
+[2026-10-15T08:50:00.696Z DEBUG blacksilk_p2p::net::stem] stem tx bae6dbe8d860 -> peer 2
+[2026-10-15T08:50:03.056Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 364 accepted (new: true)
+[2026-10-15T08:50:03.056Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 364 accepted (new: false)
+[2026-10-15T08:50:03.121Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4505c2e7d79e at height 364 received
+[2026-10-15T08:50:03.149Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 364 accepted (new: false)
+[2026-10-15T08:50:03.179Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 364 accepted (new: false)
+[2026-10-15T08:50:04.345Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 365 accepted (new: true)
+[2026-10-15T08:50:04.427Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5fd5b64f3cca at height 365 received
+[2026-10-15T08:50:04.472Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 365 accepted (new: false)
+[2026-10-15T08:50:06.535Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 366 accepted (new: true)
+[2026-10-15T08:50:06.603Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e2932fb987e1 at height 366 received
+[2026-10-15T08:50:06.603Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 366 accepted (new: false)
+[2026-10-15T08:50:13.767Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 367 accepted (new: true)
+[2026-10-15T08:50:13.767Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 367 accepted (new: false)
+[2026-10-15T08:50:13.842Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 23446bebdace at height 367 received
+[2026-10-15T08:50:13.844Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 367 accepted (new: false)
+[2026-10-15T08:50:20.717Z DEBUG blacksilk_p2p::net::stem] stem tx b1b00cfbe9de -> peer 2
+[2026-10-15T08:50:39.764Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 368 accepted (new: true)
+[2026-10-15T08:50:39.764Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 368 accepted (new: false)
+[2026-10-15T08:50:39.821Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 368 accepted (new: false)
+[2026-10-15T08:50:39.836Z DEBUG blacksilk_p2p::net::blocks] peer 2: block f770af2e6b9d at height 368 received
+[2026-10-15T08:50:39.881Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 368 accepted (new: false)
+[2026-10-15T08:50:40.937Z DEBUG blacksilk_p2p::net::stem] stem tx 01188a1f9558 -> peer 2
+[2026-10-15T08:50:43.655Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 369 accepted (new: true)
+[2026-10-15T08:50:43.655Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 369 accepted (new: false)
+[2026-10-15T08:50:43.725Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 369 accepted (new: false)
+[2026-10-15T08:50:43.725Z DEBUG blacksilk_p2p::net::blocks] peer 1: block c5e2cbd7cd28 at height 369 received
+[2026-10-15T08:50:43.725Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 369 accepted (new: false)
+[2026-10-15T08:50:48.399Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 370 accepted (new: true)
+[2026-10-15T08:50:48.399Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 370 accepted (new: false)
+[2026-10-15T08:50:48.469Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5a2d0e181eae at height 370 received
+[2026-10-15T08:50:48.510Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 370 accepted (new: false)
+[2026-10-15T08:50:53.482Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 371 accepted (new: true)
+[2026-10-15T08:50:53.560Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 4128b99780b3 at height 371 received
+[2026-10-15T08:50:53.600Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 371 accepted (new: false)
+[2026-10-15T08:51:01.445Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 372 accepted (new: true)
+[2026-10-15T08:51:01.526Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8b54efc6567e at height 372 received
+[2026-10-15T08:51:01.526Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 372 accepted (new: false)
+[2026-10-15T08:51:04.747Z DEBUG blacksilk_p2p::net::maintenance] embargo expired for 01188a1f9558
+[2026-10-15T08:51:04.752Z DEBUG blacksilk_p2p::net::stem] fluff tx 01188a1f9558
+[2026-10-15T08:51:09.288Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 373 accepted (new: true)
+[2026-10-15T08:51:09.347Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 373 accepted (new: false)
+[2026-10-15T08:51:09.348Z DEBUG blacksilk_p2p::net::blocks] peer 2: block bba67204be4a at height 373 received
+[2026-10-15T08:51:14.033Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 374 accepted (new: true)
+[2026-10-15T08:51:14.033Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 374 accepted (new: false)
+[2026-10-15T08:51:14.113Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 48e54587d8e1 at height 374 received
+[2026-10-15T08:51:14.113Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 374 accepted (new: false)
+[2026-10-15T08:51:21.082Z DEBUG blacksilk_p2p::net::stem] stem tx 5133edf453b1 -> peer 2
+[2026-10-15T08:51:22.687Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 375 accepted (new: true)
+[2026-10-15T08:51:22.755Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 575cd84df539 at height 375 received
+[2026-10-15T08:51:22.814Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 375 accepted (new: false)
+[2026-10-15T08:51:38.389Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 376 accepted (new: true)
+[2026-10-15T08:51:38.447Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 7fc204899745 at height 376 received
+[2026-10-15T08:51:38.491Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 376 accepted (new: false)
+[2026-10-15T08:51:42.293Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 377 accepted (new: true)
+[2026-10-15T08:51:42.343Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 377 accepted (new: false)
+[2026-10-15T08:51:42.365Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 07e0efed23b2 at height 377 received
+[2026-10-15T08:51:54.187Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 378 accepted (new: true)
+[2026-10-15T08:51:54.241Z DEBUG blacksilk_p2p::net::blocks] peer 2: block b3c5b6702721 at height 378 received
+[2026-10-15T08:51:54.276Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 378 accepted (new: false)
+[2026-10-15T08:51:59.518Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 379 accepted (new: true)
+[2026-10-15T08:51:59.571Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 93a873b6d61c at height 379 received
+[2026-10-15T08:51:59.610Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 379 accepted (new: false)
+[2026-10-15T08:52:04.676Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 380 accepted (new: true)
+[2026-10-15T08:52:04.732Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 88654f7a665a at height 380 received
+[2026-10-15T08:52:24.350Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 381 accepted (new: true)
+[2026-10-15T08:52:24.403Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 67a46c4bc31b at height 381 received
+[2026-10-15T08:52:24.467Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 381 accepted (new: false)
+[2026-10-15T08:52:38.269Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 382 accepted (new: true)
+[2026-10-15T08:52:38.310Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 382 accepted (new: false)
+[2026-10-15T08:52:38.350Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 19fd4c50a5d8 at height 382 received
+[2026-10-15T08:52:48.128Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 383 accepted (new: true)
+[2026-10-15T08:52:48.197Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 47b7d7536fa3 at height 383 received
+[2026-10-15T08:52:48.206Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 383 accepted (new: false)
+[2026-10-15T08:53:01.790Z DEBUG blacksilk_p2p::net::stem] stem tx a7aee09cc6a1 -> peer 2
+[2026-10-15T08:53:05.654Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 384 accepted (new: true)
+[2026-10-15T08:53:05.729Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 0d48b7d85fad at height 384 received
+[2026-10-15T08:53:05.735Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 384 accepted (new: false)
+[2026-10-15T08:53:12.915Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 385 accepted (new: true)
+[2026-10-15T08:53:12.991Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 45b920bb1f3e at height 385 received
+[2026-10-15T08:53:13.011Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 385 accepted (new: false)
+[2026-10-15T08:53:24.438Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 386 accepted (new: true)
+[2026-10-15T08:53:24.500Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 386 accepted (new: false)
+[2026-10-15T08:53:24.520Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 452538f7e734 at height 386 received
+[2026-10-15T08:53:30.550Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 387 accepted (new: true)
+[2026-10-15T08:53:30.550Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 387 accepted (new: false)
+[2026-10-15T08:53:30.550Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 387 accepted (new: false)
+[2026-10-15T08:53:30.577Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 387 accepted (new: false)
+[2026-10-15T08:53:30.598Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 60cfc32f68cd at height 387 received
+[2026-10-15T08:54:02.067Z DEBUG blacksilk_p2p::net::stem] local tx -> stem peer 1
+[2026-10-15T08:54:06.720Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 388 accepted (new: true)
+[2026-10-15T08:54:06.720Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 388 accepted (new: false)
+[2026-10-15T08:54:06.753Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 388 accepted (new: false)
+[2026-10-15T08:54:06.776Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 01cca9ca13a1 at height 388 received
+[2026-10-15T08:54:06.783Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 388 accepted (new: false)
+[2026-10-15T08:54:24.828Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 389 accepted (new: true)
+[2026-10-15T08:54:24.828Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 389 accepted (new: false)
+[2026-10-15T08:54:24.892Z DEBUG blacksilk_p2p::net::blocks] peer 2: block fbb74093e6db at height 389 received
+[2026-10-15T08:54:24.892Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 389 accepted (new: false)
+[2026-10-15T08:54:46.406Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 390 accepted (new: true)
+[2026-10-15T08:54:46.406Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 390 accepted (new: false)
+[2026-10-15T08:54:46.459Z DEBUG blacksilk_p2p::net::blocks] peer 2: block d000d4ce9fd5 at height 390 received
+[2026-10-15T08:54:46.491Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 390 accepted (new: false)
+[2026-10-15T08:54:46.511Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 390 accepted (new: false)
+[2026-10-15T08:55:03.338Z DEBUG blacksilk_p2p::net::headers] peer 2: 7 headers up to height 394 accepted (new: true)
+[2026-10-15T08:55:03.411Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 750563d5681c at height 388 received
+[2026-10-15T08:55:03.411Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 903b2c4b354a at height 391 received
+[2026-10-15T08:55:03.411Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 02c5fc270481 at height 392 received
+[2026-10-15T08:55:03.448Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 390 accepted (new: false)
+[2026-10-15T08:55:03.485Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 8250f51728d3 at height 393 received
+[2026-10-15T08:55:03.485Z DEBUG blacksilk_p2p::net::blocks] peer 2: block e8c7f140094c at height 394 received
+[2026-10-15T08:55:03.557Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 393 accepted (new: false)
+[2026-10-15T08:55:03.578Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 394 accepted (new: false)
+[2026-10-15T08:55:03.630Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 11f7d679b5d5 at height 389 received
+[2026-10-15T08:55:03.630Z DEBUG blacksilk_p2p::net::blocks] peer 2: block ef4ea8f5648f at height 390 received
+[2026-10-15T08:55:03.636Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 3 block(s) above height 387
+[2026-10-15T08:55:03.644Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 1, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 1, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-10-15T08:55:13.036Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 395 accepted (new: true)
+[2026-10-15T08:55:13.036Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 395 accepted (new: false)
+[2026-10-15T08:55:13.111Z DEBUG blacksilk_p2p::net::blocks] peer 2: block efd2c19e03f0 at height 395 received
+[2026-10-15T08:55:13.163Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 395 accepted (new: false)
+[2026-10-15T08:55:40.212Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: addr with 1 entries
+[2026-10-15T08:55:40.245Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-10-15T08:55:40.302Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T08:58:17.920Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T08:58:17.955Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-10-15T08:58:17.955Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: addr with 1 entries
+[2026-10-15T08:58:22.030Z DEBUG blacksilk_p2p::net::conn] peer 5 is 127.0.0.1:40590
+[2026-10-15T08:58:22.030Z INFO  blacksilk_p2p::net::conn] connected inbound peer 5 (height 40)
+[2026-10-15T08:58:22.030Z DEBUG blacksilk_p2p::net::addr_relay] peer 5: getaddr answered with 7 addresses
+[2026-10-15T08:58:22.030Z DEBUG blacksilk_p2p::net::addr_relay] peer 5: addr with 1 entries
+[2026-10-15T08:58:22.061Z DEBUG blacksilk_p2p::net::headers] peer 5: 40 headers up to height 40 accepted (new: false)
+[2026-10-15T08:58:22.062Z DEBUG blacksilk_p2p::net::headers] peer 5: 40 headers up to height 40 accepted (new: false)
+[2026-10-15T08:58:22.139Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 40 accepted (new: false)
+[2026-10-15T08:58:22.559Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 41 accepted (new: false)
+[2026-10-15T08:58:22.674Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 48 accepted (new: false)
+[2026-10-15T08:58:23.328Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 49 accepted (new: false)
+[2026-10-15T08:58:23.349Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 56 accepted (new: false)
+[2026-10-15T08:58:24.178Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 60 accepted (new: false)
+[2026-10-15T08:58:24.307Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 64 accepted (new: false)
+[2026-10-15T08:58:25.029Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 65 accepted (new: false)
+[2026-10-15T08:58:25.184Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 72 accepted (new: false)
+[2026-10-15T08:58:25.870Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 73 accepted (new: false)
+[2026-10-15T08:58:26.008Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 80 accepted (new: false)
+[2026-10-15T08:58:26.666Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 84 accepted (new: false)
+[2026-10-15T08:58:26.778Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 88 accepted (new: false)
+[2026-10-15T08:58:27.458Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 89 accepted (new: false)
+[2026-10-15T08:58:27.572Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 96 accepted (new: false)
+[2026-10-15T08:58:28.261Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 97 accepted (new: false)
+[2026-10-15T08:58:28.370Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 104 accepted (new: false)
+[2026-10-15T08:58:28.844Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 107 accepted (new: false)
+[2026-10-15T08:58:28.957Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 112 accepted (new: false)
+[2026-10-15T08:58:29.671Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 113 accepted (new: false)
+[2026-10-15T08:58:29.801Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 120 accepted (new: false)
+[2026-10-15T08:58:30.559Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 123 accepted (new: false)
+[2026-10-15T08:58:30.675Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 128 accepted (new: false)
+[2026-10-15T08:58:31.340Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 133 accepted (new: false)
+[2026-10-15T08:58:31.465Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 136 accepted (new: false)
+[2026-10-15T08:58:32.381Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-10-15T08:58:32.406Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: addr with 1 entries
+[2026-10-15T08:58:32.417Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 139 accepted (new: false)
+[2026-10-15T08:58:32.518Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 144 accepted (new: false)
+[2026-10-15T08:58:33.284Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 152 accepted (new: false)
+[2026-10-15T08:58:34.375Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 153 accepted (new: false)
+[2026-10-15T08:58:34.535Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 160 accepted (new: false)
+[2026-10-15T08:58:35.665Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 162 accepted (new: false)
+[2026-10-15T08:58:35.781Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 168 accepted (new: false)
+[2026-10-15T08:58:37.062Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 170 accepted (new: false)
+[2026-10-15T08:58:37.132Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 176 accepted (new: false)
+[2026-10-15T08:58:38.122Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 177 accepted (new: false)
+[2026-10-15T08:58:38.220Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 184 accepted (new: false)
+[2026-10-15T08:58:39.578Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 185 accepted (new: false)
+[2026-10-15T08:58:39.659Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 192 accepted (new: false)
+[2026-10-15T08:58:40.730Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 193 accepted (new: false)
+[2026-10-15T08:58:40.812Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 200 accepted (new: false)
+[2026-10-15T08:58:42.242Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 202 accepted (new: false)
+[2026-10-15T08:58:42.426Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 208 accepted (new: false)
+[2026-10-15T08:58:43.408Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 209 accepted (new: false)
+[2026-10-15T08:58:43.537Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 216 accepted (new: false)
+[2026-10-15T08:58:44.812Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 217 accepted (new: false)
+[2026-10-15T08:58:44.971Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 224 accepted (new: false)
+[2026-10-15T08:58:45.787Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 226 accepted (new: false)
+[2026-10-15T08:58:45.950Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 232 accepted (new: false)
+[2026-10-15T08:58:47.229Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 233 accepted (new: false)
+[2026-10-15T08:58:47.340Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 234 accepted (new: false)
+[2026-10-15T08:58:47.446Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 240 accepted (new: false)
+[2026-10-15T08:58:48.302Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 242 accepted (new: false)
+[2026-10-15T08:58:48.442Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 248 accepted (new: false)
+[2026-10-15T08:58:49.643Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 249 accepted (new: false)
+[2026-10-15T08:58:49.744Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 256 accepted (new: false)
+[2026-10-15T08:58:50.952Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 258 accepted (new: false)
+[2026-10-15T08:58:51.070Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 264 accepted (new: false)
+[2026-10-15T08:58:52.702Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 266 accepted (new: false)
+[2026-10-15T08:58:52.770Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 271 accepted (new: false)
+[2026-10-15T08:58:52.917Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 272 accepted (new: false)
+[2026-10-15T08:58:54.077Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 274 accepted (new: false)
+[2026-10-15T08:58:54.153Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 280 accepted (new: false)
+[2026-10-15T08:58:55.210Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 283 accepted (new: false)
+[2026-10-15T08:58:55.349Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 288 accepted (new: false)
+[2026-10-15T08:58:56.622Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 289 accepted (new: false)
+[2026-10-15T08:58:56.753Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 296 accepted (new: false)
+[2026-10-15T08:58:58.075Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 297 accepted (new: false)
+[2026-10-15T08:58:58.191Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 304 accepted (new: false)
+[2026-10-15T08:58:59.216Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 305 accepted (new: false)
+[2026-10-15T08:58:59.324Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 312 accepted (new: false)
+[2026-10-15T08:59:00.671Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 313 accepted (new: false)
+[2026-10-15T08:59:00.699Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 320 accepted (new: false)
+[2026-10-15T08:59:02.257Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 323 accepted (new: false)
+[2026-10-15T08:59:02.417Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 328 accepted (new: false)
+[2026-10-15T08:59:03.463Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 329 accepted (new: false)
+[2026-10-15T08:59:03.568Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 336 accepted (new: false)
+[2026-10-15T08:59:05.045Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T08:59:05.167Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 337 accepted (new: false)
+[2026-10-15T08:59:05.310Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 344 accepted (new: false)
+[2026-10-15T08:59:06.643Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 345 accepted (new: false)
+[2026-10-15T08:59:06.818Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 352 accepted (new: false)
+[2026-10-15T08:59:08.305Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 353 accepted (new: false)
+[2026-10-15T08:59:08.411Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 359 accepted (new: false)
+[2026-10-15T08:59:08.535Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 360 accepted (new: false)
+[2026-10-15T08:59:09.970Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 361 accepted (new: false)
+[2026-10-15T08:59:10.251Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 368 accepted (new: false)
+[2026-10-15T08:59:11.849Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 372 accepted (new: false)
+[2026-10-15T08:59:11.960Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 376 accepted (new: false)
+[2026-10-15T08:59:13.468Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 377 accepted (new: false)
+[2026-10-15T08:59:13.579Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 384 accepted (new: false)
+[2026-10-15T08:59:15.359Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 385 accepted (new: false)
+[2026-10-15T08:59:15.455Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 392 accepted (new: false)
+[2026-10-15T08:59:36.737Z DEBUG blacksilk_p2p::net::addr_relay] peer 5: addr with 1 entries
+[2026-10-15T08:59:36.873Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-10-15T08:59:36.890Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries

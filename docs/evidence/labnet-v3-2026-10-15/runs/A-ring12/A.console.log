@@ -1,0 +1,155 @@
+[1792048441] labnet binary: sha256 6148dc2d76e772b3d3efc37c41f4690d69f480cf0c0e0173933d80081077ee55 C:\bszkeval\labnet-v3\bin\blacksilk-labnet.exe | blacksilk-labnet 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303) | build flags: none
+[1792048442] node binary: sha256 c04129f93691c330000487230304ea596ea08be0d79a50733ea04a4832dcc669 C:/bszkeval/labnet-v3/bin\blacksilk-node.exe | blacksilk-node 0.1.0 | commit 66f12f0761c80f13c493f2c752d2f511511f3303 | build flags: none | testnet: fingerprint cacbadc8768c15fc (cacbadc8768c15fc399272108e2b9fe7a44b61b638eec9464d8aea4333cba2ca) | testnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9 | testnet: identity fe014b5706d9b0b8737404cb45dd3489efe1a648bb1b10c8f9232308d1d1ee95 | testnet: genesis b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0 | regtest: fingerprint f90fef2537cd3d0a (f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889) | regtest: rules 6ef5370540fe1388fa0fb713bca8bf4465777162f71bf7f61f13799315e469a5 | regtest: identity bc72c2dca0607b24ac771c102a6940237fcdf1a54d7294f3047624affda3bf0e | regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141 | mainnet: fingerprint d302f55e0f28079a (d302f55e0f28079a687dacab66001af20edcc517c1324486f3058973a3cdcfac) | mainnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9 | mainnet: identity 70718cc76c9b5305e3e2b524ee286ca9a573b574986b6fab9394935dd9a4759e | mainnet: genesis 59f74a4965f7302ad4db6e7993d8f3542ddb147c84819dd63dd71f9f76f784e5
+[1792048442] miner binary: sha256 1330886d7c3546850ca539306c2a9a485f4f75d6f7eab67966b0efb69066149b C:/bszkeval/labnet-v3/bin\blacksilk-miner.exe | blacksilk-miner 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303) | build flags: none
+[1792048459] 12 nodes up
+[1792048459] warm-up: miner0 alone until the mean interval of 30 blocks is at least 0.75 x 10 s (at most 60 min)
+[1792049159] warm-up done after 700 s at height 232 (difficulty 21, mean interval 7.8 s)
+[1792049159] miners running on nodes 0 and 6 (one per partition group)
+[1792051859] traffic phase over; final checks
+[1792051887] converged=true drained=true height=528
+[1792051932] late joiner synced=true peers=6 (required 5, reached after 9.9 s, max 6)
+[1792051966] miner-a: balance 7437.09782615 (fresh restore: 7437.09782615), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792052000] miner-b: balance 3123.55659547 (fresh restore: 3123.55659547), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792052034] user-1: balance 4.84853748 (fresh restore: 4.84853748), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792052068] user-2: balance 3.46105860 (fresh restore: 3.46105860), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792052102] user-3: balance 2.71998450 (fresh restore: 2.71998450), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792052102] supply: generated 10571.68400220 vs wallets 10571.68400220
+[1792052127] relay discovery: node-relay0 started
+[1792052159] relay discovery: node-relay1 started
+[1792052189] relay discovery: node-relay2 started
+[1792052193] relay discovery: joiner peers 12 before, 15 at the end; relay nodes reached after [Some(70.7673214), Some(46.9922553), Some(17.705629)] s
+{
+  "started_unix": 1792048442,
+  "binaries": {
+    "labnet": {
+      "path": "C:\\bszkeval\\labnet-v3\\bin\\blacksilk-labnet.exe",
+      "sha256": "6148dc2d76e772b3d3efc37c41f4690d69f480cf0c0e0173933d80081077ee55",
+      "version": "blacksilk-labnet 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)\nbuild flags: none"
+    },
+    "miner": {
+      "path": "C:/bszkeval/labnet-v3/bin\\blacksilk-miner.exe",
+      "sha256": "1330886d7c3546850ca539306c2a9a485f4f75d6f7eab67966b0efb69066149b",
+      "version": "blacksilk-miner 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)\nbuild flags: none"
+    },
+    "node": {
+      "path": "C:/bszkeval/labnet-v3/bin\\blacksilk-node.exe",
+      "sha256": "c04129f93691c330000487230304ea596ea08be0d79a50733ea04a4832dcc669",
+      "version": "blacksilk-node 0.1.0\ncommit 66f12f0761c80f13c493f2c752d2f511511f3303\nbuild flags: none\ntestnet: fingerprint cacbadc8768c15fc (cacbadc8768c15fc399272108e2b9fe7a44b61b638eec9464d8aea4333cba2ca)\ntestnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9\ntestnet: identity fe014b5706d9b0b8737404cb45dd3489efe1a648bb1b10c8f9232308d1d1ee95\ntestnet: genesis b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0\nregtest: fingerprint f90fef2537cd3d0a (f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889)\nregtest: rules 6ef5370540fe1388fa0fb713bca8bf4465777162f71bf7f61f13799315e469a5\nregtest: identity bc72c2dca0607b24ac771c102a6940237fcdf1a54d7294f3047624affda3bf0e\nregtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141\nmainnet: fingerprint d302f55e0f28079a (d302f55e0f28079a687dacab66001af20edcc517c1324486f3058973a3cdcfac)\nmainnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9\nmainnet: identity 70718cc76c9b5305e3e2b524ee286ca9a573b574986b6fab9394935dd9a4759e\nmainnet: genesis 59f74a4965f7302ad4db6e7993d8f3542ddb147c84819dd63dd71f9f76f784e5"
+    }
+  },
+  "duration_secs": 3734,
+  "nodes": 12,
+  "final_height": 528,
+  "partitions": 0,
+  "partition_split": 6,
+  "tx_attempts": 63,
+  "tx_submitted": 63,
+  "tx_failures": {},
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "warmup": {
+    "enabled": true,
+    "reached": true,
+    "secs": 700,
+    "end_height": 232,
+    "end_difficulty": 21,
+    "mean_interval_secs": 7.7589903866666665,
+    "window_blocks": 30,
+    "ratio": 0.75,
+    "target_secs": 10
+  },
+  "measured_secs": 2700,
+  "reorganizations": 378,
+  "max_reorg_depth": 3,
+  "reorg_depths": {
+    "1": 239,
+    "2": 118,
+    "3": 21
+  },
+  "warmup_reorganizations": 0,
+  "warmup_max_reorg_depth": 0,
+  "reorgs_by_phase": {
+    "connected": {
+      "count": 378,
+      "max_depth": 3,
+      "depths": {
+        "1": 239,
+        "2": 118,
+        "3": 21
+      }
+    }
+  },
+  "blocks_found_by_phase": {
+    "connected": {
+      "found": 372,
+      "not_on_best_chain": 14,
+      "abandoned": 211
+    },
+    "final": {
+      "found": 2,
+      "not_on_best_chain": 1,
+      "abandoned": 0
+    },
+    "warmup": {
+      "found": 232,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    }
+  },
+  "miner_prebuild": true,
+  "miner_modes": [
+    "miner0: --threads 1 --refresh 5 --light --prebuild on",
+    "miner1: --threads 1 --refresh 5 --light --prebuild on"
+  ],
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 103,
+  "stuck_incidents": 0,
+  "samples": 225,
+  "max_rss_mb": {
+    "miner0": 265.171875,
+    "miner1": 267.55078125,
+    "node0": 277.05078125,
+    "node1": 277.62109375,
+    "node10": 277.32421875,
+    "node11": 277.41015625,
+    "node2": 278.46484375,
+    "node3": 276.9453125,
+    "node4": 278.84375,
+    "node5": 279.1015625,
+    "node6": 276.64453125,
+    "node7": 277.9765625,
+    "node8": 279.52734375,
+    "node9": 276.7265625
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "topology": "ring",
+  "late_joiner_synced": true,
+  "late_joiner_peers": 6,
+  "late_joiner_required_peers": 5,
+  "late_joiner_secs_to_required": 9.8841938,
+  "late_joiner_max_peers": 6,
+  "relay_discovery": {
+    "joiner_peers_before": 12,
+    "relay_connected_after_secs": [
+      70.7673214,
+      46.9922553,
+      17.705629
+    ],
+    "joiner_peers_at_end": 15,
+    "all_reached": true
+  },
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 1057168400220,
+  "wallet_total": 1057168400220,
+  "wallet_px_total": 0,
+  "proxy_bytes": 6822264,
+  "checks_passed": true,
+  "evidence": true,
+  "evidence_notes": []
+}

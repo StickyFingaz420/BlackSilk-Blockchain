@@ -1,0 +1,895 @@
+{
+  "build_flags": "build flags: none",
+  "nodes": 12,
+  "difficulty_min": 21,
+  "difficulty_max": 36,
+  "difficulty_first_third": 26.661016949152543,
+  "difficulty_last_third": 32.59322033898305,
+  "propagation": {
+    "blocks": 219,
+    "contested_heights": 78,
+    "median_ms": 3660,
+    "p90_ms": 4194,
+    "max_ms": 5930
+  },
+  "propagation_with_contested": {
+    "blocks": 296,
+    "contested_heights": 78,
+    "median_ms": 3715,
+    "p90_ms": 12604,
+    "max_ms": 52190
+  },
+  "arrivals": {
+    "blocks": 373,
+    "not_seen_by_every_node": 77,
+    "all": {
+      "n": 3643,
+      "median_ms": 1986,
+      "p90_ms": 5406,
+      "max_ms": 52190
+    },
+    "receivers": [
+      {
+        "node": 0,
+        "blocks": 191,
+        "never_seen": 36,
+        "arrival": {
+          "n": 155,
+          "median_ms": 3703,
+          "p90_ms": 13331,
+          "max_ms": 52190
+        }
+      },
+      {
+        "node": 1,
+        "blocks": 373,
+        "never_seen": 38,
+        "arrival": {
+          "n": 335,
+          "median_ms": 2889,
+          "p90_ms": 5205,
+          "max_ms": 39854
+        }
+      },
+      {
+        "node": 2,
+        "blocks": 373,
+        "never_seen": 37,
+        "arrival": {
+          "n": 336,
+          "median_ms": 2374,
+          "p90_ms": 4539,
+          "max_ms": 40629
+        }
+      },
+      {
+        "node": 3,
+        "blocks": 373,
+        "never_seen": 38,
+        "arrival": {
+          "n": 335,
+          "median_ms": 1877,
+          "p90_ms": 4119,
+          "max_ms": 42223
+        }
+      },
+      {
+        "node": 4,
+        "blocks": 373,
+        "never_seen": 38,
+        "arrival": {
+          "n": 335,
+          "median_ms": 2340,
+          "p90_ms": 4773,
+          "max_ms": 42998
+        }
+      },
+      {
+        "node": 5,
+        "blocks": 373,
+        "never_seen": 38,
+        "arrival": {
+          "n": 335,
+          "median_ms": 708,
+          "p90_ms": 5294,
+          "max_ms": 43804
+        }
+      },
+      {
+        "node": 6,
+        "blocks": 182,
+        "never_seen": 41,
+        "arrival": {
+          "n": 141,
+          "median_ms": 3730,
+          "p90_ms": 11773,
+          "max_ms": 41378
+        }
+      },
+      {
+        "node": 7,
+        "blocks": 373,
+        "never_seen": 42,
+        "arrival": {
+          "n": 331,
+          "median_ms": 687,
+          "p90_ms": 4618,
+          "max_ms": 43695
+        }
+      },
+      {
+        "node": 8,
+        "blocks": 373,
+        "never_seen": 40,
+        "arrival": {
+          "n": 333,
+          "median_ms": 2334,
+          "p90_ms": 3927,
+          "max_ms": 42836
+        }
+      },
+      {
+        "node": 9,
+        "blocks": 373,
+        "never_seen": 38,
+        "arrival": {
+          "n": 335,
+          "median_ms": 1878,
+          "p90_ms": 3500,
+          "max_ms": 41821
+        }
+      },
+      {
+        "node": 10,
+        "blocks": 373,
+        "never_seen": 37,
+        "arrival": {
+          "n": 336,
+          "median_ms": 2362,
+          "p90_ms": 4954,
+          "max_ms": 40912
+        }
+      },
+      {
+        "node": 11,
+        "blocks": 373,
+        "never_seen": 37,
+        "arrival": {
+          "n": 336,
+          "median_ms": 2930,
+          "p90_ms": 5740,
+          "max_ms": 39608
+        }
+      }
+    ]
+  },
+  "found_after_warmup": 375,
+  "on_final_chain_after_warmup": 296,
+  "stale_after_warmup": 79,
+  "found_by_phase": {
+    "connected": {
+      "found": 373,
+      "on_final_chain": 296,
+      "stale": 77
+    },
+    "final": {
+      "found": 2,
+      "on_final_chain": 1,
+      "stale": 1
+    },
+    "warmup": {
+      "found": 231,
+      "on_final_chain": 231,
+      "stale": 0
+    }
+  },
+  "refused_at_rpc": 1,
+  "templates_abandoned_after_warmup": 211,
+  "heals": [],
+  "side_branches": [
+    {
+      "fork_height": 240,
+      "tip_height": 242,
+      "tip": "741574f7b8cb66a60aa4e4ff887563b5299ab2537a894b4baadbcfb9fc69f973",
+      "work": [
+        [
+          241,
+          21
+        ],
+        [
+          242,
+          42
+        ]
+      ],
+      "final_chain_work": [
+        [
+          241,
+          21
+        ],
+        [
+          242,
+          42
+        ]
+      ]
+    },
+    {
+      "fork_height": 251,
+      "tip_height": 252,
+      "tip": "12cb9a3fa7aa290ba8a29223fff0ff16fc95e1192b74d5029e7010fa9878f2ee",
+      "work": [
+        [
+          252,
+          22
+        ]
+      ],
+      "final_chain_work": [
+        [
+          252,
+          22
+        ]
+      ]
+    },
+    {
+      "fork_height": 257,
+      "tip_height": 258,
+      "tip": "fb50a4670c38c050f727f2cd074dcd5dd7c520a4c8ad6b1bf60a9566009ea0c3",
+      "work": [
+        [
+          258,
+          24
+        ]
+      ],
+      "final_chain_work": [
+        [
+          258,
+          24
+        ]
+      ]
+    },
+    {
+      "fork_height": 264,
+      "tip_height": 266,
+      "tip": "e720080638b3bd2d2f8a2f5ce99be54407ddb9a086a1f0d8c7ea54d5f8de4a5a",
+      "work": [
+        [
+          265,
+          26
+        ],
+        [
+          266,
+          52
+        ]
+      ],
+      "final_chain_work": [
+        [
+          265,
+          26
+        ],
+        [
+          266,
+          52
+        ]
+      ]
+    },
+    {
+      "fork_height": 275,
+      "tip_height": 277,
+      "tip": "b37b58998638ee0ee9682e9454b4ce1f12dd84ff2684fc36d89189b874c1039e",
+      "work": [
+        [
+          276,
+          26
+        ],
+        [
+          277,
+          49
+        ]
+      ],
+      "final_chain_work": [
+        [
+          276,
+          26
+        ],
+        [
+          277,
+          49
+        ]
+      ]
+    },
+    {
+      "fork_height": 282,
+      "tip_height": 283,
+      "tip": "53b19bde9f6088aff10958ad458bc9181a695c8d0e517c1c8a58dce73294d203",
+      "work": [
+        [
+          283,
+          25
+        ]
+      ],
+      "final_chain_work": [
+        [
+          283,
+          25
+        ]
+      ]
+    },
+    {
+      "fork_height": 284,
+      "tip_height": 286,
+      "tip": "90e6cf92368ba6d24e1f4dd7d0e3b9bead00a0590bd269638f2836b962f0e55c",
+      "work": [
+        [
+          285,
+          26
+        ],
+        [
+          286,
+          52
+        ]
+      ],
+      "final_chain_work": [
+        [
+          285,
+          26
+        ],
+        [
+          286,
+          52
+        ]
+      ]
+    },
+    {
+      "fork_height": 293,
+      "tip_height": 294,
+      "tip": "f9755d26913cae04a3caec0aedd077e06f1bf67b35d7e2710b5f920700b173a9",
+      "work": [
+        [
+          294,
+          26
+        ]
+      ],
+      "final_chain_work": [
+        [
+          294,
+          26
+        ]
+      ]
+    },
+    {
+      "fork_height": 294,
+      "tip_height": 295,
+      "tip": "6fd7701db2ef50de110c13456fded4ef0453f4e465c72afe84a5d95db4a6c49a",
+      "work": [
+        [
+          295,
+          26
+        ]
+      ],
+      "final_chain_work": [
+        [
+          295,
+          26
+        ]
+      ]
+    },
+    {
+      "fork_height": 298,
+      "tip_height": 299,
+      "tip": "a763f4da408b3c10814bac3473edc3ac743e4de91d4eeb0c802e8a394187d357",
+      "work": [
+        [
+          299,
+          27
+        ]
+      ],
+      "final_chain_work": [
+        [
+          299,
+          27
+        ]
+      ]
+    },
+    {
+      "fork_height": 306,
+      "tip_height": 307,
+      "tip": "72a030ccd31066e1a8e22de82f086e73e9a639d349a2ee89a4b6e65975881afa",
+      "work": [
+        [
+          307,
+          27
+        ]
+      ],
+      "final_chain_work": [
+        [
+          307,
+          27
+        ]
+      ]
+    },
+    {
+      "fork_height": 320,
+      "tip_height": 322,
+      "tip": "3567d6cc6d269526253247f2609a91a27c1951534a9d62e0f88f899e60d2d458",
+      "work": [
+        [
+          321,
+          30
+        ],
+        [
+          322,
+          61
+        ]
+      ],
+      "final_chain_work": [
+        [
+          321,
+          30
+        ],
+        [
+          322,
+          61
+        ]
+      ]
+    },
+    {
+      "fork_height": 323,
+      "tip_height": 324,
+      "tip": "10160ae8ad51ca92c369597dd860f2d3d49ffe5f77c4f7ecfa5e4ab90185c3af",
+      "work": [
+        [
+          324,
+          31
+        ]
+      ],
+      "final_chain_work": [
+        [
+          324,
+          31
+        ]
+      ]
+    },
+    {
+      "fork_height": 360,
+      "tip_height": 361,
+      "tip": "6662fa85bbddc818a7e202aba5e56fab85fac46f8ee1ee07e2b6db48e4126adb",
+      "work": [
+        [
+          361,
+          31
+        ]
+      ],
+      "final_chain_work": [
+        [
+          361,
+          31
+        ]
+      ]
+    },
+    {
+      "fork_height": 361,
+      "tip_height": 362,
+      "tip": "4878a49bc9193f7fca6a7fc529d02354eb155f17e8f4751eba4210c18f24a77d",
+      "work": [
+        [
+          362,
+          30
+        ]
+      ],
+      "final_chain_work": [
+        [
+          362,
+          30
+        ]
+      ]
+    },
+    {
+      "fork_height": 371,
+      "tip_height": 372,
+      "tip": "f76e4ebeb800a0a3d7f0fa6b0d8ef0321daea9ad4431797d3e50ecc7d32eb05a",
+      "work": [
+        [
+          372,
+          33
+        ]
+      ],
+      "final_chain_work": [
+        [
+          372,
+          33
+        ]
+      ]
+    },
+    {
+      "fork_height": 393,
+      "tip_height": 394,
+      "tip": "442ada5a31053f90088dc35895c37d556e34f45ada888f38258d358694ae2d21",
+      "work": [
+        [
+          394,
+          33
+        ]
+      ],
+      "final_chain_work": [
+        [
+          394,
+          33
+        ]
+      ]
+    },
+    {
+      "fork_height": 395,
+      "tip_height": 398,
+      "tip": "d7e373a274450e3e08a66102ba44fb6c455837b4e7291c280d8178cf162c8ef5",
+      "work": [
+        [
+          396,
+          33
+        ],
+        [
+          397,
+          66
+        ],
+        [
+          398,
+          99
+        ]
+      ],
+      "final_chain_work": [
+        [
+          396,
+          33
+        ],
+        [
+          397,
+          66
+        ],
+        [
+          398,
+          100
+        ]
+      ]
+    },
+    {
+      "fork_height": 399,
+      "tip_height": 400,
+      "tip": "d1bc1fac9c4b7b53280c4e3ea78039f7d0d353d122ca55d37653dc659abf1c04",
+      "work": [
+        [
+          400,
+          31
+        ]
+      ],
+      "final_chain_work": [
+        [
+          400,
+          31
+        ]
+      ]
+    },
+    {
+      "fork_height": 411,
+      "tip_height": 412,
+      "tip": "b436475be645c622837a9e344f93314a2fdf6fd2a168a76863a0095f6877741b",
+      "work": [
+        [
+          412,
+          30
+        ]
+      ],
+      "final_chain_work": [
+        [
+          412,
+          30
+        ]
+      ]
+    },
+    {
+      "fork_height": 414,
+      "tip_height": 415,
+      "tip": "a6e31cacd77e873235c3a94dfcaa68bbdd5ac1eb8017e8a5dde9218826fde1a3",
+      "work": [
+        [
+          415,
+          31
+        ]
+      ],
+      "final_chain_work": [
+        [
+          415,
+          31
+        ]
+      ]
+    },
+    {
+      "fork_height": 430,
+      "tip_height": 431,
+      "tip": "2000ad041c247f0ecd0fc5011adf0d639f48fd72267c98e9298fb14f4af84636",
+      "work": [
+        [
+          431,
+          33
+        ]
+      ],
+      "final_chain_work": [
+        [
+          431,
+          33
+        ]
+      ]
+    },
+    {
+      "fork_height": 450,
+      "tip_height": 452,
+      "tip": "ec4bd4c76806c06709b82e2923a816463a70ae1dcbd824c5f73c5e5269e89251",
+      "work": [
+        [
+          451,
+          31
+        ],
+        [
+          452,
+          63
+        ]
+      ],
+      "final_chain_work": [
+        [
+          451,
+          31
+        ],
+        [
+          452,
+          63
+        ]
+      ]
+    },
+    {
+      "fork_height": 455,
+      "tip_height": 458,
+      "tip": "05408cb59c2aee6d94f27c4455e8581872a7a3bafefafa406201f1b227fd7101",
+      "work": [
+        [
+          456,
+          32
+        ],
+        [
+          457,
+          65
+        ],
+        [
+          458,
+          97
+        ]
+      ],
+      "final_chain_work": [
+        [
+          456,
+          32
+        ],
+        [
+          457,
+          65
+        ],
+        [
+          458,
+          98
+        ]
+      ]
+    },
+    {
+      "fork_height": 473,
+      "tip_height": 475,
+      "tip": "cc93efd892498c9d6173d032ca48cd2d1581c07932ea506f034408a405f95bd6",
+      "work": [
+        [
+          474,
+          33
+        ],
+        [
+          475,
+          66
+        ]
+      ],
+      "final_chain_work": [
+        [
+          474,
+          33
+        ],
+        [
+          475,
+          66
+        ]
+      ]
+    },
+    {
+      "fork_height": 478,
+      "tip_height": 479,
+      "tip": "9e8d6f88079fd3afd861a6198ed804425571341446ee51bd34246a8e0c96ddc2",
+      "work": [
+        [
+          479,
+          32
+        ]
+      ],
+      "final_chain_work": [
+        [
+          479,
+          32
+        ]
+      ]
+    },
+    {
+      "fork_height": 479,
+      "tip_height": 480,
+      "tip": "3b9d0aa12b618b4fc63507353085a833dc92226f1495fbc517c0c239e93c8d33",
+      "work": [
+        [
+          480,
+          32
+        ]
+      ],
+      "final_chain_work": [
+        [
+          480,
+          32
+        ]
+      ]
+    },
+    {
+      "fork_height": 481,
+      "tip_height": 482,
+      "tip": "87e3a7bbf09429218ae63c8eb05f363b3752fb2d8966375711c9c95dee7098a5",
+      "work": [
+        [
+          482,
+          32
+        ]
+      ],
+      "final_chain_work": [
+        [
+          482,
+          32
+        ]
+      ]
+    },
+    {
+      "fork_height": 504,
+      "tip_height": 506,
+      "tip": "87a04918a4fb8d49e3450cec68bc890434c63d04dc479974bd985fe8166bcabe",
+      "work": [
+        [
+          505,
+          32
+        ],
+        [
+          506,
+          64
+        ]
+      ],
+      "final_chain_work": [
+        [
+          505,
+          32
+        ],
+        [
+          506,
+          64
+        ]
+      ]
+    },
+    {
+      "fork_height": 527,
+      "tip_height": 528,
+      "tip": "d5f6e8386f9f56686fd86b2076b27628b024aa9feaf167c5f1a9a0d9b296a46a",
+      "work": [
+        [
+          528,
+          35
+        ]
+      ],
+      "final_chain_work": [
+        [
+          528,
+          35
+        ]
+      ]
+    }
+  ],
+  "late_joiner_getaddr_answer": 3,
+  "late_joiner": [
+    "    0.28 s  connected outbound peer 1 (height 528) -> 1 peers",
+    "    0.28 s  peer 1: addr with 1 entries",
+    "    0.28 s  peer 1: addr with 3 entries",
+    "    2.45 s  connected outbound peer 2 (height 528) -> 2 peers",
+    "    2.45 s  connected outbound peer 3 (height 528) -> 3 peers",
+    "    2.45 s  peer 2: addr with 1 entries",
+    "    2.45 s  peer 3: addr with 1 entries",
+    "    2.45 s  peer 2: addr with 3 entries",
+    "    2.45 s  peer 3: addr with 5 entries",
+    "    4.55 s  connected block-relay-only outbound peer 4 (height 528) -> 4 peers",
+    "    4.55 s  connected block-relay-only outbound peer 5 (height 528) -> 5 peers",
+    "    4.55 s  connected outbound peer 6 (height 528) -> 6 peers",
+    "    4.55 s  peer 6: addr with 1 entries",
+    "    4.55 s  peer 6: addr with 4 entries",
+    "  102.68 s  connected outbound peer 7 (height 528) -> 7 peers",
+    "  102.68 s  peer 7: addr with 1 entries",
+    "  102.68 s  peer 7: addr with 4 entries",
+    "  133.18 s  disconnected peer 7 -> 6 peers"
+  ],
+  "relay_joiner": [
+    "    0.27 s  connected outbound peer 1 (height 528) -> 1 peers",
+    "    0.27 s  peer 1: addr with 1 entries",
+    "    0.27 s  peer 1: addr with 4 entries",
+    "    2.45 s  connected outbound peer 2 (height 528) -> 2 peers",
+    "    2.45 s  peer 2: addr with 1 entries",
+    "    2.46 s  peer 2: addr with 6 entries",
+    "    2.48 s  connected outbound peer 3 (height 528) -> 3 peers",
+    "    2.48 s  peer 3: addr with 1 entries",
+    "    2.48 s  peer 3: addr with 4 entries",
+    "    4.64 s  connected outbound peer 4 (height 528) -> 4 peers",
+    "    4.64 s  connected outbound peer 5 (height 528) -> 5 peers",
+    "    4.64 s  peer 5: addr with 1 entries",
+    "    4.64 s  connected outbound peer 6 (height 528) -> 6 peers",
+    "    4.64 s  peer 4: addr with 1 entries",
+    "    4.64 s  peer 4: addr with 5 entries",
+    "    4.64 s  peer 6: addr with 1 entries",
+    "    4.64 s  peer 5: addr with 4 entries",
+    "    4.64 s  peer 6: addr with 4 entries",
+    "    4.67 s  connected outbound peer 7 (height 528) -> 7 peers",
+    "    4.67 s  peer 7: addr with 1 entries",
+    "    4.67 s  peer 7: addr with 5 entries",
+    "    6.89 s  connected outbound peer 8 (height 528) -> 8 peers",
+    "    6.89 s  peer 8: addr with 1 entries",
+    "    6.89 s  peer 8: addr with 6 entries",
+    "    6.89 s  connected outbound peer 9 (height 528) -> 9 peers",
+    "    6.89 s  peer 9: addr with 1 entries",
+    "    6.89 s  peer 9: addr with 4 entries",
+    "    9.07 s  connected outbound peer 10 (height 528) -> 10 peers",
+    "    9.07 s  peer 10: addr with 1 entries",
+    "    9.07 s  peer 10: addr with 4 entries",
+    "    9.08 s  connected outbound peer 11 (height 528) -> 11 peers",
+    "    9.08 s  peer 11: addr with 1 entries",
+    "    9.08 s  peer 11: addr with 6 entries",
+    "   11.25 s  connected outbound peer 12 (height 528) -> 12 peers",
+    "   11.25 s  peer 12: addr with 1 entries",
+    "   11.25 s  peer 12: addr with 5 entries",
+    "   20.19 s  peer 1: addr with 1 entries",
+    "   20.23 s  peer 2: addr with 1 entries",
+    "   20.26 s  peer 4: addr with 1 entries",
+    "   20.29 s  peer 6: addr with 1 entries",
+    "   20.32 s  peer 5: addr with 1 entries",
+    "   20.37 s  peer 9: addr with 1 entries",
+    "   20.41 s  peer 11: addr with 1 entries",
+    "   20.44 s  peer 12: addr with 1 entries",
+    "   20.48 s  peer 10: addr with 1 entries",
+    "   20.51 s  peer 8: addr with 1 entries",
+    "   20.56 s  peer 7: addr with 1 entries",
+    "   20.59 s  peer 3: addr with 1 entries",
+    "   22.03 s  connected outbound peer 13 (height 0) -> 13 peers",
+    "   22.03 s  peer 13: addr with 1 entries",
+    "   22.03 s  peer 13: addr with 5 entries",
+    "   51.69 s  peer 3: addr with 1 entries",
+    "   51.72 s  peer 7: addr with 1 entries",
+    "   51.76 s  peer 8: addr with 1 entries",
+    "   51.79 s  peer 10: addr with 1 entries",
+    "   51.94 s  peer 12: addr with 1 entries",
+    "   51.94 s  peer 11: addr with 1 entries",
+    "   51.94 s  connected outbound peer 14 (height 0) -> 14 peers",
+    "   51.98 s  peer 9: addr with 1 entries",
+    "   51.99 s  peer 14: addr with 1 entries",
+    "   52.03 s  peer 5: addr with 1 entries",
+    "   52.06 s  peer 6: addr with 1 entries",
+    "   52.11 s  peer 4: addr with 1 entries",
+    "   52.14 s  peer 2: addr with 1 entries",
+    "   52.25 s  peer 1: addr with 1 entries",
+    "   52.49 s  peer 14: addr with 6 entries",
+    "   82.53 s  peer 13: addr with 1 entries",
+    "   82.56 s  peer 9: addr with 1 entries",
+    "   82.56 s  peer 6: addr with 1 entries",
+    "   82.59 s  peer 12: addr with 1 entries",
+    "   82.60 s  peer 4: addr with 1 entries",
+    "   82.67 s  peer 7: addr with 1 entries",
+    "   84.20 s  connected outbound peer 15 (height 0) -> 15 peers",
+    "   84.20 s  peer 15: addr with 1 entries",
+    "   84.20 s  peer 15: addr with 7 entries"
+  ]
+}

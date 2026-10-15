@@ -1,0 +1,76 @@
+{
+ "binaries": {
+  "labnet": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "miner": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "node": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  }
+ },
+ "selftest_missing": [],
+ "grep_hits": {
+  "is_invalid": {
+   "count": 0,
+   "first": []
+  },
+  "misbehaved": {
+   "count": 0,
+   "first": []
+  },
+  "inbound_limit": {
+   "count": 0,
+   "first": []
+  },
+  "panic": {
+   "count": 0,
+   "first": []
+  },
+  "ERROR": {
+   "count": 0,
+   "first": []
+  },
+  "halt": {
+   "count": 0,
+   "first": []
+  }
+ },
+ "final_chain_blocks": 395,
+ "final_chain_blocks_not_logged_by_every_node": {
+  "count": 0,
+  "first": {}
+ },
+ "arrivals_by_hop_all": {
+  "n/a": {
+   "n": 1340,
+   "median_ms": 1298,
+   "p90_ms": 1960,
+   "max_ms": 204465
+  }
+ },
+ "arrivals_by_hop_final_chain": {
+  "n/a": {
+   "n": 1320,
+   "median_ms": 1296,
+   "p90_ms": 1955,
+   "max_ms": 204465
+  }
+ },
+ "side_branches": {
+  "count": 4,
+  "heavier_than_final_over_same_heights": 0,
+  "equal_work_ties": 4,
+  "max_len": 1
+ }
+}

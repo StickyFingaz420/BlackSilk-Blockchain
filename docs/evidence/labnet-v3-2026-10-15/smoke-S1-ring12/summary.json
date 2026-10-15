@@ -1,0 +1,140 @@
+{
+  "started_unix": 1792043950,
+  "binaries": {
+    "labnet": {
+      "path": "C:\\bszkeval\\labnet-v3\\bin\\blacksilk-labnet.exe",
+      "sha256": "6148dc2d76e772b3d3efc37c41f4690d69f480cf0c0e0173933d80081077ee55",
+      "version": "blacksilk-labnet 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)\nbuild flags: none"
+    },
+    "miner": {
+      "path": "C:/bszkeval/labnet-v3/bin\\blacksilk-miner.exe",
+      "sha256": "1330886d7c3546850ca539306c2a9a485f4f75d6f7eab67966b0efb69066149b",
+      "version": "blacksilk-miner 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)\nbuild flags: none"
+    },
+    "node": {
+      "path": "C:/bszkeval/labnet-v3/bin\\blacksilk-node.exe",
+      "sha256": "c04129f93691c330000487230304ea596ea08be0d79a50733ea04a4832dcc669",
+      "version": "blacksilk-node 0.1.0\ncommit 66f12f0761c80f13c493f2c752d2f511511f3303\nbuild flags: none\ntestnet: fingerprint cacbadc8768c15fc (cacbadc8768c15fc399272108e2b9fe7a44b61b638eec9464d8aea4333cba2ca)\ntestnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9\ntestnet: identity fe014b5706d9b0b8737404cb45dd3489efe1a648bb1b10c8f9232308d1d1ee95\ntestnet: genesis b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0\nregtest: fingerprint f90fef2537cd3d0a (f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889)\nregtest: rules 6ef5370540fe1388fa0fb713bca8bf4465777162f71bf7f61f13799315e469a5\nregtest: identity bc72c2dca0607b24ac771c102a6940237fcdf1a54d7294f3047624affda3bf0e\nregtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141\nmainnet: fingerprint d302f55e0f28079a (d302f55e0f28079a687dacab66001af20edcc517c1324486f3058973a3cdcfac)\nmainnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9\nmainnet: identity 70718cc76c9b5305e3e2b524ee286ca9a573b574986b6fab9394935dd9a4759e\nmainnet: genesis 59f74a4965f7302ad4db6e7993d8f3542ddb147c84819dd63dd71f9f76f784e5"
+    }
+  },
+  "duration_secs": 466,
+  "nodes": 12,
+  "final_height": 183,
+  "partitions": 0,
+  "partition_split": 6,
+  "tx_attempts": 2,
+  "tx_submitted": 2,
+  "tx_failures": {},
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "warmup": {
+    "enabled": true,
+    "reached": false,
+    "secs": 180,
+    "end_height": 121,
+    "end_difficulty": 3,
+    "mean_interval_secs": 1.89299002,
+    "window_blocks": 30,
+    "ratio": 0.75,
+    "target_secs": 10
+  },
+  "measured_secs": 180,
+  "reorganizations": 70,
+  "max_reorg_depth": 7,
+  "reorg_depths": {
+    "1": 22,
+    "2": 10,
+    "3": 10,
+    "4": 8,
+    "5": 10,
+    "6": 9,
+    "7": 1
+  },
+  "warmup_reorganizations": 0,
+  "warmup_max_reorg_depth": 0,
+  "reorgs_by_phase": {
+    "connected": {
+      "count": 70,
+      "max_depth": 7,
+      "depths": {
+        "1": 22,
+        "2": 10,
+        "3": 10,
+        "4": 8,
+        "5": 10,
+        "6": 9,
+        "7": 1
+      }
+    }
+  },
+  "blocks_found_by_phase": {
+    "connected": {
+      "found": 100,
+      "not_on_best_chain": 8,
+      "abandoned": 21
+    },
+    "warmup": {
+      "found": 122,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    }
+  },
+  "miner_prebuild": false,
+  "miner_modes": [
+    "miner0: --threads 1 --refresh 5 --light",
+    "miner1: --threads 1 --refresh 5 --light"
+  ],
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 3,
+  "stuck_incidents": 0,
+  "samples": 24,
+  "max_rss_mb": {
+    "miner0": 264.828125,
+    "miner1": 264.390625,
+    "node0": 275.6328125,
+    "node1": 274.94921875,
+    "node10": 274.75390625,
+    "node11": 280.75390625,
+    "node2": 275.08984375,
+    "node3": 275.14453125,
+    "node4": 276.75390625,
+    "node5": 274.7109375,
+    "node6": 275.1953125,
+    "node7": 274.5546875,
+    "node8": 274.70703125,
+    "node9": 275.28125
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "topology": "ring",
+  "late_joiner_synced": true,
+  "late_joiner_peers": 6,
+  "late_joiner_required_peers": 5,
+  "late_joiner_secs_to_required": 9.8907584,
+  "late_joiner_max_peers": 6,
+  "relay_discovery": {
+    "joiner_peers_before": 12,
+    "relay_connected_after_secs": [
+      8.2323877
+    ],
+    "joiner_peers_at_end": 13,
+    "all_reached": true
+  },
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 366465235323,
+  "wallet_total": 366465235323,
+  "wallet_px_total": 0,
+  "proxy_bytes": 1477839,
+  "checks_passed": true,
+  "evidence": false,
+  "evidence_notes": [
+    "the warm-up did not reach its criterion",
+    "miners without --prebuild",
+    "measured phase 180 s, shorter than 600 s"
+  ]
+}

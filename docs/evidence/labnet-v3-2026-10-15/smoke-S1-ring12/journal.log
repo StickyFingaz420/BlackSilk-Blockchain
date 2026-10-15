@@ -1,0 +1,18 @@
+[1792043949] labnet binary: sha256 6148dc2d76e772b3d3efc37c41f4690d69f480cf0c0e0173933d80081077ee55 C:\bszkeval\labnet-v3\bin\blacksilk-labnet.exe | blacksilk-labnet 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303) | build flags: none
+[1792043949] node binary: sha256 c04129f93691c330000487230304ea596ea08be0d79a50733ea04a4832dcc669 C:/bszkeval/labnet-v3/bin\blacksilk-node.exe | blacksilk-node 0.1.0 | commit 66f12f0761c80f13c493f2c752d2f511511f3303 | build flags: none | testnet: fingerprint cacbadc8768c15fc (cacbadc8768c15fc399272108e2b9fe7a44b61b638eec9464d8aea4333cba2ca) | testnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9 | testnet: identity fe014b5706d9b0b8737404cb45dd3489efe1a648bb1b10c8f9232308d1d1ee95 | testnet: genesis b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0 | regtest: fingerprint f90fef2537cd3d0a (f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889) | regtest: rules 6ef5370540fe1388fa0fb713bca8bf4465777162f71bf7f61f13799315e469a5 | regtest: identity bc72c2dca0607b24ac771c102a6940237fcdf1a54d7294f3047624affda3bf0e | regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141 | mainnet: fingerprint d302f55e0f28079a (d302f55e0f28079a687dacab66001af20edcc517c1324486f3058973a3cdcfac) | mainnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9 | mainnet: identity 70718cc76c9b5305e3e2b524ee286ca9a573b574986b6fab9394935dd9a4759e | mainnet: genesis 59f74a4965f7302ad4db6e7993d8f3542ddb147c84819dd63dd71f9f76f784e5
+[1792043950] miner binary: sha256 1330886d7c3546850ca539306c2a9a485f4f75d6f7eab67966b0efb69066149b C:/bszkeval/labnet-v3/bin\blacksilk-miner.exe | blacksilk-miner 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303) | build flags: none
+[1792043967] 12 nodes up
+[1792043967] warm-up: miner0 alone until the mean interval of 30 blocks is at least 0.75 x 10 s (at most 3 min)
+[1792044147] warm-up ended WITHOUT reaching its criterion after 180 s at height 121 (difficulty 3, mean interval 1.9 s)
+[1792044147] miners running on nodes 0 and 6 (one per partition group)
+[1792044328] traffic phase over; final checks
+[1792044348] converged=true drained=true height=183
+[1792044368] late joiner synced=true peers=6 (required 5, reached after 9.9 s, max 6)
+[1792044376] miner-a: balance 2962.74717346 (fresh restore: 2962.74717346), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792044385] miner-b: balance 700.97975882 (fresh restore: 700.97975882), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792044393] user-1: balance 0.00000000 (fresh restore: 0.00000000), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792044402] user-2: balance 0.92542095 (fresh restore: 0.92542095), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792044411] user-3: balance 0.00000000 (fresh restore: 0.00000000), private 0.00000000 (fresh restore: 0.00000000) OK
+[1792044411] supply: generated 3664.65235323 vs wallets 3664.65235323
+[1792044432] relay discovery: node-relay0 started
+[1792044434] relay discovery: joiner peers 12 before, 13 at the end; relay nodes reached after [Some(8.2323877)] s

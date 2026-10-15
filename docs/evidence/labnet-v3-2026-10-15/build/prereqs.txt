@@ -1,0 +1,2 @@
+prereq-A 2026-10-15T07:11:52Z..07:13:54Z: chrome 0, heavy none, blacksilk 0, CPU avg 8.2% (max 23.3), available 10182 MB
+prereq-B 2026-10-15T08:16:57Z..08:18:59Z: chrome 0, heavy none, blacksilk 0, CPU avg 0.5% (max 2.9), available 10168 MB

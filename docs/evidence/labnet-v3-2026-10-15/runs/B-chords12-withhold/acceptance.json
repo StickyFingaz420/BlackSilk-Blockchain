@@ -1,0 +1,554 @@
+{
+ "binaries": {
+  "labnet": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "miner": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "node": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  }
+ },
+ "summary": {
+  "checks_passed": true,
+  "evidence": true,
+  "evidence_notes": [],
+  "crashes": [],
+  "stuck_incidents": 0,
+  "misbehavior_disconnects": 0,
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": true,
+  "late_joiner_peers": 6,
+  "late_joiner_required_peers": 5,
+  "late_joiner_secs_to_required": 7.8732790999999995,
+  "late_joiner_max_peers": 6,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 790924241932,
+  "wallet_total": 790924241932,
+  "final_height": 395,
+  "duration_secs": 2418,
+  "measured_secs": 1500,
+  "warmup": {
+   "enabled": true,
+   "reached": true,
+   "secs": 632,
+   "end_height": 231,
+   "end_difficulty": 24,
+   "mean_interval_secs": 7.828331316666667,
+   "window_blocks": 30,
+   "ratio": 0.75,
+   "target_secs": 10
+  },
+  "reorganizations": 53,
+  "max_reorg_depth": 12,
+  "reorg_depths": {
+   "1": 20,
+   "3": 11,
+   "8": 11,
+   "12": 11
+  },
+  "reorgs_by_phase": {
+   "connected": {
+    "count": 12,
+    "max_depth": 1,
+    "depths": {
+     "1": 12
+    }
+   },
+   "final": {
+    "count": 11,
+    "max_depth": 3,
+    "depths": {
+     "3": 11
+    }
+   },
+   "heal": {
+    "count": 22,
+    "max_depth": 12,
+    "depths": {
+     "8": 11,
+     "12": 11
+    }
+   },
+   "partition": {
+    "count": 8,
+    "max_depth": 1,
+    "depths": {
+     "1": 8
+    }
+   }
+  },
+  "blocks_found_by_phase": {
+   "connected": {
+    "found": 126,
+    "not_on_best_chain": 4,
+    "abandoned": 108
+   },
+   "final": {
+    "found": 3,
+    "not_on_best_chain": 0,
+    "abandoned": 2
+   },
+   "heal": {
+    "found": 16,
+    "not_on_best_chain": 1,
+    "abandoned": 10
+   },
+   "partition": {
+    "found": 49,
+    "not_on_best_chain": 0,
+    "abandoned": 0
+   },
+   "warmup": {
+    "found": 231,
+    "not_on_best_chain": 0,
+    "abandoned": 0
+   }
+  },
+  "relay_discovery": {
+   "joiner_peers_before": 12,
+   "relay_connected_after_secs": [
+    74.0369465,
+    49.5201238,
+    18.9677765
+   ],
+   "joiner_peers_at_end": 15,
+   "all_reached": true
+  },
+  "tx_attempts": 31,
+  "tx_submitted": 31,
+  "tx_failures": {},
+  "partitions": 3,
+  "partition_split": 1,
+  "max_rss_mb": {
+   "miner0": 266.53515625,
+   "miner1": 267.59765625,
+   "node0": 277.28125,
+   "node1": 277.0078125,
+   "node10": 276.5546875,
+   "node11": 275.453125,
+   "node2": 276.7734375,
+   "node3": 276.21875,
+   "node4": 276.37890625,
+   "node5": 276.55078125,
+   "node6": 276.40234375,
+   "node7": 276.29296875,
+   "node8": 276.37890625,
+   "node9": 276.3984375
+  },
+  "all_equal_samples": 68,
+  "samples": 142,
+  "miner_modes": [
+   "miner0: --threads 1 --refresh 5 --light --prebuild on",
+   "miner1: --threads 1 --refresh 5 --light --prebuild on"
+  ]
+ },
+ "selftest_missing": [],
+ "grep_hits": {
+  "is_invalid": {
+   "count": 0,
+   "first": []
+  },
+  "misbehaved": {
+   "count": 0,
+   "first": []
+  },
+  "inbound_limit": {
+   "count": 0,
+   "first": []
+  },
+  "panic": {
+   "count": 0,
+   "first": []
+  },
+  "ERROR": {
+   "count": 0,
+   "first": []
+  },
+  "halt": {
+   "count": 0,
+   "first": []
+  }
+ },
+ "warn_lines": {
+  "count": 28,
+  "first": [
+   "node-e2.log: [2026-10-15T08:58:17.542Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node-e2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users can",
+   "node-late.log: [2026-10-15T08:55:39.773Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node-late is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users c",
+   "node-relay0.log: [2026-10-15T08:58:31.916Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node-relay0 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users",
+   "node-relay1.log: [2026-10-15T08:59:04.616Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node-relay1 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users",
+   "node-relay2.log: [2026-10-15T08:59:36.234Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node-relay2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users",
+   "node0.log: [2026-10-15T08:19:17.314Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node0 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node1.log: [2026-10-15T08:19:21.168Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node1 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node1.log: [2026-10-15T08:48:09.204Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node10.log: [2026-10-15T08:19:19.588Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node10 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cann",
+   "node10.log: [2026-10-15T08:48:09.043Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node11.log: [2026-10-15T08:19:20.909Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node11 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cann",
+   "node11.log: [2026-10-15T08:48:09.307Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node2.log: [2026-10-15T08:19:19.027Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node2.log: [2026-10-15T08:48:09.269Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node3.log: [2026-10-15T08:19:20.240Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node3 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node3.log: [2026-10-15T08:48:13.263Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node4.log: [2026-10-15T08:19:20.131Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node4 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node4.log: [2026-10-15T08:48:14.001Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node5.log: [2026-10-15T08:19:17.641Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node5 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node5.log: [2026-10-15T08:48:16.773Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node6.log: [2026-10-15T08:19:20.453Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node6 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node6.log: [2026-10-15T08:48:16.877Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node7.log: [2026-10-15T08:19:21.424Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node7 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node7.log: [2026-10-15T08:48:16.950Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node8.log: [2026-10-15T08:19:17.819Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node8 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node8.log: [2026-10-15T08:48:13.907Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies",
+   "node9.log: [2026-10-15T08:19:18.239Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\\node9 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users canno",
+   "node9.log: [2026-10-15T08:48:13.028Z WARN  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 12 block(s) above height 333. A reorganization this deep suggests a network partition or a hash-power attack; no depth limit applies"
+  ]
+ },
+ "final_chain_blocks": 395,
+ "final_chain_blocks_not_logged_by_every_node": {
+  "count": 0,
+  "first": {}
+ },
+ "arrivals_by_hop_all": {
+  "n/a": {
+   "n": 1340,
+   "median_ms": 1298,
+   "p90_ms": 1960,
+   "max_ms": 204465
+  }
+ },
+ "arrivals_by_hop_final_chain": {
+  "n/a": {
+   "n": 1320,
+   "median_ms": 1296,
+   "p90_ms": 1955,
+   "max_ms": 204465
+  }
+ },
+ "connected_origin_blocks": 127,
+ "side_branches": {
+  "count": 4,
+  "heavier_than_final_over_same_heights": 0,
+  "equal_work_ties": 4,
+  "max_len": 1
+ },
+ "report": {
+  "late_joiner_getaddr_answer": 8,
+  "propagation": {
+   "blocks": 113,
+   "contested_heights": 30,
+   "median_ms": 1961,
+   "p90_ms": 2031,
+   "max_ms": 2183
+  },
+  "propagation_with_contested": {
+   "blocks": 119,
+   "contested_heights": 30,
+   "median_ms": 1963,
+   "p90_ms": 2039,
+   "max_ms": 33231
+  },
+  "found_by_phase": {
+   "connected": {
+    "found": 127,
+    "on_final_chain": 120,
+    "stale": 7
+   },
+   "final": {
+    "found": 3,
+    "on_final_chain": 3,
+    "stale": 0
+   },
+   "heal": {
+    "found": 16,
+    "on_final_chain": 14,
+    "stale": 2
+   },
+   "partition": {
+    "found": 49,
+    "on_final_chain": 28,
+    "stale": 21
+   },
+   "warmup": {
+    "found": 230,
+    "on_final_chain": 230,
+    "stale": 0
+   }
+  },
+  "stale_after_warmup": 31,
+  "refused_at_rpc": 0,
+  "heals": [
+   {
+    "unix": 1792053533,
+    "converged_after_secs": 36,
+    "reorgs": [
+     [
+      1,
+      8,
+      14.4
+     ],
+     [
+      2,
+      8,
+      14.4
+     ],
+     [
+      3,
+      8,
+      18.1
+     ],
+     [
+      4,
+      8,
+      18.2
+     ],
+     [
+      5,
+      8,
+      21.7
+     ],
+     [
+      6,
+      8,
+      21.9
+     ],
+     [
+      7,
+      8,
+      22.4
+     ],
+     [
+      8,
+      8,
+      20.3
+     ],
+     [
+      9,
+      8,
+      18.8
+     ],
+     [
+      10,
+      8,
+      15.2
+     ],
+     [
+      11,
+      8,
+      15.1
+     ]
+    ],
+    "heights_before": "298/293/293/293/293/293/293/293/293/293/293/293"
+   },
+   {
+    "unix": 1792054074,
+    "converged_after_secs": 54,
+    "reorgs": [
+     [
+      1,
+      12,
+      15.2
+     ],
+     [
+      2,
+      12,
+      15.3
+     ],
+     [
+      3,
+      12,
+      19.3
+     ],
+     [
+      4,
+      12,
+      20.0
+     ],
+     [
+      5,
+      12,
+      22.8
+     ],
+     [
+      6,
+      12,
+      22.9
+     ],
+     [
+      7,
+      12,
+      23.0
+     ],
+     [
+      8,
+      12,
+      19.9
+     ],
+     [
+      9,
+      12,
+      19.0
+     ],
+     [
+      10,
+      12,
+      15.0
+     ],
+     [
+      11,
+      12,
+      15.3
+     ]
+    ],
+    "heights_before": "344/344/344/344/344/344/344/344/344/344/344/344"
+   }
+  ],
+  "difficulty_min": 24,
+  "difficulty_max": 41,
+  "difficulty_first_third": 31.272727272727273,
+  "difficulty_last_third": 31.393939393939394,
+  "templates_abandoned_after_warmup": 120,
+  "arrivals_receivers": [
+   {
+    "node": 0,
+    "never_seen": 4,
+    "n": 53,
+    "median_ms": 650,
+    "p90_ms": 690,
+    "max_ms": 11139
+   },
+   {
+    "node": 1,
+    "never_seen": 3,
+    "n": 67,
+    "median_ms": 659,
+    "p90_ms": 701,
+    "max_ms": 196890
+   },
+   {
+    "node": 2,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 663,
+    "p90_ms": 694,
+    "max_ms": 49897
+   },
+   {
+    "node": 3,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 1267,
+    "p90_ms": 1342,
+    "max_ms": 200804
+   },
+   {
+    "node": 4,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 1315,
+    "p90_ms": 1387,
+    "max_ms": 50556
+   },
+   {
+    "node": 5,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 1886,
+    "p90_ms": 1997,
+    "max_ms": 204465
+   },
+   {
+    "node": 6,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 1938,
+    "p90_ms": 2026,
+    "max_ms": 51376
+   },
+   {
+    "node": 7,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 1935,
+    "p90_ms": 2024,
+    "max_ms": 51482
+   },
+   {
+    "node": 8,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 1374,
+    "p90_ms": 1970,
+    "max_ms": 51604
+   },
+   {
+    "node": 9,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 1305,
+    "p90_ms": 1368,
+    "max_ms": 50953
+   },
+   {
+    "node": 10,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 691,
+    "p90_ms": 1334,
+    "max_ms": 50872
+   },
+   {
+    "node": 11,
+    "never_seen": 5,
+    "n": 122,
+    "median_ms": 662,
+    "p90_ms": 689,
+    "max_ms": 50098
+   }
+  ],
+  "arrivals_all": {
+   "n": 1340,
+   "median_ms": 1298,
+   "p90_ms": 1960,
+   "max_ms": 204465
+  }
+ },
+ "phase_marks_unix": {
+  "warmup_end": 1792052993,
+  "traffic_end": 1792054493,
+  "partitions": [
+   [
+    1792053353,
+    "start"
+   ],
+   [
+    1792053533,
+    "heal"
+   ],
+   [
+    1792053894,
+    "start"
+   ],
+   [
+    1792054074,
+    "heal"
+   ],
+   [
+    1792054434,
+    "start"
+   ]
+  ]
+ }
+}

@@ -1,0 +1,17 @@
+[2026-10-15T08:59:36.221Z INFO  blacksilk_node] RandomX self-test passed: 9 known answers (reference and BlackSilk, light mode) in 15.7s
+[2026-10-15T08:59:36.223Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 66f12f0761c80f13c493f2c752d2f511511f3303, build flags: none
+[2026-10-15T08:59:36.223Z INFO  blacksilk_node] regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141, consensus fingerprint f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889
+[2026-10-15T08:59:36.223Z INFO  blacksilk_node] regtest: loading runs/B-chords12-withhold\node-relay2
+[2026-10-15T08:59:36.227Z INFO  blacksilk_node] chain loaded in 3.9ms: height 0, tip 3dbdba2aca8842cd
+[2026-10-15T08:59:36.230Z INFO  blacksilk_node] P2P listening on 127.0.0.1:38321
+[2026-10-15T08:59:36.230Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:38320
+[2026-10-15T08:59:36.234Z WARN  blacksilk_node::cookie] the data directory runs/B-chords12-withhold\node-relay2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-10-15T08:59:36.234Z INFO  blacksilk_node::serve] RPC credential written to runs/B-chords12-withhold\node-relay2\rpc.cookie (clients read it: --rpc-cookie)
+[2026-10-15T08:59:36.675Z DEBUG blacksilk_p2p::net::conn] peer 1 is 127.0.0.1:38001
+[2026-10-15T08:59:36.675Z INFO  blacksilk_p2p::net::conn] connected outbound peer 1 (height 395)
+[2026-10-15T08:59:36.675Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-10-15T08:59:37.760Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 8 entries
+[2026-10-15T08:59:37.761Z DEBUG blacksilk_p2p::net::conn] peer 2 is 127.0.0.1:40606
+[2026-10-15T08:59:37.761Z INFO  blacksilk_p2p::net::conn] connected inbound peer 2 (height 395)
+[2026-10-15T08:59:37.761Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: getaddr answered with 8 addresses
+[2026-10-15T08:59:37.761Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries

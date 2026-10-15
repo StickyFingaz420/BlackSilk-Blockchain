@@ -10,6 +10,9 @@ Dockerfile text eol=lf
 
 # Block stores kept as evidence (docs/evidence/labnet-w4-2026-09-30): binary.
 docs/evidence/labnet-w4-*/runs/*/*.dat binary
+# The same for the v3 reruns (docs/evidence/labnet-v3-2026-10-15): runs and smoke.
+docs/evidence/labnet-v3-*/runs/*/*.dat binary
+docs/evidence/labnet-v3-*/smoke-*/*.dat binary
 
 # Mutation evidence (docs/evidence/mutation-*): the filter (*.args) and test
 # lists (*.tests) feed scripts that read one name per line; a checkout with

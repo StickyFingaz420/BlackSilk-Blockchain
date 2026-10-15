@@ -1,0 +1,17 @@
+[2026-10-15T08:16:29.587Z INFO  blacksilk_node] RandomX self-test passed: 9 known answers (reference and BlackSilk, light mode) in 14.2s
+[2026-10-15T08:16:29.588Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 66f12f0761c80f13c493f2c752d2f511511f3303, build flags: none
+[2026-10-15T08:16:29.588Z INFO  blacksilk_node] regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141, consensus fingerprint f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889
+[2026-10-15T08:16:29.588Z INFO  blacksilk_node] regtest: loading runs/A-ring12\node-relay2
+[2026-10-15T08:16:29.593Z INFO  blacksilk_node] chain loaded in 4.1ms: height 0, tip 3dbdba2aca8842cd
+[2026-10-15T08:16:29.595Z INFO  blacksilk_node] P2P listening on 127.0.0.1:34321
+[2026-10-15T08:16:29.595Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:34320
+[2026-10-15T08:16:29.599Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\node-relay2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-10-15T08:16:29.599Z INFO  blacksilk_node::serve] RPC credential written to runs/A-ring12\node-relay2\rpc.cookie (clients read it: --rpc-cookie)
+[2026-10-15T08:16:30.181Z DEBUG blacksilk_p2p::net::conn] peer 1 is 127.0.0.1:34001
+[2026-10-15T08:16:30.181Z INFO  blacksilk_p2p::net::conn] connected outbound peer 1 (height 528)
+[2026-10-15T08:16:30.181Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-10-15T08:16:30.988Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 7 entries
+[2026-10-15T08:16:31.856Z DEBUG blacksilk_p2p::net::conn] peer 2 is 127.0.0.1:38572
+[2026-10-15T08:16:31.856Z INFO  blacksilk_p2p::net::conn] connected inbound peer 2 (height 528)
+[2026-10-15T08:16:31.856Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: getaddr answered with 7 addresses
+[2026-10-15T08:16:31.856Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries

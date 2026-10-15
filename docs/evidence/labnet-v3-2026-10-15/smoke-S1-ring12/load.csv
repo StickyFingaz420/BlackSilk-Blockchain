@@ -1,0 +1,17 @@
+unix,cpu_pct,avail_mb,top5_cpu_secs_in_interval
+1792043984,80.9,2962,blacksilk-node#16888=15.9 blacksilk-node#14436=15.8 blacksilk-node#14124=15.5 blacksilk-node#13800=15.4 blacksilk-node#15520=15.4
+1792044016,81.6,3115,blacksilk-miner#4392=16.7 blacksilk-node#14436=15.9 blacksilk-node#13800=15.8 blacksilk-node#17704=15.5 blacksilk-node#12344=15.4
+1792044048,80.6,3122,blacksilk-miner#4392=16.5 blacksilk-node#14436=15.8 blacksilk-node#13800=15.6 blacksilk-node#18604=15.5 blacksilk-node#12344=15.5
+1792044080,73.4,2855,blacksilk-miner#4392=19.0 blacksilk-node#12344=13.3 blacksilk-node#13800=13.2 blacksilk-node#14436=13.1 blacksilk-node#7584=13.1
+1792044112,82.1,2952,BackgroundDownload#19152=65.8 blacksilk-miner#4392=21.9 blacksilk-node#18604=9.6 blacksilk-node#2368=9.2 blacksilk-node#11268=9.2
+1792044143,68.6,2929,BackgroundDownload#19152=33.7 blacksilk-miner#4392=22.3 blacksilk-node#2368=9.9 blacksilk-node#17704=9.8 blacksilk-node#7584=9.8
+1792044175,68.3,2775,blacksilk-miner#4392=24.6 blacksilk-miner#12056=24.0 RuntimeBroker#4828=12.7 blacksilk-node#18604=11.4 blacksilk-node#12348=9.9
+1792044207,79.9,2780,blacksilk-miner#4392=24.0 blacksilk-miner#12056=21.4 blacksilk-node#16888=16.0 blacksilk-node#14436=15.7 blacksilk-node#13800=15.6
+1792044239,65.4,2793,blacksilk-miner#12056=26.8 blacksilk-miner#4392=23.2 blacksilk-node#11268=10.0 blacksilk-node#7584=9.9 blacksilk-node#12348=9.8
+1792044271,62,2788,blacksilk-miner#4392=28.0 blacksilk-miner#12056=25.7 blacksilk-node#14124=8.8 blacksilk-node#14436=8.8 blacksilk-node#13800=8.8
+1792044302,43.8,2839,blacksilk-miner#4392=30.5 blacksilk-miner#12056=29.1 blacksilk-node#14436=3.8 blacksilk-node#11268=3.7 blacksilk-node#12348=3.6
+1792044334,48.7,3358,blacksilk-node#2368=6.7 blacksilk-node#7584=6.6 blacksilk-node#12348=6.5 blacksilk-node#11268=6.4 blacksilk-node#18604=6.1
+1792044366,38.8,3082,blacksilk-node#16644=94.1 powershell#18124=1.4 Code#6732=0.5 claude#988=0.3 Code#9488=0.3
+1792044398,86.4,2819,blacksilk-labnet#10188=198.2 blacksilk-node#16644=17.6 powershell#18124=1.7 Code#6732=0.5 chrome#14676=0.3
+1792044431,80.9,2875,blacksilk-labnet#10188=105.7 blacksilk-node#12552=103.4 blacksilk-node#12872=5.6 powershell#18124=1.8 Code#6732=0.5
+1792044462,10.8,6504,Code#9488=1.8 powershell#18124=1.7 Code#6732=1.2 claude#988=0.8 chrome#14676=0.1
