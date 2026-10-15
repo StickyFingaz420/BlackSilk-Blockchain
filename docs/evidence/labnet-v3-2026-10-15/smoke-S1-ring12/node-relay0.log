@@ -1,0 +1,34 @@
+[2026-10-15T06:07:12.399Z INFO  blacksilk_node] RandomX self-test passed: 9 known answers (reference and BlackSilk, light mode) in 6.5s
+[2026-10-15T06:07:12.400Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 66f12f0761c80f13c493f2c752d2f511511f3303, build flags: none
+[2026-10-15T06:07:12.400Z INFO  blacksilk_node] regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141, consensus fingerprint f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889
+[2026-10-15T06:07:12.400Z INFO  blacksilk_node] regtest: loading smoke/S1-ring12\node-relay0
+[2026-10-15T06:07:12.406Z INFO  blacksilk_node] chain loaded in 6.4ms: height 0, tip 3dbdba2aca8842cd
+[2026-10-15T06:07:12.411Z INFO  blacksilk_node] P2P listening on 127.0.0.1:44281
+[2026-10-15T06:07:12.412Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:44280
+[2026-10-15T06:07:12.416Z WARN  blacksilk_node::cookie] the data directory smoke/S1-ring12\node-relay0 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-10-15T06:07:12.416Z INFO  blacksilk_node::serve] RPC credential written to smoke/S1-ring12\node-relay0\rpc.cookie (clients read it: --rpc-cookie)
+[2026-10-15T06:07:12.664Z DEBUG blacksilk_p2p::net::conn] peer 1 is 127.0.0.1:44001
+[2026-10-15T06:07:12.664Z INFO  blacksilk_p2p::net::conn] connected outbound peer 1 (height 183)
+[2026-10-15T06:07:12.664Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-10-15T06:07:12.664Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 5 entries
+[2026-10-15T06:07:13.247Z DEBUG blacksilk_p2p::net::conn] peer 2 is 127.0.0.1:35282
+[2026-10-15T06:07:13.247Z INFO  blacksilk_p2p::net::conn] connected inbound peer 2 (height 183)
+[2026-10-15T06:07:13.247Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: getaddr answered with 5 addresses
+[2026-10-15T06:07:13.247Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-10-15T06:07:13.582Z INFO  blacksilk_chain::manager::template] caught up at height 0: block templates are served from now on
+[2026-10-15T06:07:13.754Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 62e0c9b33267 at height 1 received
+[2026-10-15T06:07:13.754Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 76f602e634ec at height 4 received
+[2026-10-15T06:07:13.754Z DEBUG blacksilk_p2p::net::blocks] peer 1: block e07503680185 at height 2 received
+[2026-10-15T06:07:13.754Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1a7548beae45 at height 5 received
+[2026-10-15T06:07:13.754Z DEBUG blacksilk_p2p::net::blocks] peer 1: block ca285abb8f0c at height 3 received
+[2026-10-15T06:07:13.754Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 1c5ac7a9e5ab at height 6 received
+[2026-10-15T06:07:13.759Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 0a686f7a9f87 at height 7 received
+[2026-10-15T06:07:13.762Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 71562ac49b79 at height 8 received
+[2026-10-15T06:07:14.307Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 0d3af064c87f at height 10 received
+[2026-10-15T06:07:14.307Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 63a2bc1b5f80 at height 13 received
+[2026-10-15T06:07:14.307Z DEBUG blacksilk_p2p::net::blocks] peer 1: block d4698def3de3 at height 14 received
+[2026-10-15T06:07:14.311Z DEBUG blacksilk_p2p::net::blocks] peer 1: block b152d9cd3d17 at height 15 received
+[2026-10-15T06:07:14.313Z DEBUG blacksilk_p2p::net::blocks] peer 1: block b2a84b45e99c at height 16 received
+[2026-10-15T06:07:14.346Z DEBUG blacksilk_p2p::net::blocks] peer 2: block cb37fa7ef528 at height 9 received
+[2026-10-15T06:07:14.346Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 56018a4f5952 at height 11 received
+[2026-10-15T06:07:14.346Z DEBUG blacksilk_p2p::net::blocks] peer 2: block 5dc2fbf4e6cf at height 12 received

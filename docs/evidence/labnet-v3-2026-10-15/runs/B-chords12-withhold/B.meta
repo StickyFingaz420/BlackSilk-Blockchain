@@ -1,0 +1,8 @@
+cwd: C:/bszkeval/labnet-v3
+env: RUST_LOG=info,blacksilk_p2p::net=debug BLACKSILK_REQUIRE_CLEAN_BUILD=1
+cmd: bin/blacksilk-labnet.exe --bin-dir C:/bszkeval/labnet-v3/bin --out runs/B-chords12-withhold --nodes 12 --topology ring-chords --duration-mins 25 --partition-every-mins 6 --partition-mins 3 --partition-split 1 --relay-joiners 3 --base-port 38000 --latency-ms 20 --jitter-ms 10 --tx-every-secs 20 --miner-threads 1 --evidence
+start_utc: 2026-10-15T08:19:03Z
+labnet_winpid: 18316
+sampler_winpid: 14732
+end_utc: 2026-10-15T08:59:40Z
+exit: 0

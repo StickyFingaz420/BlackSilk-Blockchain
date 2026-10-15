@@ -1,0 +1,14 @@
+== node --randomx-self-test
+RandomX self-test passed: 9 known answers (reference and BlackSilk, light mode, the node's verification path) in 4.3s
+
+real	0m4.662s
+user	0m0.015s
+sys	0m0.000s
+(exit 0)
+== miner --randomx-self-test --light
+[2026-10-15T05:59:02.831Z INFO  blacksilk_miner] RandomX self-test passed: 9 known answers (reference and BlackSilk, light mode) in 4.2s
+
+real	0m4.258s
+user	0m0.015s
+sys	0m0.015s
+(exit 0)

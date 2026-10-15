@@ -1,0 +1,136 @@
+{
+ "binaries": {
+  "labnet": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "miner": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "node": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  }
+ },
+ "selftest_missing": [],
+ "grep_hits": {
+  "is_invalid": {
+   "count": 0,
+   "first": []
+  },
+  "misbehaved": {
+   "count": 0,
+   "first": []
+  },
+  "inbound_limit": {
+   "count": 0,
+   "first": []
+  },
+  "panic": {
+   "count": 0,
+   "first": []
+  },
+  "ERROR": {
+   "count": 0,
+   "first": []
+  },
+  "halt": {
+   "count": 0,
+   "first": []
+  }
+ },
+ "final_chain_blocks": 528,
+ "final_chain_blocks_not_logged_by_every_node": {
+  "count": 0,
+  "first": {}
+ },
+ "arrivals_by_hop_all": {
+  "1": {
+   "n": 705,
+   "median_ms": 624,
+   "p90_ms": 687,
+   "max_ms": 39854
+  },
+  "2": {
+   "n": 689,
+   "median_ms": 1251,
+   "p90_ms": 1419,
+   "max_ms": 40912
+  },
+  "3": {
+   "n": 670,
+   "median_ms": 1878,
+   "p90_ms": 3702,
+   "max_ms": 42223
+  },
+  "4": {
+   "n": 651,
+   "median_ms": 2507,
+   "p90_ms": 8417,
+   "max_ms": 42998
+  },
+  "5": {
+   "n": 632,
+   "median_ms": 3143,
+   "p90_ms": 10022,
+   "max_ms": 43804
+  },
+  "6": {
+   "n": 296,
+   "median_ms": 3714,
+   "p90_ms": 12261,
+   "max_ms": 52190
+  }
+ },
+ "arrivals_by_hop_final_chain": {
+  "1": {
+   "n": 592,
+   "median_ms": 622,
+   "p90_ms": 686,
+   "max_ms": 28948
+  },
+  "2": {
+   "n": 592,
+   "median_ms": 1243,
+   "p90_ms": 1392,
+   "max_ms": 29689
+  },
+  "3": {
+   "n": 592,
+   "median_ms": 1870,
+   "p90_ms": 2848,
+   "max_ms": 34218
+  },
+  "4": {
+   "n": 592,
+   "median_ms": 2500,
+   "p90_ms": 6574,
+   "max_ms": 35556
+  },
+  "5": {
+   "n": 592,
+   "median_ms": 3138,
+   "p90_ms": 9234,
+   "max_ms": 36291
+  },
+  "6": {
+   "n": 296,
+   "median_ms": 3714,
+   "p90_ms": 12261,
+   "max_ms": 52190
+  }
+ },
+ "side_branches": {
+  "count": 30,
+  "heavier_than_final_over_same_heights": 0,
+  "equal_work_ties": 28,
+  "max_len": 3
+ }
+}

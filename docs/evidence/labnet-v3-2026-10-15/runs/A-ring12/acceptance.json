@@ -1,0 +1,417 @@
+{
+ "binaries": {
+  "labnet": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "miner": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  },
+  "node": {
+   "commit_66f12f0": true,
+   "no_dirty": true,
+   "build_flags_none": true,
+   "sha256_matches": true
+  }
+ },
+ "summary": {
+  "checks_passed": true,
+  "evidence": true,
+  "evidence_notes": [],
+  "crashes": [],
+  "stuck_incidents": 0,
+  "misbehavior_disconnects": 0,
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": true,
+  "late_joiner_peers": 6,
+  "late_joiner_required_peers": 5,
+  "late_joiner_secs_to_required": 9.8841938,
+  "late_joiner_max_peers": 6,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 1057168400220,
+  "wallet_total": 1057168400220,
+  "final_height": 528,
+  "duration_secs": 3734,
+  "measured_secs": 2700,
+  "warmup": {
+   "enabled": true,
+   "reached": true,
+   "secs": 700,
+   "end_height": 232,
+   "end_difficulty": 21,
+   "mean_interval_secs": 7.7589903866666665,
+   "window_blocks": 30,
+   "ratio": 0.75,
+   "target_secs": 10
+  },
+  "reorganizations": 378,
+  "max_reorg_depth": 3,
+  "reorg_depths": {
+   "1": 239,
+   "2": 118,
+   "3": 21
+  },
+  "reorgs_by_phase": {
+   "connected": {
+    "count": 378,
+    "max_depth": 3,
+    "depths": {
+     "1": 239,
+     "2": 118,
+     "3": 21
+    }
+   }
+  },
+  "blocks_found_by_phase": {
+   "connected": {
+    "found": 372,
+    "not_on_best_chain": 14,
+    "abandoned": 211
+   },
+   "final": {
+    "found": 2,
+    "not_on_best_chain": 1,
+    "abandoned": 0
+   },
+   "warmup": {
+    "found": 232,
+    "not_on_best_chain": 0,
+    "abandoned": 0
+   }
+  },
+  "relay_discovery": {
+   "joiner_peers_before": 12,
+   "relay_connected_after_secs": [
+    70.7673214,
+    46.9922553,
+    17.705629
+   ],
+   "joiner_peers_at_end": 15,
+   "all_reached": true
+  },
+  "tx_attempts": 63,
+  "tx_submitted": 63,
+  "tx_failures": {},
+  "partitions": 0,
+  "partition_split": 6,
+  "max_rss_mb": {
+   "miner0": 265.171875,
+   "miner1": 267.55078125,
+   "node0": 277.05078125,
+   "node1": 277.62109375,
+   "node10": 277.32421875,
+   "node11": 277.41015625,
+   "node2": 278.46484375,
+   "node3": 276.9453125,
+   "node4": 278.84375,
+   "node5": 279.1015625,
+   "node6": 276.64453125,
+   "node7": 277.9765625,
+   "node8": 279.52734375,
+   "node9": 276.7265625
+  },
+  "all_equal_samples": 103,
+  "samples": 225,
+  "miner_modes": [
+   "miner0: --threads 1 --refresh 5 --light --prebuild on",
+   "miner1: --threads 1 --refresh 5 --light --prebuild on"
+  ]
+ },
+ "selftest_missing": [],
+ "grep_hits": {
+  "is_invalid": {
+   "count": 0,
+   "first": []
+  },
+  "misbehaved": {
+   "count": 0,
+   "first": []
+  },
+  "inbound_limit": {
+   "count": 0,
+   "first": []
+  },
+  "panic": {
+   "count": 0,
+   "first": []
+  },
+  "ERROR": {
+   "count": 0,
+   "first": []
+  },
+  "halt": {
+   "count": 0,
+   "first": []
+  }
+ },
+ "warn_lines": {
+  "count": 18,
+  "first": [
+   "miner0.log: [2026-10-15T07:35:13.777Z WARN  blacksilk_miner] block 300 rejected: NotNearTip: the parent must be the tip (300) or one of its last 8 ancestors on the connected chain",
+   "node-e2.log: [2026-10-15T08:15:07.666Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node-e2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node-late.log: [2026-10-15T08:11:32.119Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node-late is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read ",
+   "node-relay0.log: [2026-10-15T08:15:27.583Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node-relay0 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot rea",
+   "node-relay1.log: [2026-10-15T08:15:58.730Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node-relay1 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot rea",
+   "node-relay2.log: [2026-10-15T08:16:29.599Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node-relay2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot rea",
+   "node0.log: [2026-10-15T07:14:18.680Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node0 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node1.log: [2026-10-15T07:14:15.038Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node1 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node10.log: [2026-10-15T07:14:18.927Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node10 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node11.log: [2026-10-15T07:14:18.669Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node11 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node2.log: [2026-10-15T07:14:18.876Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node2 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node3.log: [2026-10-15T07:14:16.380Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node3 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node4.log: [2026-10-15T07:14:16.574Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node4 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node5.log: [2026-10-15T07:14:17.783Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node5 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node6.log: [2026-10-15T07:14:15.944Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node6 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node7.log: [2026-10-15T07:14:18.985Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node7 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node8.log: [2026-10-15T07:14:18.635Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node8 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it",
+   "node9.log: [2026-10-15T07:14:16.604Z WARN  blacksilk_node::cookie] the data directory runs/A-ring12\\node9 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it"
+  ]
+ },
+ "final_chain_blocks": 528,
+ "final_chain_blocks_not_logged_by_every_node": {
+  "count": 0,
+  "first": {}
+ },
+ "arrivals_by_hop_all": {
+  "1": {
+   "n": 705,
+   "median_ms": 624,
+   "p90_ms": 687,
+   "max_ms": 39854
+  },
+  "2": {
+   "n": 689,
+   "median_ms": 1251,
+   "p90_ms": 1419,
+   "max_ms": 40912
+  },
+  "3": {
+   "n": 670,
+   "median_ms": 1878,
+   "p90_ms": 3702,
+   "max_ms": 42223
+  },
+  "4": {
+   "n": 651,
+   "median_ms": 2507,
+   "p90_ms": 8417,
+   "max_ms": 42998
+  },
+  "5": {
+   "n": 632,
+   "median_ms": 3143,
+   "p90_ms": 10022,
+   "max_ms": 43804
+  },
+  "6": {
+   "n": 296,
+   "median_ms": 3714,
+   "p90_ms": 12261,
+   "max_ms": 52190
+  }
+ },
+ "arrivals_by_hop_final_chain": {
+  "1": {
+   "n": 592,
+   "median_ms": 622,
+   "p90_ms": 686,
+   "max_ms": 28948
+  },
+  "2": {
+   "n": 592,
+   "median_ms": 1243,
+   "p90_ms": 1392,
+   "max_ms": 29689
+  },
+  "3": {
+   "n": 592,
+   "median_ms": 1870,
+   "p90_ms": 2848,
+   "max_ms": 34218
+  },
+  "4": {
+   "n": 592,
+   "median_ms": 2500,
+   "p90_ms": 6574,
+   "max_ms": 35556
+  },
+  "5": {
+   "n": 592,
+   "median_ms": 3138,
+   "p90_ms": 9234,
+   "max_ms": 36291
+  },
+  "6": {
+   "n": 296,
+   "median_ms": 3714,
+   "p90_ms": 12261,
+   "max_ms": 52190
+  }
+ },
+ "connected_origin_blocks": 373,
+ "side_branches": {
+  "count": 30,
+  "heavier_than_final_over_same_heights": 0,
+  "equal_work_ties": 28,
+  "max_len": 3
+ },
+ "report": {
+  "late_joiner_getaddr_answer": 3,
+  "propagation": {
+   "blocks": 219,
+   "contested_heights": 78,
+   "median_ms": 3660,
+   "p90_ms": 4194,
+   "max_ms": 5930
+  },
+  "propagation_with_contested": {
+   "blocks": 296,
+   "contested_heights": 78,
+   "median_ms": 3715,
+   "p90_ms": 12604,
+   "max_ms": 52190
+  },
+  "found_by_phase": {
+   "connected": {
+    "found": 373,
+    "on_final_chain": 296,
+    "stale": 77
+   },
+   "final": {
+    "found": 2,
+    "on_final_chain": 1,
+    "stale": 1
+   },
+   "warmup": {
+    "found": 231,
+    "on_final_chain": 231,
+    "stale": 0
+   }
+  },
+  "stale_after_warmup": 79,
+  "refused_at_rpc": 1,
+  "heals": [],
+  "difficulty_min": 21,
+  "difficulty_max": 36,
+  "difficulty_first_third": 26.661016949152543,
+  "difficulty_last_third": 32.59322033898305,
+  "templates_abandoned_after_warmup": 211,
+  "arrivals_receivers": [
+   {
+    "node": 0,
+    "never_seen": 36,
+    "n": 155,
+    "median_ms": 3703,
+    "p90_ms": 13331,
+    "max_ms": 52190
+   },
+   {
+    "node": 1,
+    "never_seen": 38,
+    "n": 335,
+    "median_ms": 2889,
+    "p90_ms": 5205,
+    "max_ms": 39854
+   },
+   {
+    "node": 2,
+    "never_seen": 37,
+    "n": 336,
+    "median_ms": 2374,
+    "p90_ms": 4539,
+    "max_ms": 40629
+   },
+   {
+    "node": 3,
+    "never_seen": 38,
+    "n": 335,
+    "median_ms": 1877,
+    "p90_ms": 4119,
+    "max_ms": 42223
+   },
+   {
+    "node": 4,
+    "never_seen": 38,
+    "n": 335,
+    "median_ms": 2340,
+    "p90_ms": 4773,
+    "max_ms": 42998
+   },
+   {
+    "node": 5,
+    "never_seen": 38,
+    "n": 335,
+    "median_ms": 708,
+    "p90_ms": 5294,
+    "max_ms": 43804
+   },
+   {
+    "node": 6,
+    "never_seen": 41,
+    "n": 141,
+    "median_ms": 3730,
+    "p90_ms": 11773,
+    "max_ms": 41378
+   },
+   {
+    "node": 7,
+    "never_seen": 42,
+    "n": 331,
+    "median_ms": 687,
+    "p90_ms": 4618,
+    "max_ms": 43695
+   },
+   {
+    "node": 8,
+    "never_seen": 40,
+    "n": 333,
+    "median_ms": 2334,
+    "p90_ms": 3927,
+    "max_ms": 42836
+   },
+   {
+    "node": 9,
+    "never_seen": 38,
+    "n": 335,
+    "median_ms": 1878,
+    "p90_ms": 3500,
+    "max_ms": 41821
+   },
+   {
+    "node": 10,
+    "never_seen": 37,
+    "n": 336,
+    "median_ms": 2362,
+    "p90_ms": 4954,
+    "max_ms": 40912
+   },
+   {
+    "node": 11,
+    "never_seen": 37,
+    "n": 336,
+    "median_ms": 2930,
+    "p90_ms": 5740,
+    "max_ms": 39608
+   }
+  ],
+  "arrivals_all": {
+   "n": 3643,
+   "median_ms": 1986,
+   "p90_ms": 5406,
+   "max_ms": 52190
+  }
+ },
+ "phase_marks_unix": {
+  "warmup_end": 1792049159,
+  "traffic_end": 1792051859,
+  "partitions": []
+ }
+}

@@ -2008,5 +2008,8 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   tree); committing from CI.
 - **Scope:** no rule, prover, verifier, manifest, pin or dependency change; Cargo.lock
   is unchanged. Evidence: [px-fixture-2fn-2026-10-15](../../evidence/px-fixture-2fn-2026-10-15/README.md).
-- **Open:** the cross-machine regeneration has not run. The workflow can be dispatched
-  only once it is on the default branch (`rebuild/core`).
+- **Open:** ~~the cross-machine regeneration has not run~~ (2026-10-15: run on Linux
+  x86-64 after the merge; CI run 38683497322, `px-fixture.yml` at `66f12f0`, ubuntu-24.04,
+  regenerated both fixtures and all four files equal the committed ones, which were
+  generated and regenerated on Windows x86-64; evidence README, "Cross-machine
+  determinism (CI)"). Still open: a regeneration on aarch64.

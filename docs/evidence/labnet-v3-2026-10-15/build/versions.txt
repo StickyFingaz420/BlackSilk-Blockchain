@@ -1,0 +1,33 @@
+== bin/blacksilk-labnet-report.exe --version
+blacksilk-labnet-report 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)
+build flags: none
+(exit 0)
+== bin/blacksilk-labnet.exe --version
+blacksilk-labnet 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)
+build flags: none
+(exit 0)
+== bin/blacksilk-miner.exe --version
+blacksilk-miner 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)
+build flags: none
+(exit 0)
+== bin/blacksilk-node.exe --version
+blacksilk-node 0.1.0
+commit 66f12f0761c80f13c493f2c752d2f511511f3303
+build flags: none
+testnet: fingerprint cacbadc8768c15fc (cacbadc8768c15fc399272108e2b9fe7a44b61b638eec9464d8aea4333cba2ca)
+testnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9
+testnet: identity fe014b5706d9b0b8737404cb45dd3489efe1a648bb1b10c8f9232308d1d1ee95
+testnet: genesis b16090df9c6ad30233696ac8db2030e876dfc9ed6b8ed8af40a42cda0b75a1d0
+regtest: fingerprint f90fef2537cd3d0a (f90fef2537cd3d0aabeeeb2e5423c3c289b626d4649e76df031929126b82c889)
+regtest: rules 6ef5370540fe1388fa0fb713bca8bf4465777162f71bf7f61f13799315e469a5
+regtest: identity bc72c2dca0607b24ac771c102a6940237fcdf1a54d7294f3047624affda3bf0e
+regtest: genesis 3dbdba2aca8842cd3e02c7d8c72078f77ff132cc3c84a7f8b87891d0cc106141
+mainnet: fingerprint d302f55e0f28079a (d302f55e0f28079a687dacab66001af20edcc517c1324486f3058973a3cdcfac)
+mainnet: rules 71a6053f320893f600fd41842cbeddbcf15c547131177b6468a3c6ada0911fa9
+mainnet: identity 70718cc76c9b5305e3e2b524ee286ca9a573b574986b6fab9394935dd9a4759e
+mainnet: genesis 59f74a4965f7302ad4db6e7993d8f3542ddb147c84819dd63dd71f9f76f784e5
+(exit 0)
+== bin/blacksilk-rx-verify.exe --version
+blacksilk-rx-verify 0.1.0 (commit 66f12f0761c80f13c493f2c752d2f511511f3303)
+build flags: none
+(exit 0)
