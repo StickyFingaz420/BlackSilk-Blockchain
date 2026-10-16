@@ -53,6 +53,13 @@ source "$here/gate-range.sh"
 # there can swap or alter gated code); and the module roots that
 # declare gated modules (a `#[path]`, `cfg` or `include!` there redirects
 # them). The commits before it that touch them are in the waiver file.
+# gate-coverage-2 (record "gate-coverage-2") added the submodule directories
+# of the gated file modules, the ungated modules gated code computes
+# consensus values with (px/src/perm.rs, px/src/delivery.rs, zkvm/src/isa.rs),
+# the chain store, sync policy and build flags, the fingerprint, fixture,
+# circuit and vector pins, every CI script, the test-feature checks and the
+# cargo-deny policy; and reads paths NUL-separated, so a name git quotes is
+# matched as it is. The commits before it that touch them are waived.
 #
 # The match ignores case (red team F1 of gate-manifest-paths): checkouts on
 # Windows and macOS are case-insensitive, where `px/Build.rs` is the crate's
@@ -104,6 +111,32 @@ consensus_path_match() {
     miner/build.rs | wallet/build.rs | tools/genesis/build.rs) return 0 ;;
     chain/src/lib.rs | chain/src/manager.rs | node/src/lib.rs | px/src/lib.rs) return 0 ;;
     tx/src/lib.rs | zkvm/src/lib.rs) return 0 ;;
+    # gate-coverage-2 (proposed). (a) The submodule directory of every gated
+    # file module: a `mod x;` in tx/src/validate.rs is tx/src/validate/x.rs.
+    tx/src/validate/* | tx/src/px/* | tx/src/params/* | tx/src/types/*) return 0 ;;
+    tx/src/codec/* | tx/src/state/* | tx/src/mmr/*) return 0 ;;
+    chain/src/block/* | chain/src/emission/* | node/src/fingerprint/*) return 0 ;;
+    px/src/prove/* | px/src/state/* | px/src/tree/* | px/src/deploy_caps/*) return 0 ;;
+    px/src/fingerprint/* | zkvm/src/prove/* | zkvm/src/program/* | zkvm/src/exec/*) return 0 ;;
+    # (b) Code the gated modules compute consensus values with: the host
+    # Poseidon2 of the PX state root (px/src/state.rs), the ciphertext length
+    # of the PX codec (tx/src/px.rs), the BVM-1 decoder (exec.rs, air/).
+    px/src/perm.rs | px/src/perm/* | px/src/delivery.rs | px/src/delivery/*) return 0 ;;
+    zkvm/src/isa.rs | zkvm/src/isa/*) return 0 ;;
+    # (c) What decides which blocks are verified and how a restart trusts the
+    # store (invalid markers, stored PoW, checkpoints), the anti-DoS verify
+    # threshold and seed policy, and the test-hook network refusal.
+    chain/src/store.rs | chain/src/store/* | chain/src/sync_policy.rs) return 0 ;;
+    chain/src/sync_policy/* | chain/src/build_flags.rs | chain/src/build_flags/*) return 0 ;;
+    # (d) The pins that say a change of them is a consensus change: the
+    # fingerprint, fixture, circuit and vector tests and their data.
+    node/tests/deploy_configs.rs | node/tests/fingerprint_fixture.rs) return 0 ;;
+    node/tests/px_fixture.rs | px/tests/consensus_fingerprint.rs) return 0 ;;
+    px/tests/hk_vectors.rs | px/tests/data/hk_vectors.txt | tools/vectors/*) return 0 ;;
+    zkvm/tests/circuit_fingerprint.rs | zkvm/tests/circuit_id.rs) return 0 ;;
+    # (e) Every CI script, and the checks CI runs from the commit's own code
+    # (build guard, test-feature markers), and the cargo-deny policy.
+    .github/scripts/* | tools/check-build-flags.sh | tools/check-test-features.sh | deny.toml) return 0 ;;
   esac
   return 1
 }
@@ -178,15 +211,75 @@ check_record_ref() {
 }
 
 # The paths a commit changes: against its parent (both sides of a rename), or
-# for a merge the paths its dense combined diff shows.
+# for a merge the paths its dense combined diff shows plus the paths it
+# reverts. NUL-terminated (-z): a name git would quote (a `"`, `\`, tab,
+# newline or control character) is matched as it is, never as
+# `"consensus/a\"b.rs"` (gate-coverage-2). For a merge:
+# - dense: `--cc --name-only` lists every path that differs from all parents
+#   (a superset); a path is kept when its dense combined diff is not empty
+#   (new content written in the merge);
+# - reverts (red team F1, R2-F1 of gate-coverage-2): a path whose merge
+#   version differs from a parent's and equals its version at a merge base of
+#   that parent and another one (`merge-base --all`, any base, every pair of
+#   parents of an octopus, either order): the merge undoes a change of that
+#   parent's history, which no checked commit shows. Taking one side's own
+#   change as it is (it differs from the base) is not one; that commit was
+#   checked.
+# Fails closed (red team F2): any git failure prints why and returns 2.
 changed_paths() {
-  local c="$1" parents
-  parents="$(git rev-list --parents -n 1 "$c" | wc -w)"
-  if [ "$parents" -gt 2 ]; then
-    git -c core.quotepath=false diff-tree --cc -p --no-commit-id "$c" | sed -n 's/^diff --cc //p'
-  else
-    git -c core.quotepath=false diff-tree -r --root --no-renames --name-only --no-commit-id "$c"
+  local c="$1" ids parents b bases out p n
+  ids="$(git rev-list --parents -n 1 "$c")" || { echo "gate: cannot read the parents of $c" >&2; return 2; }
+  read -r -a parents <<<"$ids"
+  if [ "${#parents[@]}" -le 2 ]; then
+    git diff-tree -r --root --no-renames --name-only -z --no-commit-id "$c" ||
+      { echo "gate: git diff-tree failed on $c" >&2; return 2; }
+    return 0
   fi
+  out="$(mktemp)" || return 2
+  git diff-tree -r --cc --name-only -z --no-commit-id "$c" >"$out" ||
+    { echo "gate: git diff-tree --cc failed on $c" >&2; rm -f "$out"; return 2; }
+  while IFS= read -r -d '' p; do
+    n="$(git diff-tree --cc -p --no-commit-id "$c" -- ":(literal)$p")" ||
+      { echo "gate: git diff-tree --cc -p failed on $c: $p" >&2; rm -f "$out"; return 2; }
+    [ -z "$n" ] || printf '%s\0' "$p"
+  done <"$out"
+  # Reverts, for every parent P (red team R2-F1: symmetric, so a revert of
+  # the first parent's change inside a branch's update merge is caught as
+  # well): D(P, c) minus D(base, c), for each other parent Q and each base of
+  # P and Q. One version of a path at a base is enough.
+  local pi q
+  for pi in "${parents[@]:1}"; do
+    local -A from_p=()
+    git diff-tree -r --no-renames --name-only -z "$pi" "$c" >"$out" ||
+      { echo "gate: git diff-tree failed on $pi $c" >&2; rm -f "$out"; return 2; }
+    while IFS= read -r -d '' p; do from_p["$p"]=1; done <"$out"
+    if [ "${#from_p[@]}" -gt 0 ]; then
+      for q in "${parents[@]:1}"; do
+        [ "$q" != "$pi" ] || continue
+        local rc=0
+        bases="$(git merge-base --all "$pi" "$q")" || rc=$?
+        # Exit 1 with no output: unrelated histories, no base (the other
+        # parent's own commits are checked, from their root).
+        if [ "$rc" != 0 ]; then
+          [ "$rc" = 1 ] && [ -z "$bases" ] && continue
+          echo "gate: git merge-base failed on $pi $q" >&2; rm -f "$out"; return 2
+        fi
+        for b in $bases; do
+          [ "$b" != "$pi" ] || continue
+          local -A from_b=()
+          git diff-tree -r --no-renames --name-only -z "$b" "$c" >"$out" ||
+            { echo "gate: git diff-tree failed on $b $c" >&2; rm -f "$out"; return 2; }
+          while IFS= read -r -d '' p; do from_b["$p"]=1; done <"$out"
+          for p in "${!from_p[@]}"; do
+            [ -n "${from_b[$p]:-}" ] || printf '%s\0' "$p"
+          done
+          unset from_b
+        done
+      done
+    fi
+    unset from_p
+  done
+  rm -f "$out"
 }
 
 # valid_trailer [COMMIT]: the trailer values on stdin; 0 when one is valid.
@@ -242,14 +335,33 @@ GATE_UNGATED_NEIGHBOURS="README.md docs/STATUS.md Cargo.lock tools/daa-sim/Cargo
 tools/labnet/Cargo.toml tools/supply-audit/Cargo.toml fuzz/Cargo.toml contracts/Cargo.toml
 zkvm/guests/Cargo.toml zkvm/sdk/Cargo.toml p2p/src/lib.rs rpc/src/lib.rs
 node/src/main.rs miner/src/main.rs px/src/vault.rs chain/src/mempool.rs
-chain/src/manager.rs.orig src/lib.rs px/src/lib.rs.bak docs/Cargo.toml"
+chain/src/manager.rs.orig src/lib.rs px/src/lib.rs.bak docs/Cargo.toml
+chain/src/actor.rs chain/src/address.rs chain/src/mempool/reorg.rs px/src/wallet.rs
+px/src/share.rs tx/src/builder.rs tx/src/decoy.rs tx/src/scan.rs tx/src/px_builder.rs
+tx/src/validate_notes.md zkvm/src/asm.rs node/src/config.rs node/tests/rpc_security.rs
+px/tests/proof.rs zkvm/tests/vm.rs tools/vectors.md .github/ISSUE_TEMPLATE/bug_report.md
+tools/release-build.sh.bak zkvm/guests/kernel/src/main.rs zkvm/sdk/src/lib.rs"
+# The paths gate-coverage-2 adds (one example per pattern).
+GATE_COVERAGE2_PATHS="tx/src/validate/rules.rs tx/src/px/codec.rs tx/src/params/x.rs
+tx/src/types/x.rs tx/src/codec/x.rs tx/src/state/x.rs tx/src/mmr/x.rs chain/src/block/x.rs
+chain/src/emission/x.rs node/src/fingerprint/x.rs px/src/prove/x.rs px/src/state/x.rs
+px/src/tree/x.rs px/src/deploy_caps/x.rs px/src/fingerprint/x.rs zkvm/src/prove/x.rs
+zkvm/src/program/x.rs zkvm/src/exec/x.rs px/src/perm.rs px/src/perm/x.rs
+px/src/delivery.rs px/src/delivery/x.rs zkvm/src/isa.rs zkvm/src/isa/x.rs
+chain/src/store.rs chain/src/store/x.rs chain/src/sync_policy.rs chain/src/sync_policy/x.rs
+chain/src/build_flags.rs chain/src/build_flags/x.rs node/tests/deploy_configs.rs
+node/tests/fingerprint_fixture.rs node/tests/px_fixture.rs px/tests/consensus_fingerprint.rs
+px/tests/hk_vectors.rs px/tests/data/hk_vectors.txt tools/vectors/output_mmr.py
+zkvm/tests/circuit_fingerprint.rs zkvm/tests/circuit_id.rs .github/scripts/build-guard.sh
+.github/scripts/unicode-scan.sh tools/check-build-flags.sh tools/check-test-features.sh deny.toml"
 # Case variants of gated paths (red team F1): gated, since a case-insensitive
 # checkout uses them as the gated file.
 GATE_CASE_VARIANTS="PX/SRC/LIB.RS px/Build.rs rpc/BUILD.rs Cargo.TOML TX/Cargo.toml"
 
 selftest_paths() {
   local p bad=0
-  for p in $GATE_MANIFEST_PATHS consensus/Cargo.toml crypto/Cargo.toml \
+  for p in $GATE_MANIFEST_PATHS $GATE_COVERAGE2_PATHS consensus/Cargo.toml crypto/Cargo.toml \
+    PX/SRC/PERM.RS Chain/Src/Store.rs ZKVM/src/ISA.rs \
     px-core/src/lib.rs zk/build.rs randomx/Cargo.toml px/src/deploy_caps.rs \
     $GATE_CASE_VARIANTS Consensus/src/lib.rs TX/SRC/VALIDATE.RS; do
     is_consensus_path "$p" || { echo "selftest: $p should be a consensus path"; bad=1; }
@@ -335,9 +447,217 @@ selftest_history() {
     expect 1 "$p" "touch $p"
   done
   # (a), (b) every newly gated path: no trailer fails, a trailer passes.
-  for p in $GATE_MANIFEST_PATHS; do
+  for p in $GATE_MANIFEST_PATHS $GATE_COVERAGE2_PATHS; do
     expect 1 "$p" "touch $p"
     expect 0 "$p" "touch $p$trailer"
+  done
+  # gate-coverage-2: history shapes. want_rc WANT BASE HEAD WHAT.
+  want_rc() {
+    local rc=0
+    gate_run "$2" "$3" || rc=$?
+    [ "$rc" = "$1" ] || { echo "selftest: gate exit $rc (want $1): $4"; bad=1; }
+  }
+  local c b q root
+  g() { git -C "$t/repo" "$@"; }
+  # A rename out of a gated path and a deletion are changes of the gated path.
+  # (Paths outside the case-variant directories above, which a
+  # case-insensitive checkout records under their first spelling.)
+  if g mv chain/src/block/x.rs chain/src/moved.rs && g commit -q -m 'rename out'; then
+    want_rc 1 HEAD~1 HEAD "rename of a gated file to an ungated path"
+  else
+    echo "selftest: rename fixture failed"; bad=1
+  fi
+  if g rm -q chain/src/moved.rs px/src/perm.rs && g commit -q -m 'delete'; then
+    want_rc 1 HEAD~1 HEAD "deletion of a gated file"
+  else
+    echo "selftest: deletion fixture failed"; bad=1
+  fi
+  # A name git quotes (`"` here; tabs and newlines likewise) is still matched.
+  # Built with plumbing: such a name cannot be checked out on Windows.
+  b="$(echo quoted | g hash-object -w --stdin)"
+  q="$(printf '100644 blob %s\tq"x.rs\n' "$b" | g mktree)"
+  root="$( { g ls-tree HEAD | grep -v "$(printf '\t')consensus\$"; printf '040000 tree %s\tconsensus\n' "$q"; } | g mktree)"
+  c="$(g commit-tree "$root" -p HEAD -m 'quoted name')"
+  want_rc 1 "$c~1" "$c" "a consensus/ file whose name git quotes"
+  # Merges: an edit made in the merge itself fails; a clean merge of two
+  # trailered sides passes; a merge that takes one side's file as it is passes.
+  g checkout -q -b side
+  expect 0 chain/src/store.rs "side$trailer"
+  g checkout -q main
+  expect 0 README.md main
+  g merge -q --no-ff -m 'clean merge' side >/dev/null
+  want_rc 0 HEAD^1 HEAD "a clean merge of checked commits"
+  g reset -q --hard HEAD^1
+  g merge -q --no-ff --no-commit side >/dev/null 2>&1
+  echo evil >>"$t/repo/chain/src/store.rs"
+  g add -A && g commit -q -m 'evil merge'
+  want_rc 1 HEAD^1 HEAD "an edit of a gated file inside a merge"
+  g reset -q --hard HEAD^1
+  # Both sides change one gated file in different places: the merged file
+  # differs from both parents, but every hunk is one side's (the dense
+  # combined diff is empty), so the clean merge passes.
+  printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$t/repo/chain/src/emission/m.rs"
+  g add -A && g commit -q -m "lines$trailer"
+  g checkout -q -b d1 && sed -i 's/^a$/A/' "$t/repo/chain/src/emission/m.rs" &&
+    g commit -q -a -m "d1$trailer"
+  g checkout -q main && sed -i 's/^h$/H/' "$t/repo/chain/src/emission/m.rs" &&
+    g commit -q -a -m "d2$trailer"
+  g merge -q --no-ff -m 'clean merge, both sides' d1 >/dev/null 2>&1
+  if [ "$(g rev-list --parents -n 1 HEAD | wc -w)" = 3 ]; then
+    want_rc 0 HEAD^1 HEAD "a clean merge of two changes to one gated file"
+  else
+    echo "selftest: two-sided merge fixture failed"; bad=1
+  fi
+  # A conflict in a gated file: resolved to one side's version, the merge
+  # adds nothing and passes; resolved to new content, it fails without a
+  # trailer and passes with one.
+  g checkout -q -b c1 && printf 'one\n' >"$t/repo/chain/src/sync_policy.rs" &&
+    g commit -q -a -m "c1$trailer"
+  g checkout -q main && printf 'two\n' >"$t/repo/chain/src/sync_policy.rs" &&
+    g commit -q -a -m "c2$trailer"
+  conflict_merge() { # CONTENT MESSAGE: merge c1 into main, resolve to CONTENT
+    g merge -q --no-ff --no-commit c1 >/dev/null 2>&1
+    printf '%s\n' "$1" >"$t/repo/chain/src/sync_policy.rs"
+    g add -A && g commit -q -m "$2"
+  }
+  conflict_merge two 'resolved to ours'
+  want_rc 0 HEAD^1 HEAD "a conflict resolved to the first parent's version"
+  g reset -q --hard HEAD^1
+  # Resolved to the side's version, which differs from the base: the side's
+  # checked change, taken as it is, passes.
+  conflict_merge one 'resolved to theirs'
+  want_rc 0 HEAD^1 HEAD "a conflict resolved to the side's version"
+  g reset -q --hard HEAD^1
+  # Resolved to the base's version after the first parent changed it: the
+  # merge reverts a change no checked commit undoes (red team F1).
+  conflict_merge "$(g show "$(g merge-base main c1):chain/src/sync_policy.rs")" 'resolved to the base'
+  want_rc 1 HEAD^1 HEAD "a conflict resolved to the base's version"
+  g reset -q --hard HEAD^1
+  # A side that does not touch the file, merged with the file set back to
+  # the base: a silent revert of the first parent's change (red team F1).
+  g checkout -q -b r1 "$(g merge-base main c1)" && expect 0 notes/r1.txt 'side, no gated file'
+  g checkout -q main
+  g merge -q --no-ff --no-commit r1 >/dev/null 2>&1
+  g show "$(g merge-base main r1):chain/src/sync_policy.rs" >"$t/repo/chain/src/sync_policy.rs"
+  g add -A && g commit -q -m 'merge reverting a gated change'
+  want_rc 1 HEAD^1 HEAD "a clean merge that reverts the first parent's gated change"
+  g reset -q --hard HEAD^1
+  # Unrelated histories: an orphan root holding a gated file, merged in. The
+  # root itself is checked (diff-tree --root), so the range fails (red team F3).
+  b="$(echo orphan | g hash-object -w --stdin)"
+  q="$(printf '100644 blob %s\tx.rs\n' "$b" | g mktree)"
+  c="$(g commit-tree "$(printf '040000 tree %s\tconsensus\n' "$q" | g mktree)" -m 'orphan root')"
+  c="$(g commit-tree "$(g rev-parse 'HEAD^{tree}')" -p HEAD -p "$c" -m 'merge an orphan root')"
+  want_rc 1 "$c^1" "$c" "an orphan root with a gated file, merged in"
+  # Red team R2-F1: a revert inside a branch's update merge. The branch
+  # merges main and sets main's trailered change back to the base; main then
+  # takes the branch by fast-forward (A) or by a no-ff merge (A2).
+  local mainc
+  g checkout -q -b up "$(g rev-parse HEAD)" && expect 0 notes/up.txt 'branch work'
+  g checkout -q main && expect 0 chain/src/emission/m.rs "main fix$trailer"
+  mainc="$(g rev-parse HEAD)"
+  g checkout -q up
+  g merge -q --no-ff --no-commit main >/dev/null 2>&1
+  g show "$(g merge-base main up):chain/src/emission/m.rs" >"$t/repo/chain/src/emission/m.rs"
+  g add -A && g commit -q -m 'merge main into up, reverting its fix'
+  want_rc 1 "$mainc" up "A: main fast-forwarded to a branch whose update merge reverts main's change"
+  g checkout -q main
+  g merge -q --no-ff -m 'merge up' up >/dev/null 2>&1
+  want_rc 1 "$mainc" HEAD "A2: a no-ff merge of a branch whose update merge reverts main's change"
+  g reset -q --hard "$mainc"
+  # Red team R2-F2: a criss-cross merge, two bases (cx: x, cy: y). One
+  # parent keeps the version of the base that `merge-base` without --all
+  # does not pick; the other parent changes it (a trailered fix); the merge
+  # takes the kept version, so it reverts the fix to that base's version. The
+  # dense diff is empty (the result is a parent's), and only `--all` finds
+  # the base.
+  local cx cy x2 y2 one keep other ver fixc
+  g checkout -q -b cx main && printf 'x\n' >"$t/repo/chain/src/sync_policy.rs" && g commit -q -a -m "cx$trailer"
+  cx="$(g rev-parse HEAD)"
+  g checkout -q -b cy main && printf 'y\n' >"$t/repo/chain/src/sync_policy.rs" && g commit -q -a -m "cy$trailer"
+  cy="$(g rev-parse HEAD)"
+  g checkout -q -b x2 "$cx" && g merge -q --no-ff --no-commit "$cy" >/dev/null 2>&1
+  printf 'x\n' >"$t/repo/chain/src/sync_policy.rs" && g add -A && g commit -q -m 'x2'
+  x2="$(g rev-parse HEAD)"
+  g checkout -q -b y2 "$cy" && g merge -q --no-ff --no-commit "$cx" >/dev/null 2>&1
+  printf 'y\n' >"$t/repo/chain/src/sync_policy.rs" && g add -A && g commit -q -m 'y2'
+  y2="$(g rev-parse HEAD)"
+  one="$(g merge-base "$x2" "$y2")"
+  if [ "$one" = "$cy" ]; then keep="$x2" other="$y2" ver=x; else keep="$y2" other="$x2" ver=y; fi
+  g checkout -q -b ccfix "$other" && printf 'fix\n' >"$t/repo/chain/src/sync_policy.rs" &&
+    g commit -q -a -m "fix$trailer"
+  fixc="$(g rev-parse HEAD)"
+  g checkout -q -b cckeep "$keep"
+  if [ "$(g merge-base --all "$keep" "$fixc" | wc -l)" = 2 ] &&
+    [ "$(g merge-base "$keep" "$fixc")" = "$one" ] && [ "$(g merge-base "$fixc" "$keep")" = "$one" ]; then
+    g merge -q --no-ff --no-commit "$fixc" >/dev/null 2>&1
+    printf '%s\n' "$ver" >"$t/repo/chain/src/sync_policy.rs"
+    g add -A && g commit -q -m 'criss-cross merge back to the other base'
+    want_rc 1 "$keep" HEAD "a criss-cross merge reverting to the base merge-base does not pick"
+  else
+    echo "selftest: criss-cross fixture failed"; bad=1
+  fi
+  g checkout -q main && g reset -q --hard "$mainc"
+  # Red team R2-F2: an octopus where only the third parent's base with the
+  # first holds the reverted version. main: v1, then v2; o2 forks at v2, o3
+  # at v1; the merge sets v1.
+  local v1
+  expect 0 chain/src/block/oct.rs "v1$trailer"
+  v1="$(g rev-parse HEAD)"
+  expect 0 chain/src/block/oct.rs "v2$trailer"
+  g checkout -q -b q2 main && expect 0 notes/q2.txt q2
+  g checkout -q -b q3 "$v1" && expect 0 notes/q3.txt q3
+  g checkout -q main
+  g merge -q --no-ff --no-commit q2 q3 >/dev/null 2>&1
+  g show "$v1:chain/src/block/oct.rs" >"$t/repo/chain/src/block/oct.rs"
+  g add -A && g commit -q -m 'octopus reverting to the third parent base'
+  if [ "$(g rev-list --parents -n 1 HEAD | wc -w)" = 4 ]; then
+    want_rc 1 HEAD^1 HEAD "an octopus reverting to the version at the third parent's base"
+  else
+    echo "selftest: three-parent octopus fixture failed"; bad=1
+  fi
+  g reset -q --hard HEAD^1
+  conflict_merge three 'resolved anew'
+  want_rc 1 HEAD^1 HEAD "a conflict resolved to new content, no trailer"
+  g reset -q --hard HEAD^1
+  conflict_merge three "resolved anew$trailer"
+  want_rc 0 HEAD^1 HEAD "a conflict resolved to new content, with a trailer"
+  g reset -q --hard HEAD^1
+  # An octopus merge: clean passes; an edit inside it fails.
+  for p in o1:chain/src/store/o1.rs o2:px/src/tree/o2.rs o3:zkvm/src/isa/o3.rs; do
+    g checkout -q -b "${p%%:*}" main && expect 0 "${p#*:}" "${p%%:*}$trailer"
+  done
+  g checkout -q main
+  g merge -q --no-ff -m 'octopus' o1 o2 o3 >/dev/null 2>&1
+  if [ "$(g rev-list --parents -n 1 HEAD | wc -w)" = 5 ]; then # the merge and its 4 parents
+    want_rc 0 HEAD^1 HEAD "a clean octopus merge of checked commits"
+    g reset -q --hard HEAD^1
+    g merge -q --no-ff --no-commit o1 o2 o3 >/dev/null 2>&1
+    echo evil >>"$t/repo/px/src/tree/o2.rs"
+    g add -A && g commit -q -m 'evil octopus'
+    want_rc 1 HEAD^1 HEAD "an edit of a gated file inside an octopus merge"
+    g reset -q --hard HEAD^1
+  else
+    echo "selftest: octopus merge fixture failed"; bad=1
+  fi
+  # A file renamed into a gated path, and a mode-only change of one.
+  expect 0 notes/n.rs 'an ungated file'
+  g mv notes/n.rs chain/src/block/n.rs && g commit -q -m 'rename in'
+  want_rc 1 HEAD~1 HEAD "a rename of an ungated file into a gated path"
+  g update-index --chmod=+x chain/src/block/n.rs && g commit -q -m 'mode only'
+  want_rc 1 HEAD~1 HEAD "a mode-only change of a gated file"
+  # Names with a tab or a newline, built with plumbing (`mktree -z`, which
+  # also works on Windows git; such a name is never checked out). The
+  # fixture has no crypto/ or randomx/ tree, so the commit adds one file.
+  for q in "$(printf 'crypto/t\tx.rs')" "$(printf 'randomx/n\nx.rs')"; do
+    b="$(printf '%s\n' "$q" | g hash-object -w --stdin)"
+    root="$( { g ls-tree -z HEAD
+      printf '040000 tree %s\t%s\0' "$(printf '100644 blob %s\t%s\0' "$b" "${q#*/}" | g mktree -z)" "${q%%/*}"; } | g mktree -z)"
+    if c="$(g commit-tree "$root" -p HEAD -m 'odd name')" && [ -n "$c" ]; then
+      want_rc 1 "$c~1" "$c" "a gated file whose name has a tab or a newline"
+    else
+      echo "selftest: odd-name fixture failed"; bad=1
+    fi
   done
   # A record citation the record does not have is no trailer.
   expect 1 px/src/lib.rs $'cite\n\nConsensus-Change: docs/reviews/v3-consensus-changes.md#no-such-section'
@@ -357,6 +677,45 @@ selftest_history() {
   rc=0
   gate_run "" HEAD || rc=$?
   [ "$rc" = 1 ] || { echo "selftest: the whole fixture range passed (exit $rc)"; bad=1; }
+  # Fails closed (red team F2): a merge whose gated blob is missing from the
+  # object store (a damaged or partial clone) stops the gate with exit 2 and
+  # a message, never a pass. Last, as it damages the fixture.
+  local msg
+  g checkout -q -b f2 main~0 && expect 0 notes/f2.txt 'side'
+  g checkout -q main
+  g merge -q --no-ff --no-commit f2 >/dev/null 2>&1
+  echo "f2 evil $RANDOM" >>"$t/repo/chain/src/store.rs"
+  g add -A && g commit -q -m 'evil merge, blob to be lost'
+  b="$(g rev-parse HEAD:chain/src/store.rs)"
+  rm -f "$t/repo/.git/objects/${b:0:2}/${b:2}"
+  rc=0
+  msg="$(cd "$t/repo" && env -u GITHUB_ACTIONS -u GATE_CMD_TOKEN \
+    GATE_CUTOVER="$(git rev-list --max-parents=0 HEAD)" GATE_WAIVER_HORIZON="$old" \
+    bash "$t/gate/scripts/consensus-gate.sh" HEAD^1 HEAD 2>&1)" || rc=$?
+  if [ "$rc" != 2 ] || ! printf '%s\n' "$msg" | grep -q 'failing closed'; then
+    echo "selftest: a missing blob gave exit $rc, not a fail-closed stop: $(printf '%s' "$msg" | tail -n 1)"
+    bad=1
+  fi
+  # Red team R2-F2: a merge whose second parent's parent commit is missing.
+  # The merge's own diffs read only trees, which are there; the merge base
+  # walk fails, and the gate must stop. The cut-over is the first parent, so
+  # the range walk itself does not need the missing commit.
+  local s1 p1
+  g checkout -q -b f3 main~0 && expect 0 notes/f3a.txt f3a
+  s1="$(g rev-parse HEAD)"
+  expect 0 notes/f3b.txt f3b
+  g checkout -q main && expect 0 notes/f3m.txt f3m
+  p1="$(g rev-parse HEAD)"
+  g merge -q --no-ff -m 'merge f3' f3 >/dev/null 2>&1
+  rm -f "$t/repo/.git/objects/${s1:0:2}/${s1:2}"
+  rc=0
+  msg="$(cd "$t/repo" && env -u GITHUB_ACTIONS -u GATE_CMD_TOKEN \
+    GATE_CUTOVER="$p1" GATE_WAIVER_HORIZON="$p1" \
+    bash "$t/gate/scripts/consensus-gate.sh" HEAD^2 HEAD 2>&1)" || rc=$?
+  if [ "$rc" != 2 ] || ! printf '%s\n' "$msg" | grep -q 'failing closed'; then
+    echo "selftest: a missing commit gave exit $rc, not a fail-closed stop: $(printf '%s' "$msg" | tail -n 1)"
+    bad=1
+  fi
   rm -rf "$t"
   return "$bad"
 }
@@ -403,14 +762,23 @@ main() {
   [ "$#" -le 2 ] || gate_die "usage: consensus-gate.sh [BASE [HEAD]]"
   local commits c hits bad=0 n=0 flagged=0
   commits="$(gate_commits "${1:-}" "${2:-HEAD}")"
+  # The paths go through a file, so a git failure stops the gate (red team
+  # F2 of gate-coverage-2): it never reads a short list as a clean commit.
+  GATE_PATHS_FILE="$(mktemp)" || gate_die "cannot create a temporary file"
+  trap 'rm -f "${GATE_PATHS_FILE:-}"' EXIT
   for c in $commits; do
     n=$((n + 1))
     hits=""
     local p
-    while IFS= read -r p; do
+    local -A seen=()
+    changed_paths "$c" >"$GATE_PATHS_FILE" || gate_die "cannot list the paths of commit $c; failing closed"
+    while IFS= read -r -d '' p; do
       [ -n "$p" ] || continue
+      [ -z "${seen[$p]:-}" ] || continue
+      seen["$p"]=1
       if is_consensus_path "$p"; then hits+="${hits:+, }$p"; fi
-    done < <(changed_paths "$c")
+    done <"$GATE_PATHS_FILE"
+    unset seen
     [ -n "$hits" ] || continue
     flagged=$((flagged + 1))
     local trailers subject

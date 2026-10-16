@@ -28,8 +28,11 @@
 #    injected-panic message.
 set -euo pipefail
 
+# Every workspace package with a binary, so the unified tree of check 1 is
+# the whole workspace's (gate-coverage-2 added daa-sim). daa-sim is not in
+# `bins`: an evidence harness that prints no build flags.
 pkgs=(blacksilk-node blacksilk-miner blacksilk-wallet blacksilk-genesis
-  blacksilk-supply-audit blacksilk-labnet blacksilk-stratum-bridge)
+  blacksilk-supply-audit blacksilk-labnet blacksilk-stratum-bridge blacksilk-daa-sim)
 dir="${CARGO_TARGET_DIR:-target}/release"
 bins=(blacksilk-node blacksilk-miner blacksilk-wallet blacksilk-genesis
   blacksilk-supply-audit blacksilk-labnet blacksilk-labnet-report blacksilk-rx-verify

@@ -21,6 +21,11 @@ members = [
     "tools/daa-sim", # blacksilk-daa-sim: difficulty-rule simulation harness (evidence, not consensus)
     "tools/stratum-bridge", # blacksilk-stratum-bridge: xmrig gate stratum bridge (evidence tool, not released)
 ]
+# A bare `cargo build` or `cargo test` at the root builds the release packages only
+# (those of tools/release-build.sh), so the features that the tools' manifests enable
+# are not unified into a plain `cargo build --release` of the node (record
+# "gate-coverage-2"). CI, the scripts and the docs name `-p` or `--workspace`.
+default-members = ["node", "miner", "wallet", "tools/genesis"]
 # The pre-rebuild code once kept in `legacy/` was removed from the tree on 2026-10-04
 # (see git history up to 57dd81a), the post-quantum `research/` tree on 2026-10-05
 # (removed in 5038b1a; it stays in git history). `contracts` is the frozen Wasm contract

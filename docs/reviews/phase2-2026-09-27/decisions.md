@@ -2057,3 +2057,45 @@ verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
   ignores case, as checkouts on Windows and macOS do; F2 the `zeroize` feature that
   `a5227a3` unifies into blacksilk-randomx's `aes`, benign, noted; F3 the record
   index), applied; merged into rebuild/core after this review.
+
+## Consensus gate: coverage 2 (owner-approved, 2026-10-16)
+
+- **Why:** the coverage analysis after `gate-manifest-paths` (its record item 12):
+  ungated modules that gated code computes consensus values with
+  (`px/src/perm.rs`, `px/src/delivery.rs`, `zkvm/src/isa.rs`), the submodule
+  directories of the gated file modules, the chain store and sync policy, the
+  fingerprint and fixture pins (whose own comments ask for a trailer), and the CI
+  scripts that run from the commit's own code were not consensus paths; and a file
+  whose name git quotes (`"`, `\`, a tab, a newline) matched no pattern, since the
+  gate read quoted names.
+- **Decision:** `.github/scripts/consensus-gate.sh` also gates:
+  - the submodule directory `<module>/` of every gated file module `<module>.rs`;
+  - `px/src/perm.rs`, `px/src/delivery.rs`, `zkvm/src/isa.rs`;
+  - `chain/src/store.rs`, `chain/src/sync_policy.rs`, `chain/src/build_flags.rs`;
+  - the pins: `node/tests/{deploy_configs,fingerprint_fixture,px_fixture}.rs`,
+    `px/tests/consensus_fingerprint.rs`, `px/tests/hk_vectors.rs` and its data,
+    `zkvm/tests/{circuit_fingerprint,circuit_id}.rs`, `tools/vectors/*`;
+  - `.github/scripts/*`, `tools/check-build-flags.sh`, `tools/check-test-features.sh`,
+    `deny.toml`;
+
+  and reads changed paths NUL-separated (`git diff-tree -z`; for a merge, the dense
+  combined diff per `:(literal)` path). Separately, the root `Cargo.toml` gains
+  `default-members` (node, miner, wallet, genesis), so a bare `cargo build --release`
+  no longer unifies the tools' features into the node, and build-guard checks the
+  daa-sim tree too.
+- **History:** the established mechanism. The 8 earlier commits that touched these
+  paths without a trailer are in `.github/consensus-gate-waivers.txt`; all are
+  ancestors of the waiver horizon `432b8c2`, which does not move.
+- **Not gated (owner's scope decision):** `node/src/config.rs`, `node/src/main.rs`,
+  `chain/src/actor.rs`, `chain/src/mempool.rs`. Also not gated: the guest sources
+  (pinned by the gated ELFs), the wallet and builder code (`tx/src/decoy.rs` is
+  privacy-critical and needs its own review rule), p2p, rpc, miner, wallet.
+- **Tests:** `consensus-gate.sh --selftest`: every added pattern and its upper-case
+  form gated, 20 more neighbours not; on the fixture repository, renames out of and
+  into gated paths, a deletion, a mode-only change, quoted, tab and newline names,
+  clean, evil, conflict-resolving and octopus merges.
+- **Scope:** CI gate and the workspace's default members. No production code, rule,
+  fingerprint, pin or dependency change; Cargo.lock unchanged. Record:
+  docs/reviews/v3-consensus-changes.md#gate-coverage-2
+  (`Revision: none (commit-gate coverage only; no rule, code or pin change)`).
+- **Red team:** pending.
