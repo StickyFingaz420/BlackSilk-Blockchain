@@ -45,12 +45,11 @@ positions. The pruned Merkle paths depend on the query positions, so the proof
 - Not yet tested at the time: identity across operating systems and CPU
   architectures. Field arithmetic is exact, so no difference is expected, but none
   had been measured.
-- Later (2026-10-15): the manual workflow `px-fixture.yml` regenerated both golden PX
-  fixtures (the transfer and the two-function fixture) on Linux x86-64 (CI run
+- Later (2026-10-15): the manual workflow `px-fixture.yml` regenerated the golden transfer fixture and the test-pinned two-function fixture on Linux x86-64 (CI run
   38683497322, at `66f12f0`) and on Linux x86-64 and Linux aarch64 with NEON (CI run
   38742854296, at `362b8b0`); every regenerated file equals the committed one,
   generated on Windows x86-64. Limits: these two fixtures only, GitHub runners only,
-  4 prover threads
+  at the runners' default prover thread count (4 cores on both legs of run 38742854296; not recorded for run 38683497322)
   ([evidence](../docs/evidence/px-fixture-2fn-2026-10-15/README.md)).
 
 **Remove when:** upstream makes the quotient randomness order-independent.
