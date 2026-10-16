@@ -268,9 +268,13 @@ not decisions.
    in every crate manifest outside `randomx/` and `third_party/`, and the README Licence
    section. On that branch, `randomx/` stays `BSD-3-Clause`
    ([randomx/LICENSE](../randomx/LICENSE)), the patched Plonky3 crates in `third_party/`
-   keep their upstream `MIT OR Apache-2.0`, and `blacksilklogos/` is not licensed. Owner
-   decisions left: the copyright holder name (the branch uses "The BlackSilk developers"),
-   the logos' terms, and a notices file for binary releases.
+   keep their upstream `MIT OR Apache-2.0`, and `blacksilklogos/` is reserved (all rights
+   reserved, unregistered marks; [blacksilklogos/NOTICE.md](../blacksilklogos/NOTICE.md),
+   which records the claim and the images' AI-tool provenance, not proof of ownership).
+   The copyright holder is "The BlackSilk developers" (owner, 2026-10-17).
+   `THIRD-PARTY-NOTICES.md` ships with the release binaries and the Docker image (generated
+   by `tools/third-party-notices.py`, checked in CI job `deny`). Summary, limits and the
+   owner decisions still open: [AUDIT.md](../AUDIT.md), "Licence review 2026-10-17".
 10. **Windows Defender and Windows Update on the operator machine** (an operational
     item, not a gate): both were found disabled at the labnet v3 prerequisite check on
     2026-10-15 ([labnet-v3 evidence](evidence/labnet-v3-2026-10-15/README.md) §1, the
