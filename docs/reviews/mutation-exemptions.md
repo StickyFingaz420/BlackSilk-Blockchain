@@ -1987,3 +1987,50 @@ real state (`rules.sample.px_root_after` and `rules.sample.block_commitments`, o
 26 mutants: 22 caught, 2 unviable, these 2 missed).
 
 Record: v3-consensus-changes.md#fingerprint-px-samples, 2026-10-14.
+
+## E90: the wallet's synced height read twice in the audit's sync check (tools/supply-audit/src/lib.rs)
+
+Decision: mutation run G8 ([evidence](../evidence/mutation-G8-2026-10-16/README.md),
+2026-10-16).
+
+**Code.** In `audit`, after each wallet's sync through `Pinned`:
+`let synced = e.wallet.sync(&pinned)...?; let hold = e.wallet.holdings();` and then
+`if synced != h || hold.height != h || (h > 0 && hold.tip != Some(tip))` refuses the
+comparison (lib.rs 613-626).
+
+**Mutants covered:** 618:24 `replace || with && in audit` (the first `||`: `(synced
+!= h && hold.height != h) || …`), cargo-mutants 27.1.0, at `e21eb4a`.
+
+**Argument (proof P1).** Write A = `synced != h` and B = `hold.height != h`. The
+mutant replaces `A || B` by `A && B`; the two agree whenever A and B are equal, so
+it suffices that `synced == hold.height` on every path that reaches line 618, for
+every answer of the node.
+
+1. `synced` is the `Ok` value of `Wallet::sync` (wallet/src/wallet/sync.rs 376-387):
+   `let (h, tip) = self.sync_chain(node)?; … Ok(h)`. Every error returns before
+   line 618 through the `?` at lib.rs 616.
+2. `h` there is the first element of `sync_chain`'s only `Ok` return,
+   `Ok((self.synced_height, info.height))` (sync.rs 658).
+3. Between that return and `Ok(h)`, `sync` may run `complete_index` (sync.rs
+   378-384), whose errors are only pushed as warnings. `synced_height` is written in
+   two places only, `rewind` (sync.rs 354) and the scan loop of `sync_chain` (sync.rs
+   635); `complete_index` (wallet/src/wallet/px_flows.rs) calls neither, and the
+   loader's write (persistence.rs 232) is not reached during a sync.
+4. `hold = e.wallet.holdings()` (lib.rs 617) takes `&self` and sets
+   `height: self.synced_height` (sync.rs 1466); the wallet has no interior
+   mutability on that field, and nothing runs between `sync` returning and
+   `holdings` (lib.rs 613-617).
+
+Hence `synced == self.synced_height == hold.height`, A ≡ B, and the mutant is
+equivalent: no node response can tell them apart.
+
+**Second reviewer:** internal red team 2026-10-16, VERIFIED (every write of
+`synced_height` is in `rewind`, sync.rs 354, and the `sync_chain` scan loop, 635; the
+single `Ok` return is at 658; no interior mutability; A ≡ B).
+
+**Evidence.** Missed in every G8 stage and in the kill checks at `f14a690`
+(`runG8k2`) with the full oracle. Reproduce: a worktree at the G8 test commits, then
+`cargo mutants -p blacksilk-supply-audit -f 'tools/supply-audit/src/*.rs' --re='^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]24[:] replace [|][|] with [&][&] in audit$' --profile mutants --cap-lints true --jobs 1 --timeout 300 -C=--lib -C=--bins -C=--test=px_scan -C=--test=pinned -C=--test=regtest -C=--test=px_audit`
+(one mutant, missed).
+
+Record: docs/evidence/mutation-G8-2026-10-16/README.md, 2026-10-16.
