@@ -85,3 +85,21 @@ a5227a3797cfc1c2b66e06cca10aec57faac0a99 none: predates gate-manifest-paths; p2p
 ed82f30d005afd31ff8c9ea00b8b49b32ba8c214 none: predates gate-manifest-paths; wallet: seed format v1 (wallet/Cargo.toml: the bip39 dependency removed).
 468bb8ee71169e76cae3807ef71534ac637d2e82 none: predates gate-manifest-paths; build: drop research/ from the workspace exclude list (Cargo.toml).
 2dd23a1af34c861da1c1aceb24be31b9902948e7 none: predates gate-manifest-paths; p2p manifest: test-hooks comment (p2p/Cargo.toml, a comment only).
+# gate-coverage-2 (2026-10-16, docs/reviews/v3-consensus-changes.md#gate-coverage-2)
+# added the submodule directories of the gated file modules, px/src/perm.rs,
+# px/src/delivery.rs, zkvm/src/isa.rs, chain/src/store.rs, sync_policy.rs and
+# build_flags.rs, the fingerprint, fixture, circuit and vector pins, every
+# .github/scripts/ file, tools/check-build-flags.sh, tools/check-test-features.sh
+# and deny.toml. The commits below touched those paths before they were consensus
+# paths; each reason is the commit's subject and the newly gated paths it touched.
+# Their diffs of those paths were read for this change; the commits were reviewed
+# at their merge and were not re-reviewed for consensus effect here. All are
+# ancestors of the waiver horizon 432b8c2, which does not move.
+75dcf9cedca1f68cb024e4c6f7c87681c034b80b none: predates gate-coverage-2; supply chain: cargo-deny policy (deny.toml, .github/scripts/sys-crates.sh: new CI policy files; no code).
+e9be71d631edca61854567142a936d73ce4a23eb docs/reviews/v3-consensus-changes.md#daa-lwma75-warm (predates gate-coverage-2; the fingerprint re-pin in node/tests/deploy_configs.rs and px/tests/consensus_fingerprint.rs for that section; its trailer was a paragraph above Co-Authored-By, so git did not parse it)
+730cf6346f57ea8d6ccb20af72d85ef642ac4357 none: predates gate-coverage-2; tools/check-test-features.sh added (a CI check that every test-only feature is marked).
+a049abcc737637249151b0b800ca4b51fcf5021f none: predates gate-coverage-2; chain/src/store.rs: tests only (added inside `mod tests`, mutation run F survivors).
+01fc5e42ca29ad74cdb12f288ed5b672350d92ab none: predates gate-coverage-2; .github/scripts/{doc-lint,hazmat-policy,sys-crates,unicode-scan}.sh no longer exclude the removed research/ tree.
+969d5a93267a504ccb3e4c9c8738e2fbec429a0b none: predates gate-coverage-2; chain/src/store.rs: tests only (added inside `mod tests`, store repair cases).
+2e8410f57bd269e1a0b1fec3a9b1c9996696f6ae none: predates gate-coverage-2; node/tests/px_fixture.rs: two refusal tests added; no pin changed.
+ff4921064ba999b2fbb980ad74b4ee87aa03458d none: predates gate-coverage-2; node/tests/px_fixture.rs: doc comments only (the tamper sweep itself is node/tests/px_tamper.rs); no pin changed.

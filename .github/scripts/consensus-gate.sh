@@ -53,6 +53,13 @@ source "$here/gate-range.sh"
 # there can swap or alter gated code); and the module roots that
 # declare gated modules (a `#[path]`, `cfg` or `include!` there redirects
 # them). The commits before it that touch them are in the waiver file.
+# gate-coverage-2 (record "gate-coverage-2") added the submodule directories
+# of the gated file modules, the ungated modules gated code computes
+# consensus values with (px/src/perm.rs, px/src/delivery.rs, zkvm/src/isa.rs),
+# the chain store, sync policy and build flags, the fingerprint, fixture,
+# circuit and vector pins, every CI script, the test-feature checks and the
+# cargo-deny policy; and reads paths NUL-separated, so a name git quotes is
+# matched as it is. The commits before it that touch them are waived.
 #
 # The match ignores case (red team F1 of gate-manifest-paths): checkouts on
 # Windows and macOS are case-insensitive, where `px/Build.rs` is the crate's
@@ -104,6 +111,32 @@ consensus_path_match() {
     miner/build.rs | wallet/build.rs | tools/genesis/build.rs) return 0 ;;
     chain/src/lib.rs | chain/src/manager.rs | node/src/lib.rs | px/src/lib.rs) return 0 ;;
     tx/src/lib.rs | zkvm/src/lib.rs) return 0 ;;
+    # gate-coverage-2 (proposed). (a) The submodule directory of every gated
+    # file module: a `mod x;` in tx/src/validate.rs is tx/src/validate/x.rs.
+    tx/src/validate/* | tx/src/px/* | tx/src/params/* | tx/src/types/*) return 0 ;;
+    tx/src/codec/* | tx/src/state/* | tx/src/mmr/*) return 0 ;;
+    chain/src/block/* | chain/src/emission/* | node/src/fingerprint/*) return 0 ;;
+    px/src/prove/* | px/src/state/* | px/src/tree/* | px/src/deploy_caps/*) return 0 ;;
+    px/src/fingerprint/* | zkvm/src/prove/* | zkvm/src/program/* | zkvm/src/exec/*) return 0 ;;
+    # (b) Code the gated modules compute consensus values with: the host
+    # Poseidon2 of the PX state root (px/src/state.rs), the ciphertext length
+    # of the PX codec (tx/src/px.rs), the BVM-1 decoder (exec.rs, air/).
+    px/src/perm.rs | px/src/perm/* | px/src/delivery.rs | px/src/delivery/*) return 0 ;;
+    zkvm/src/isa.rs | zkvm/src/isa/*) return 0 ;;
+    # (c) What decides which blocks are verified and how a restart trusts the
+    # store (invalid markers, stored PoW, checkpoints), the anti-DoS verify
+    # threshold and seed policy, and the test-hook network refusal.
+    chain/src/store.rs | chain/src/store/* | chain/src/sync_policy.rs) return 0 ;;
+    chain/src/sync_policy/* | chain/src/build_flags.rs | chain/src/build_flags/*) return 0 ;;
+    # (d) The pins that say a change of them is a consensus change: the
+    # fingerprint, fixture, circuit and vector tests and their data.
+    node/tests/deploy_configs.rs | node/tests/fingerprint_fixture.rs) return 0 ;;
+    node/tests/px_fixture.rs | px/tests/consensus_fingerprint.rs) return 0 ;;
+    px/tests/hk_vectors.rs | px/tests/data/hk_vectors.txt | tools/vectors/*) return 0 ;;
+    zkvm/tests/circuit_fingerprint.rs | zkvm/tests/circuit_id.rs) return 0 ;;
+    # (e) Every CI script, and the checks CI runs from the commit's own code
+    # (build guard, test-feature markers), and the cargo-deny policy.
+    .github/scripts/* | tools/check-build-flags.sh | tools/check-test-features.sh | deny.toml) return 0 ;;
   esac
   return 1
 }
@@ -178,14 +211,22 @@ check_record_ref() {
 }
 
 # The paths a commit changes: against its parent (both sides of a rename), or
-# for a merge the paths its dense combined diff shows.
+# for a merge the paths its dense combined diff shows. NUL-terminated (-z):
+# a name git would quote (a `"`, `\`, tab, newline or control character) is
+# matched as it is, never as `"consensus/a\"b.rs"` (gate-coverage-2). For a
+# merge, `--cc --name-only` lists every path that differs from all parents
+# (a superset); a path is kept when its dense combined diff is not empty.
 changed_paths() {
-  local c="$1" parents
+  local c="$1" parents p
   parents="$(git rev-list --parents -n 1 "$c" | wc -w)"
   if [ "$parents" -gt 2 ]; then
-    git -c core.quotepath=false diff-tree --cc -p --no-commit-id "$c" | sed -n 's/^diff --cc //p'
+    while IFS= read -r -d '' p; do
+      if [ -n "$(git diff-tree --cc -p --no-commit-id "$c" -- ":(literal)$p")" ]; then
+        printf '%s\0' "$p"
+      fi
+    done < <(git diff-tree -r --cc --name-only -z --no-commit-id "$c")
   else
-    git -c core.quotepath=false diff-tree -r --root --no-renames --name-only --no-commit-id "$c"
+    git diff-tree -r --root --no-renames --name-only -z --no-commit-id "$c"
   fi
 }
 
@@ -242,14 +283,33 @@ GATE_UNGATED_NEIGHBOURS="README.md docs/STATUS.md Cargo.lock tools/daa-sim/Cargo
 tools/labnet/Cargo.toml tools/supply-audit/Cargo.toml fuzz/Cargo.toml contracts/Cargo.toml
 zkvm/guests/Cargo.toml zkvm/sdk/Cargo.toml p2p/src/lib.rs rpc/src/lib.rs
 node/src/main.rs miner/src/main.rs px/src/vault.rs chain/src/mempool.rs
-chain/src/manager.rs.orig src/lib.rs px/src/lib.rs.bak docs/Cargo.toml"
+chain/src/manager.rs.orig src/lib.rs px/src/lib.rs.bak docs/Cargo.toml
+chain/src/actor.rs chain/src/address.rs chain/src/mempool/reorg.rs px/src/wallet.rs
+px/src/share.rs tx/src/builder.rs tx/src/decoy.rs tx/src/scan.rs tx/src/px_builder.rs
+tx/src/validate_notes.md zkvm/src/asm.rs node/src/config.rs node/tests/rpc_security.rs
+px/tests/proof.rs zkvm/tests/vm.rs tools/vectors.md .github/ISSUE_TEMPLATE/bug_report.md
+tools/release-build.sh.bak zkvm/guests/kernel/src/main.rs zkvm/sdk/src/lib.rs"
+# The paths gate-coverage-2 adds (one example per pattern).
+GATE_COVERAGE2_PATHS="tx/src/validate/rules.rs tx/src/px/codec.rs tx/src/params/x.rs
+tx/src/types/x.rs tx/src/codec/x.rs tx/src/state/x.rs tx/src/mmr/x.rs chain/src/block/x.rs
+chain/src/emission/x.rs node/src/fingerprint/x.rs px/src/prove/x.rs px/src/state/x.rs
+px/src/tree/x.rs px/src/deploy_caps/x.rs px/src/fingerprint/x.rs zkvm/src/prove/x.rs
+zkvm/src/program/x.rs zkvm/src/exec/x.rs px/src/perm.rs px/src/perm/x.rs
+px/src/delivery.rs px/src/delivery/x.rs zkvm/src/isa.rs zkvm/src/isa/x.rs
+chain/src/store.rs chain/src/store/x.rs chain/src/sync_policy.rs chain/src/sync_policy/x.rs
+chain/src/build_flags.rs chain/src/build_flags/x.rs node/tests/deploy_configs.rs
+node/tests/fingerprint_fixture.rs node/tests/px_fixture.rs px/tests/consensus_fingerprint.rs
+px/tests/hk_vectors.rs px/tests/data/hk_vectors.txt tools/vectors/output_mmr.py
+zkvm/tests/circuit_fingerprint.rs zkvm/tests/circuit_id.rs .github/scripts/build-guard.sh
+.github/scripts/unicode-scan.sh tools/check-build-flags.sh tools/check-test-features.sh deny.toml"
 # Case variants of gated paths (red team F1): gated, since a case-insensitive
 # checkout uses them as the gated file.
 GATE_CASE_VARIANTS="PX/SRC/LIB.RS px/Build.rs rpc/BUILD.rs Cargo.TOML TX/Cargo.toml"
 
 selftest_paths() {
   local p bad=0
-  for p in $GATE_MANIFEST_PATHS consensus/Cargo.toml crypto/Cargo.toml \
+  for p in $GATE_MANIFEST_PATHS $GATE_COVERAGE2_PATHS consensus/Cargo.toml crypto/Cargo.toml \
+    PX/SRC/PERM.RS Chain/Src/Store.rs ZKVM/src/ISA.rs \
     px-core/src/lib.rs zk/build.rs randomx/Cargo.toml px/src/deploy_caps.rs \
     $GATE_CASE_VARIANTS Consensus/src/lib.rs TX/SRC/VALIDATE.RS; do
     is_consensus_path "$p" || { echo "selftest: $p should be a consensus path"; bad=1; }
@@ -335,9 +395,123 @@ selftest_history() {
     expect 1 "$p" "touch $p"
   done
   # (a), (b) every newly gated path: no trailer fails, a trailer passes.
-  for p in $GATE_MANIFEST_PATHS; do
+  for p in $GATE_MANIFEST_PATHS $GATE_COVERAGE2_PATHS; do
     expect 1 "$p" "touch $p"
     expect 0 "$p" "touch $p$trailer"
+  done
+  # gate-coverage-2: history shapes. want_rc WANT BASE HEAD WHAT.
+  want_rc() {
+    local rc=0
+    gate_run "$2" "$3" || rc=$?
+    [ "$rc" = "$1" ] || { echo "selftest: gate exit $rc (want $1): $4"; bad=1; }
+  }
+  local c b q root
+  g() { git -C "$t/repo" "$@"; }
+  # A rename out of a gated path and a deletion are changes of the gated path.
+  # (Paths outside the case-variant directories above, which a
+  # case-insensitive checkout records under their first spelling.)
+  if g mv chain/src/block/x.rs chain/src/moved.rs && g commit -q -m 'rename out'; then
+    want_rc 1 HEAD~1 HEAD "rename of a gated file to an ungated path"
+  else
+    echo "selftest: rename fixture failed"; bad=1
+  fi
+  if g rm -q chain/src/moved.rs px/src/perm.rs && g commit -q -m 'delete'; then
+    want_rc 1 HEAD~1 HEAD "deletion of a gated file"
+  else
+    echo "selftest: deletion fixture failed"; bad=1
+  fi
+  # A name git quotes (`"` here; tabs and newlines likewise) is still matched.
+  # Built with plumbing: such a name cannot be checked out on Windows.
+  b="$(echo quoted | g hash-object -w --stdin)"
+  q="$(printf '100644 blob %s\tq"x.rs\n' "$b" | g mktree)"
+  root="$( { g ls-tree HEAD | grep -v "$(printf '\t')consensus\$"; printf '040000 tree %s\tconsensus\n' "$q"; } | g mktree)"
+  c="$(g commit-tree "$root" -p HEAD -m 'quoted name')"
+  want_rc 1 "$c~1" "$c" "a consensus/ file whose name git quotes"
+  # Merges: an edit made in the merge itself fails; a clean merge of two
+  # trailered sides passes; a merge that takes one side's file as it is passes.
+  g checkout -q -b side
+  expect 0 chain/src/store.rs "side$trailer"
+  g checkout -q main
+  expect 0 README.md main
+  g merge -q --no-ff -m 'clean merge' side >/dev/null
+  want_rc 0 HEAD^1 HEAD "a clean merge of checked commits"
+  g reset -q --hard HEAD^1
+  g merge -q --no-ff --no-commit side >/dev/null 2>&1
+  echo evil >>"$t/repo/chain/src/store.rs"
+  g add -A && g commit -q -m 'evil merge'
+  want_rc 1 HEAD^1 HEAD "an edit of a gated file inside a merge"
+  g reset -q --hard HEAD^1
+  # Both sides change one gated file in different places: the merged file
+  # differs from both parents, but every hunk is one side's (the dense
+  # combined diff is empty), so the clean merge passes.
+  printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$t/repo/chain/src/emission/m.rs"
+  g add -A && g commit -q -m "lines$trailer"
+  g checkout -q -b d1 && sed -i 's/^a$/A/' "$t/repo/chain/src/emission/m.rs" &&
+    g commit -q -a -m "d1$trailer"
+  g checkout -q main && sed -i 's/^h$/H/' "$t/repo/chain/src/emission/m.rs" &&
+    g commit -q -a -m "d2$trailer"
+  g merge -q --no-ff -m 'clean merge, both sides' d1 >/dev/null 2>&1
+  if [ "$(g rev-list --parents -n 1 HEAD | wc -w)" = 3 ]; then
+    want_rc 0 HEAD^1 HEAD "a clean merge of two changes to one gated file"
+  else
+    echo "selftest: two-sided merge fixture failed"; bad=1
+  fi
+  # A conflict in a gated file: resolved to one side's version, the merge
+  # adds nothing and passes; resolved to new content, it fails without a
+  # trailer and passes with one.
+  g checkout -q -b c1 && printf 'one\n' >"$t/repo/chain/src/sync_policy.rs" &&
+    g commit -q -a -m "c1$trailer"
+  g checkout -q main && printf 'two\n' >"$t/repo/chain/src/sync_policy.rs" &&
+    g commit -q -a -m "c2$trailer"
+  conflict_merge() { # CONTENT MESSAGE: merge c1 into main, resolve to CONTENT
+    g merge -q --no-ff --no-commit c1 >/dev/null 2>&1
+    printf '%s\n' "$1" >"$t/repo/chain/src/sync_policy.rs"
+    g add -A && g commit -q -m "$2"
+  }
+  conflict_merge two 'resolved to ours'
+  want_rc 0 HEAD^1 HEAD "a conflict resolved to one side's version"
+  g reset -q --hard HEAD^1
+  conflict_merge three 'resolved anew'
+  want_rc 1 HEAD^1 HEAD "a conflict resolved to new content, no trailer"
+  g reset -q --hard HEAD^1
+  conflict_merge three "resolved anew$trailer"
+  want_rc 0 HEAD^1 HEAD "a conflict resolved to new content, with a trailer"
+  g reset -q --hard HEAD^1
+  # An octopus merge: clean passes; an edit inside it fails.
+  for p in o1:chain/src/store/o1.rs o2:px/src/tree/o2.rs o3:zkvm/src/isa/o3.rs; do
+    g checkout -q -b "${p%%:*}" main && expect 0 "${p#*:}" "${p%%:*}$trailer"
+  done
+  g checkout -q main
+  g merge -q --no-ff -m 'octopus' o1 o2 o3 >/dev/null 2>&1
+  if [ "$(g rev-list --parents -n 1 HEAD | wc -w)" = 5 ]; then # the merge and its 4 parents
+    want_rc 0 HEAD^1 HEAD "a clean octopus merge of checked commits"
+    g reset -q --hard HEAD^1
+    g merge -q --no-ff --no-commit o1 o2 o3 >/dev/null 2>&1
+    echo evil >>"$t/repo/px/src/tree/o2.rs"
+    g add -A && g commit -q -m 'evil octopus'
+    want_rc 1 HEAD^1 HEAD "an edit of a gated file inside an octopus merge"
+    g reset -q --hard HEAD^1
+  else
+    echo "selftest: octopus merge fixture failed"; bad=1
+  fi
+  # A file renamed into a gated path, and a mode-only change of one.
+  expect 0 notes/n.rs 'an ungated file'
+  g mv notes/n.rs chain/src/block/n.rs && g commit -q -m 'rename in'
+  want_rc 1 HEAD~1 HEAD "a rename of an ungated file into a gated path"
+  g update-index --chmod=+x chain/src/block/n.rs && g commit -q -m 'mode only'
+  want_rc 1 HEAD~1 HEAD "a mode-only change of a gated file"
+  # Names with a tab or a newline, built with plumbing (`mktree -z`, which
+  # also works on Windows git; such a name is never checked out). The
+  # fixture has no crypto/ or randomx/ tree, so the commit adds one file.
+  for q in "$(printf 'crypto/t\tx.rs')" "$(printf 'randomx/n\nx.rs')"; do
+    b="$(printf '%s\n' "$q" | g hash-object -w --stdin)"
+    root="$( { g ls-tree -z HEAD
+      printf '040000 tree %s\t%s\0' "$(printf '100644 blob %s\t%s\0' "$b" "${q#*/}" | g mktree -z)" "${q%%/*}"; } | g mktree -z)"
+    if c="$(g commit-tree "$root" -p HEAD -m 'odd name')" && [ -n "$c" ]; then
+      want_rc 1 "$c~1" "$c" "a gated file whose name has a tab or a newline"
+    else
+      echo "selftest: odd-name fixture failed"; bad=1
+    fi
   done
   # A record citation the record does not have is no trailer.
   expect 1 px/src/lib.rs $'cite\n\nConsensus-Change: docs/reviews/v3-consensus-changes.md#no-such-section'
@@ -407,7 +581,7 @@ main() {
     n=$((n + 1))
     hits=""
     local p
-    while IFS= read -r p; do
+    while IFS= read -r -d '' p; do
       [ -n "$p" ] || continue
       if is_consensus_path "$p"; then hits+="${hits:+, }$p"; fi
     done < <(changed_paths "$c")

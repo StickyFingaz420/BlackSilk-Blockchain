@@ -45,6 +45,7 @@ they are never renamed. Index:
 - fingerprint-px-samples (tx `BlockError::fingerprint_text`, node verdict samples for PX6, PX4 and B8 and block verdicts; lead decision 2026-10-14)
 - v12-caps-single-definition (px `deploy_caps`: one definition of the V12 deploy caps and rules, used by tx, the prover and the B2 example; no rule change)
 - gate-manifest-paths (the consensus commit gate: workspace and crate manifests, build scripts, module roots; no rule change; owner-approved follow-up to red team F3 of v12-caps-single-definition)
+- gate-coverage-2 (the consensus commit gate: modules gated code computes with, store and sync policy, pins, CI scripts, NUL-separated names; no rule change; owner-approved 2026-10-16)
 
 New sections are appended at the end.
 
@@ -5350,3 +5351,178 @@ changes; Cargo.lock is unchanged.
     owner-approved follow-up; internal red team (2026-10-15): merge with fixes (F1
     case-insensitive match, F2 feature note, F3 index), applied; merged into
     rebuild/core after this review.
+
+## gate-coverage-2: the consensus gate covers the modules gated code computes with, the store and sync policy, the pins and the CI scripts, and reads names NUL-separated
+
+Revision: none (commit-gate coverage only; no rule, code or pin change)
+
+Decision: "Consensus gate: coverage 2" (decisions.md), owner-approved on 2026-10-16
+after the coverage analysis that followed `gate-manifest-paths` (its item 12). Branch
+`gates/coverage-2` (from `e21eb4a`). Internal engineering work, not an audit. No
+production code, rule, fingerprint, pin or dependency change; Cargo.lock is unchanged.
+
+1. **Problem.** After `gate-manifest-paths` the gate still missed four kinds of
+   files, and one way of naming them:
+   - ungated modules that gated code computes consensus values with:
+     `px/src/perm.rs` (the host Poseidon2 permutation; `px/src/state.rs` builds the
+     PX state root with it), `px/src/delivery.rs` (`CIPHERTEXT_BYTES`, which the
+     gated PX codec and validation in `tx/src/px.rs` use) and `zkvm/src/isa.rs` (the
+     BVM-1 decoder, used by `zkvm/src/exec.rs` and `zkvm/src/air/program.rs`);
+   - the submodule directory of every gated file module: a `mod x;` in
+     `tx/src/validate.rs` is `tx/src/validate/x.rs`, which was not gated;
+   - code that decides which blocks are verified and what a restart trusts:
+     `chain/src/store.rs` (invalid markers, the stored PoW hash, checkpoints that let
+     a later build skip work), `chain/src/sync_policy.rs` (`worth_verifying`, the
+     anti-DoS threshold, the hot seeds), and `chain/src/build_flags.rs` (the refusal
+     of every network but regtest while test hooks are compiled in);
+   - the pins that say a change of them is a consensus change
+     (`node/tests/deploy_configs.rs`: "Changing any of these digests is a consensus
+     change", with a trailer), the fixture, circuit and vector tests, and the CI
+     scripts and checks that CI runs from the commit's own code (`build-guard.sh`,
+     `check-build-flags.sh`, `check-test-features.sh`, `unicode-scan.sh`, the
+     cargo-deny policy);
+   - a file whose name git quotes (`"`, `\`, a tab, a newline or another control
+     character): `git diff-tree --name-only` printed it as `"consensus/a\"b.rs"`,
+     which matches no pattern.
+2. **Demonstrated failure.** On a scratch fixture repository, the gate at `e21eb4a`
+   passed (exit 0, "0 touch consensus paths") a commit that changes only
+   `consensus/q"x.rs`, and one that adds `tx/src/validate/helpers.rs`. Over the real
+   history, `e9be71d` re-pinned the consensus fingerprints in
+   `node/tests/deploy_configs.rs` and `px/tests/consensus_fingerprint.rs` with its
+   trailer a paragraph above `Co-Authored-By`, so git did not parse it, and the gate
+   did not notice because the pins were not consensus paths.
+3. **Prior art.** This gate's own earlier extensions (RTFP3-10, RT-TPGATE,
+   RT-TPGATE2, RT-TPGATE3, gate-manifest-paths), with the earlier untrailered
+   commits in the waiver file. `git diff-tree -z` (NUL-terminated names, never
+   quoted); `:(literal)` pathspecs.
+4. **Alternatives.**
+   - Gate every `*.rs` of the release crates: rejected as wider than needed (the
+     wallet, p2p, rpc and miner sources do not decide what a node accepts).
+   - Gate the pins only, as tripwires (any ungated change that moves a fingerprint
+     must then touch a gated pin): taken as one part, but not enough alone. A
+     change can alter a consensus input that no fingerprint sample sees.
+   - For merges, gate every path that differs from all parents (`--cc --name-only`
+     alone): rejected. A clean merge of two trailered sides would need a trailer of
+     its own. The gate keeps the dense combined diff, as before.
+   - Deliberate exclusions (owner decisions, or covered elsewhere):
+     - `node/src/config.rs` and `node/src/main.rs` (the network refusal,
+       `--skip-randomx-self-test`, the store PoW check), `chain/src/actor.rs` (one
+       writer; its consensus equivalence is tested by
+       `chain/tests/actor_equivalence.rs`) and `chain/src/mempool.rs` (with
+       `mempool/`; template and relay policy, not rules): kept out by the owner's
+       scope decision of 2026-10-16. They are security-relevant node code; gating
+       them is open.
+     - `zkvm/guests/**` and `zkvm/sdk/**`: their output is pinned by the gated
+       `px/*.elf` and `px/*.id`, and the gated guests-reproduce job fails on a
+       source change that does not rebuild the ELF.
+     - `px/src/vault.rs`, `share.rs`, `wallet.rs` and `tx/src/{builder,px_builder,
+       decoy,scan}.rs`: wallet and builder side. The vault constants reach the node
+       fingerprint (`node/src/fingerprint.rs`), whose pins are now gated.
+       `tx/src/decoy.rs` (ring member selection) is privacy-critical; it needs a
+       review rule of its own, not this gate.
+     - `p2p/**`, `rpc/**`, `miner/**`, `wallet/**`, `chain/src/address.rs`: not
+       rules; the node validates everything it receives.
+     - The tools' manifests (`tools/{labnet,supply-audit,daa-sim,stratum-bridge}`):
+       handled by `default-members` (item 5), not by the gate.
+5. **Affected components.** `.github/scripts/consensus-gate.sh` (the path list, its
+   comment, `changed_paths`, the main loop, the selftest) and
+   `.github/consensus-gate-waivers.txt`; in a separate commit, the root
+   `Cargo.toml` (`default-members`) and `.github/scripts/build-guard.sh` (daa-sim);
+   and the docs in item 14. The paths added:
+   - the submodule directories `tx/src/{validate,px,params,types,codec,state,mmr}/`,
+     `chain/src/{block,emission}/`, `node/src/fingerprint/`,
+     `px/src/{prove,state,tree,deploy_caps,fingerprint}/`,
+     `zkvm/src/{prove,program,exec}/`;
+   - `px/src/perm.rs`, `px/src/delivery.rs`, `zkvm/src/isa.rs` and their
+     directories;
+   - `chain/src/store.rs`, `chain/src/sync_policy.rs`, `chain/src/build_flags.rs`
+     and their directories;
+   - `node/tests/deploy_configs.rs`, `node/tests/fingerprint_fixture.rs`,
+     `node/tests/px_fixture.rs`, `px/tests/consensus_fingerprint.rs`,
+     `px/tests/hk_vectors.rs`, `px/tests/data/hk_vectors.txt`,
+     `zkvm/tests/circuit_fingerprint.rs`, `zkvm/tests/circuit_id.rs`,
+     `tools/vectors/*`;
+   - `.github/scripts/*`, `tools/check-build-flags.sh`, `tools/check-test-features.sh`,
+     `deny.toml`.
+
+   Names are read NUL-separated: `git diff-tree -r --root --no-renames --name-only
+   -z` for a commit; for a merge, `--cc --name-only -z` gives the candidates and a
+   path is kept when its dense combined diff (`--cc -p -- ":(literal)<path>"`) is not
+   empty, the same paths as before for ordinary names.
+
+   `default-members` (separate commit): a bare `cargo build` or `cargo test` at the
+   root now builds node, miner, wallet and genesis only, so the tools' manifests no
+   longer unify their features into a plain `cargo build --release`. Every cargo
+   call in CI, the scripts, the Dockerfile, `tools/release-build.sh` and the docs
+   names `-p`, `--workspace` or `--manifest-path`, or is a whole-workspace tool
+   (`cargo fmt --all`, `cargo fetch`, `cargo audit`, `cargo deny`: cargo-deny 0.20.2
+   takes every workspace member as a root for a virtual manifest, krates 0.21.2
+   `builder.rs`), so none changes scope. build-guard adds `blacksilk-daa-sim` to its
+   unified dependency-tree check (not to the `--version` check: it prints no build
+   flags).
+6. **Activation.** None: CI only. The `gates` job runs the trusted copy of the gate,
+   so the new paths are enforced from the first push after the merge; the branch's
+   own `gates-selftest` job runs the new selftest.
+7. **Compatibility.** The waiver file gains 8 lines (75dcf9c, e9be71d, 730cf63,
+   a049abc, 01fc5e4, 969d5a9, 2e8410f, ff49210), each with the commit's subject and
+   the newly gated paths it touched; their diffs of those paths were read (CI policy
+   files and scripts, tests inside `mod tests` of `chain/src/store.rs`, doc comments
+   and tests in `node/tests/px_fixture.rs`, one fingerprint re-pin that belongs to
+   `daa-lwma75-warm` and is waived with that citation). All 8 are ancestors of the
+   waiver horizon `432b8c2`, so the horizon does not move. No commit after it
+   touches a newly gated path without a trailer.
+8. **Reorg, wallet, mining and P2P implications.** None. Development: a commit that
+   edits one of these files now needs a trailer, `none: <reason>` for a routine edit
+   (a test in `chain/src/store.rs`, a CI script fix).
+9. **Vectors.** The fixture repository of the selftest (item 10).
+10. **Tests.** `consensus-gate.sh --selftest` gains:
+    - `selftest_paths`: one example of each added pattern is gated, as are
+      `PX/SRC/PERM.RS`, `Chain/Src/Store.rs` and `ZKVM/src/ISA.rs`; 20 more
+      neighbours are not (among them `px/src/vault.rs`, `tx/src/decoy.rs`,
+      `chain/src/actor.rs`, `chain/src/mempool/reorg.rs`, `node/src/config.rs`,
+      `tools/vectors.md`, `zkvm/guests/kernel/src/main.rs`, `zkvm/sdk/src/lib.rs`),
+      nor their upper-case forms;
+    - `selftest_history`: for each example path, an untrailered commit fails and a
+      trailered one passes; a rename out of a gated path fails; a deletion fails; a
+      rename of an ungated file into a gated path fails; a mode-only change fails; a
+      file named `consensus/q"x.rs`, and gated names with a tab and with a newline
+      (built with `git mktree -z`, which works on Windows git as well), fail; a
+      clean merge of two trailered sides passes; a clean merge of two changes to one
+      gated file in different places passes; an edit inside a merge fails; a
+      conflict in a gated file resolved to one side's version passes, resolved to new
+      content fails without a trailer and passes with one; a clean octopus merge of
+      three trailered sides passes and an edit inside it fails.
+11. **Suite results** (2026-10-16, this machine, Git for Windows bash, on the
+    branch's working tree before the commit):
+    - `consensus-gate.sh --selftest`: pass (about 4.5 min alone, 7 min with three
+      other runs in parallel).
+    - The selftest against three mutated copies of the gate, each alone: the old
+      `changed_paths` (quoted names; 3 failures reported: the `"` name, the tab
+      name, the newline name), the dense filter for merges dropped (1: the clean
+      two-sided merge), the `px/src/perm.rs | … | px/src/delivery/*` pattern line
+      deleted (5 path checks and 4 fixture commits): FAIL each time.
+    - `consensus-gate.sh` over the whole history (`"" HEAD`, before the commit): 715
+      commits checked, 217 touch consensus paths (206 with the gate at `e21eb4a`),
+      pass; the 8 new waivers print as waived. After the commits: see the branch's
+      CI run.
+    - doc-lint (183 files clean), unicode-scan (1898 files, 0 findings).
+    - No Rust code changed; `cargo` was not run for this change except `cargo
+      metadata` and `cargo tree` (read-only) for the `default-members` check.
+12. **Open review points.**
+    - The owner's scope decision on `node/src/config.rs`, `node/src/main.rs`,
+      `chain/src/actor.rs` and `chain/src/mempool.rs` (item 4).
+    - A privacy review rule for `tx/src/decoy.rs` and the wallet's selection and
+      delivery code: not this gate.
+    - The gate judges paths, not intent: a reviewed redirection (`#[path]`,
+      `include!`, a symlink, a new `mod` in a gated root) moves later edits to the
+      redirected file, which is gated only if its path is. A `none: …` trailer on a
+      real consensus change is caught only by review.
+    - The gates are advisory until branch protection and required checks are set
+      (docs/STATUS.md, "CODEOWNERS and branch protection"): a direct push to
+      rebuild/core can change `ci.yml` before any gate runs.
+13. **Identity impact.** None.
+14. **Documentation.** This section; decisions.md. docs/STATUS.md and README.md
+    (Contributing: which files are consensus paths; Build: a bare `cargo build`
+    builds the four release packages) are updated separately.
+15. **Review status.** Implemented and verified by the implementing agent under the
+    owner-approved scope; internal red team pending.
