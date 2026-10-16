@@ -9,7 +9,7 @@
 // libraries, and no fuzz target links this binary, so it refuses to build.
 #[cfg(fuzzing)]
 compile_error!(
-    "refusing to build blacksilk-stratum-probe with `--cfg fuzzing`: no fuzz target links it; build it with a plain `cargo build --release`"
+    "refusing to build blacksilk-stratum-probe with `--cfg fuzzing`: no fuzz target links it; build it with a plain `cargo build --release -p blacksilk-stratum-bridge`"
 );
 
 use blacksilk_chain::address::decode_address;
