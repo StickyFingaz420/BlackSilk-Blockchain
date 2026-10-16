@@ -120,8 +120,9 @@ impl BuildFlags {
             Network::Testnet | Network::Mainnet => Err(format!(
                 "refusing to run on {}: this {binary} was built with test-only code ({}), \
                  which only regtest may use. It comes from a `cargo test` or fuzz build \
-                 writing the binary; rebuild it with a plain `cargo build --release` from a \
-                 clean commit (docs/testnet.md)",
+                 writing the binary; rebuild it from a clean commit with `cargo build --release` \
+                 (the node, miner, wallet and genesis tool: the workspace's default members) or \
+                 `cargo build --release -p <package>` (any other binary) (docs/testnet.md)",
                 network_label(network),
                 self.render()
             )),
@@ -139,8 +140,9 @@ impl BuildFlags {
             Err(format!(
                 "refusing to run: this {binary} was built with test-only code ({}), and a \
                  clean build is required. It comes from a `cargo test` or fuzz build writing \
-                 the binary; rebuild it with a plain `cargo build --release` from a clean \
-                 commit (docs/testnet.md)",
+                 the binary; rebuild it from a clean commit with `cargo build --release` (the \
+                 node, miner, wallet and genesis tool: the workspace's default members) or \
+                 `cargo build --release -p <package>` (any other binary) (docs/testnet.md)",
                 self.render()
             ))
         }
