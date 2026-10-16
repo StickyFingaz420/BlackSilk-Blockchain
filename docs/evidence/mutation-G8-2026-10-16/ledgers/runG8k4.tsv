@@ -1,0 +1,12 @@
+id	class	outcome	build_s	test_s	failing_or_error	env	name	log
+?	?	Success	174.5	4.7			BASELINE	log/baseline.log
+G8-102	SC3	CaughtMutant	3.4	1.0	a_deploy_is_counted_and_its_fee_is_owed_by_the_coinbase		tools/supply-audit/src/lib.rs:436:38: replace += with -= in scan_chain	log/tools__supply-audit__src__lib.rs_line_436_col_38.log
+G8-103	SC3	CaughtMutant	3.6	0.9	a_deploy_is_counted_and_its_fee_is_owed_by_the_coinbase		tools/supply-audit/src/lib.rs:436:38: replace += with *= in scan_chain	log/tools__supply-audit__src__lib.rs_line_436_col_38_001.log
+G8-104	SC2	CaughtMutant	3.5	0.9	a_deploy_is_counted_and_its_fee_is_owed_by_the_coinbase		tools/supply-audit/src/lib.rs:437:30: replace += with -= in scan_chain	log/tools__supply-audit__src__lib.rs_line_437_col_30.log
+G8-105	SC2	CaughtMutant	3.4	1.0	a_deploy_is_counted_and_its_fee_is_owed_by_the_coinbase		tools/supply-audit/src/lib.rs:437:30: replace += with *= in scan_chain	log/tools__supply-audit__src__lib.rs_line_437_col_30_001.log
+G8-123	SC3	CaughtMutant	3.4	0.5	report_tests::maturity_is_judged_at_the_next_block		tools/supply-audit/src/lib.rs:480:9: delete field name from struct WalletSummary expression in summarize	log/tools__supply-audit__src__lib.rs_line_480_col_9.log
+G8-124	SC3	CaughtMutant	3.4	0.5	tests::summary_counts_on_chain_state_and_classifies_it		tools/supply-audit/src/lib.rs:481:9: delete field pending_txs from struct WalletSummary expression in summarize	log/tools__supply-audit__src__lib.rs_line_481_col_9.log
+G8-178	SC2	CaughtMutant	3.3	4.9	a_wallet_on_another_block_at_the_audit_height_is_refused		tools/supply-audit/src/lib.rs:618:44: replace || with && in audit	log/tools__supply-audit__src__lib.rs_line_618_col_44.log
+G8-183	SC2	CaughtMutant	3.5	4.9	a_wallet_on_another_block_at_the_audit_height_is_refused,an_audit_at_the_genesis_after_the_kept_block_ids_moved_past_it		tools/supply-audit/src/lib.rs:618:50: replace > with == in audit	log/tools__supply-audit__src__lib.rs_line_618_col_50.log
+G8-184	SC2	CaughtMutant	3.4	4.9	a_wallet_on_another_block_at_the_audit_height_is_refused		tools/supply-audit/src/lib.rs:618:50: replace > with < in audit	log/tools__supply-audit__src__lib.rs_line_618_col_50_001.log
+G8-185	SC2	CaughtMutant	3.5	4.9	an_audit_at_the_genesis_after_the_kept_block_ids_moved_past_it		tools/supply-audit/src/lib.rs:618:50: replace > with >= in audit	log/tools__supply-audit__src__lib.rs_line_618_col_50_002.log

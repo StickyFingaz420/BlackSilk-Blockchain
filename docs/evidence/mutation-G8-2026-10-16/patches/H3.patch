@@ -1,0 +1,11 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -628,7 +628,7 @@
+         s.wallet_balance = e.wallet.balance().total;
+         s.wallet_px_balance = e.wallet.px_balance().0;
+         for o in hold.outputs.iter().filter(|o| o.spent_height.is_none()) {
+-            if v1.insert(o.global_index, o.amount).is_some() {
++            if v1.insert(o.amount, o.amount).is_some() {
+                 totals.v1_duplicates += 1;
+             }
+         }

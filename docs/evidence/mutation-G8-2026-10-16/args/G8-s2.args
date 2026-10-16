@@ -1,0 +1,117 @@
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]92[:]21[:] replace [<] with [=][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]info$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]92[:]21[:] replace [<] with [>] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]info$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]92[:]21[:] replace [<] with [<][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]info$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]104[:]31[:] replace [|][|] with [&][&] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]104[:]17[:] replace [>] with [=][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]104[:]17[:] replace [>] with [<] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]104[:]17[:] replace [>] with [>][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]104[:]40[:] replace [=][=] with [!][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]107[:]74[:] replace [+] with \- in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]107[:]74[:] replace [+] with [*] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]107[:]67[:] replace \- with [+] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]107[:]67[:] replace \- with [/] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]108[:]38[:] replace [<][=] with [>] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]blocks$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]120[:]31[:] replace [|][|] with [&][&] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]120[:]17[:] replace [>] with [=][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]120[:]17[:] replace [>] with [<] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]120[:]17[:] replace [>] with [>][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]120[:]40[:] replace [=][=] with [!][=] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]125[:]57[:] replace [+] with \- in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]125[:]57[:] replace [+] with [*] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]125[:]50[:] replace \- with [+] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]125[:]50[:] replace \- with [/] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]76[:] replace [*] with [+] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]76[:] replace [*] with [/] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]56[:] replace [*] with [+] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]56[:] replace [*] with [/] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]41[:] replace [+] with \- in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]41[:] replace [+] with [*] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]34[:] replace \- with [+] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]126[:]34[:] replace \- with [/] in [<]impl NodeApi for Pinned[<]['][_][>][>][:][:]headers$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]389[:]60[:] replace \- with [+] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]389[:]60[:] replace \- with [/] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]401[:]40[:] replace [|][|] with [&][&] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]419[:]30[:] replace [+][=] with \-[=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]419[:]30[:] replace [+][=] with [*][=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]437[:]30[:] replace [+][=] with \-[=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]437[:]30[:] replace [+][=] with [*][=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]467[:]5[:] replace block[_]id \-[>] Result[<]Hash[,] String[>] with Ok[(]Default[:][:]default[(][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]471[:]30[:] replace [=][=] with [!][=] in block[_]id$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]557[:]27[:] replace [>] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]557[:]27[:] replace [>] with [<] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]557[:]27[:] replace [>] with [>][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]567[:]15[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]572[:]10[:] replace [>] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]572[:]10[:] replace [>] with [<] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]572[:]10[:] replace [>] with [>][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]578[:]20[:] replace [=][=] with [!][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]581[:]25[:] replace [&][&] with [|][|] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]581[:]10[:] replace [=][=] with [!][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]581[:]44[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]587[:]28[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]587[:]55[:] replace [+] with \- in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]587[:]55[:] replace [+] with [*] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]600[:]31[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]606[:]38[:] replace [>] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]606[:]38[:] replace [>] with [<] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]606[:]38[:] replace [>] with [>][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]44[:] replace [|][|] with [&][&] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]24[:] replace [|][|] with [&][&] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]19[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]39[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]54[:] replace [&][&] with [|][|] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]50[:] replace [>] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]50[:] replace [>] with [<] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]50[:] replace [>] with [>][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]66[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]632[:]38[:] replace [+][=] with \-[=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]632[:]38[:] replace [+][=] with [*][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]637[:]38[:] replace [+][=] with \-[=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]637[:]38[:] replace [+][=] with [*][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]643[:]22[:] replace [=][=] with [!][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]644[:]14[:] replace [!][=] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]655[:]42[:] replace \- with [+] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]655[:]42[:] replace \- with [/] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]655[:]35[:] replace \- with [+] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]655[:]35[:] replace \- with [/] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]656[:]30[:] replace \- with [+] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]656[:]30[:] replace \- with [/] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]669[:]41[:] replace [+] with \- in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]669[:]41[:] replace [+] with [*] in audit$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]82[:]5[:] replace main with [(][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]117[:]5[:] replace run \-[>] Result[<]i32[,] String[>] with Ok[(]0[)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]117[:]5[:] replace run \-[>] Result[<]i32[,] String[>] with Ok[(]1[)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]117[:]5[:] replace run \-[>] Result[<]i32[,] String[>] with Ok[(]\-1[)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]122[:]40[:] replace [&][&] with [|][|] in run$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]122[:]8[:] delete [!] in run$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]122[:]69[:] replace [!][=] with [=][=] in run$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]325[:]46[:] replace [>] with [=][=] in Report[:][:]text$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]325[:]46[:] replace [>] with [<] in Report[:][:]text$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]325[:]46[:] replace [>] with [>][=] in Report[:][:]text$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]325[:]28[:] replace [+] with \- in Report[:][:]text$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]325[:]28[:] replace [+] with [*] in Report[:][:]text$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]366[:]21[:] replace [<] with [<][=] in amt$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]418[:]37[:] replace [+][=] with \-[=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]418[:]37[:] replace [+][=] with [*][=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]436[:]38[:] replace [+][=] with \-[=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]436[:]38[:] replace [+][=] with [*][=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]478[:]23[:] replace [+] with \- in summarize$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]478[:]23[:] replace [+] with [*] in summarize$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]480[:]9[:] delete field name from struct WalletSummary expression in summarize$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]488[:]31[:] replace [<] with [<][=] in summarize$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]490[:]39[:] replace [<] with [<][=] in summarize$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]94[:]5[:] replace read[_]password[_]file \-[>] Result[<]Zeroizing[<]Vec[<]u8[>][>][,] String[>] with Ok[(]Zeroizing[:][:]new[(]vec[!]\[\][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]94[:]5[:] replace read[_]password[_]file \-[>] Result[<]Zeroizing[<]Vec[<]u8[>][>][,] String[>] with Ok[(]Zeroizing[:][:]from[(]vec[!]\[\][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]94[:]5[:] replace read[_]password[_]file \-[>] Result[<]Zeroizing[<]Vec[<]u8[>][>][,] String[>] with Ok[(]Zeroizing[:][:]new[(]vec[!]\[0\][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]94[:]5[:] replace read[_]password[_]file \-[>] Result[<]Zeroizing[<]Vec[<]u8[>][>][,] String[>] with Ok[(]Zeroizing[:][:]from[(]vec[!]\[0\][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]94[:]5[:] replace read[_]password[_]file \-[>] Result[<]Zeroizing[<]Vec[<]u8[>][>][,] String[>] with Ok[(]Zeroizing[:][:]new[(]vec[!]\[1\][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]94[:]5[:] replace read[_]password[_]file \-[>] Result[<]Zeroizing[<]Vec[<]u8[>][>][,] String[>] with Ok[(]Zeroizing[:][:]from[(]vec[!]\[1\][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]103[:]5[:] replace file[_]kdf \-[>] Option[<]KdfParams[>] with None$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]103[:]5[:] replace file[_]kdf \-[>] Option[<]KdfParams[>] with Some[(]Default[:][:]default[(][)][)]$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]103[:]25[:] replace [|][|] with [&][&] in file[_]kdf$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]103[:]20[:] replace [<] with [=][=] in file[_]kdf$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]103[:]20[:] replace [<] with [>] in file[_]kdf$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]103[:]20[:] replace [<] with [<][=] in file[_]kdf$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]103[:]40[:] replace [!][=] with [=][=] in file[_]kdf$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]106[:]54[:] replace [+] with \- in file[_]kdf$
+--re=^tools[/]supply\-audit[/]src[/]main[.]rs[:]106[:]54[:] replace [+] with [*] in file[_]kdf$

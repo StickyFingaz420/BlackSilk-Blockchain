@@ -1,0 +1,10 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -96,7 +96,6 @@
+             ));
+         }
+         i.height = self.height;
+-        i.header_height = i.header_height.min(self.height);
+         i.tip = self.tip.clone();
+         Ok(i)
+     }

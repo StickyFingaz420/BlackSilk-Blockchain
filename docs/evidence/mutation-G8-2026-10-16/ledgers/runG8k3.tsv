@@ -1,0 +1,5 @@
+id	class	outcome	build_s	test_s	failing_or_error	env	name	log
+?	?	Success	186.2	5.1			BASELINE	log/baseline.log
+G8-123	SC3	CaughtMutant	3.4	0.5	report_tests::maturity_is_judged_at_the_next_block		tools/supply-audit/src/lib.rs:480:9: delete field name from struct WalletSummary expression in summarize	log/tools__supply-audit__src__lib.rs_line_480_col_9.log
+G8-124	SC3	CaughtMutant	3.4	0.5	tests::summary_counts_on_chain_state_and_classifies_it		tools/supply-audit/src/lib.rs:481:9: delete field pending_txs from struct WalletSummary expression in summarize	log/tools__supply-audit__src__lib.rs_line_481_col_9.log
+G8-185	SC2	CaughtMutant	3.4	5.0	an_audit_at_the_genesis_after_the_kept_block_ids_moved_past_it		tools/supply-audit/src/lib.rs:618:50: replace > with >= in audit	log/tools__supply-audit__src__lib.rs_line_618_col_50.log

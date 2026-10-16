@@ -1,0 +1,10 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -97,7 +97,6 @@
+         }
+         i.height = self.height;
+         i.header_height = i.header_height.min(self.height);
+-        i.tip = self.tip.clone();
+         Ok(i)
+     }
+     fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {

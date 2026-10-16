@@ -1,0 +1,11 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -627,7 +627,7 @@
+         let mut s = summarize(&e.name, &hold, h);
+         s.wallet_balance = e.wallet.balance().total;
+         s.wallet_px_balance = e.wallet.px_balance().0;
+-        for o in hold.outputs.iter().filter(|o| o.spent_height.is_none()) {
++        for o in hold.outputs.iter() {
+             if v1.insert(o.global_index, o.amount).is_some() {
+                 totals.v1_duplicates += 1;
+             }

@@ -1,0 +1,8 @@
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]436[:]38[:] replace [+][=] with \-[=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]436[:]38[:] replace [+][=] with [*][=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]437[:]30[:] replace [+][=] with \-[=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]437[:]30[:] replace [+][=] with [*][=] in scan[_]chain$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]44[:] replace [|][|] with [&][&] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]50[:] replace [>] with [=][=] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]50[:] replace [>] with [<] in audit$
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]50[:] replace [>] with [>][=] in audit$
