@@ -42,8 +42,16 @@ positions. The pruned Merkle paths depend on the query positions, so the proof
 - The golden PX fixture generator (`node/tests/px_fixture.rs`) ran twice, once at the
   default thread count and once with 3 threads. Both runs gave sha256 `75357ff4…`
   (2,408,643 bytes), and the verdict check passed both times.
-- Not yet tested: identity across operating systems and CPU architectures. Field
-  arithmetic is exact, so no difference is expected, but none has been measured.
+- Not yet tested at the time: identity across operating systems and CPU
+  architectures. Field arithmetic is exact, so no difference is expected, but none
+  had been measured.
+- Later (2026-10-15): the manual workflow `px-fixture.yml` regenerated both golden PX
+  fixtures (the transfer and the two-function fixture) on Linux x86-64 (CI run
+  38683497322, at `66f12f0`) and on Linux x86-64 and Linux aarch64 with NEON (CI run
+  38742854296, at `362b8b0`); every regenerated file equals the committed one,
+  generated on Windows x86-64. Limits: these two fixtures only, GitHub runners only,
+  4 prover threads
+  ([evidence](../docs/evidence/px-fixture-2fn-2026-10-15/README.md)).
 
 **Remove when:** upstream makes the quotient randomness order-independent.
 
