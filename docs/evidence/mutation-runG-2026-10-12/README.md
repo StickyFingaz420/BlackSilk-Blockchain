@@ -53,8 +53,9 @@ order: the pilot, G9, G2, G5, G4, G6, G10, G3, G7.
 
 Not in run G:
 
-- **G8**, the supply audit (`tools/supply-audit`): not run; pending owner decision
-  ([STATUS.md](../../STATUS.md) §5.1 item 2; no decision records a deferral).
+- **G8**, the supply audit (`tools/supply-audit`): not in run G; run separately on
+  2026-10-16 ([G8 evidence](../mutation-G8-2026-10-16/README.md)): 227 = 211 caught
+  + 15 unviable + 1 exempt (E90).
 - **Outside the gate** (a post-freeze campaign): p2p relay and DoS, PX delivery,
   decoy selection, the mempool.
 - The rest of `randomx/` outside R1 and the R2 diff, the rest of `zk/src/lib.rs`
