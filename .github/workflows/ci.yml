@@ -487,6 +487,13 @@ jobs:
         if: success() || failure()
         shell: bash
         run: bash .github/scripts/sys-crates.sh
+      # THIRD-PARTY-NOTICES.md (shipped next to the release binaries and in
+      # the Docker image) must match the lockfile: regenerated in memory from
+      # cargo metadata, cargo tree and the crate sources, compared byte for byte.
+      - name: Third-party notices current
+        if: success() || failure()
+        shell: bash
+        run: python3 tools/third-party-notices.py --check
       - name: Hazmat APIs only in their reviewed crates
         if: success() || failure()
         shell: bash
