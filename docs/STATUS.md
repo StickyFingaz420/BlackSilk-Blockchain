@@ -217,13 +217,14 @@ row says otherwise.
 | Supply audit with a PX pool, a multi-machine 72-hour run | Not implemented (owner-dependent: needs several machines; §5.1) | [testnet.md](testnet.md) §7, §7.1 |
 | Second threat-model round (consensus, network and operations, privacy; cross-check) | Partially implemented: the four internal reports are written; no consensus-rule bug was found; their P0 items are the open rows of this file | decisions "Threat model round 2" |
 | Genesis rehearsal | Not implemented (owner-dependent; §5.1) | [waves.md](reviews/phase2-2026-09-27/waves.md) |
-| CI on the release commit, all jobs green on GitHub | Not verified here: CI results live on GitHub, not in the repository | `.github/workflows/ci.yml` |
+| CI on the release commit, all jobs green on GitHub | Not verified here: CI results live on GitHub, not in the repository. `zkvm-stress` is skipped on every push (`.github/workflows/ci.yml`: it runs only on the weekly schedule and on a manual `workflow_dispatch`), so the release commit needs its own manual run of it (§5.1 item 11) | `.github/workflows/ci.yml` |
 
 ### 5.1 Open owner decisions and owner tasks
 
 A consolidated list; each item's row holds its status and evidence, and this list
-adds nothing to them, except items 9 and 10, which have no row and hold their own
-evidence. None is decided or done; item 10 is an open owner action, not a decision.
+adds nothing to them, except items 9 to 13, which have no row and hold their own
+evidence. Item 2 is done; the others are open; items 10 and 11 are open actions,
+not decisions.
 
 1. **RandomX `superscalar.rs` 742:24:** formally accept it as a documented
    test-adequacy residual, or fund further research (the descent argument). §5,
@@ -265,6 +266,17 @@ evidence. None is decided or done; item 10 is an open owner action, not a decisi
     Windows Update and Defender rows); re-enabling them is an owner action, not done;
     the owner said on 2026-10-16 not to re-enable them for now (statement in the
     working session, not otherwise recorded in the repository).
+11. **`zkvm-stress` on the freeze candidate** (a freeze-commit gate; an action, not a
+    decision): a manual `workflow_dispatch` run of CI on the exact candidate commit,
+    with the `zkvm-stress` job green. Its last success is the scheduled run
+    38239177329 at `bfb5d0d` (2026-10-12); every later push skipped it by design.
+12. **Labnet run C** (PX traffic in the labnet): not run. Its scope, pass bounds and
+    size are not yet written; they are to be fixed before the run, and the run needs
+    an owner-confirmed window. §5, rows "Labnet campaign" and "Labnet reruns on the
+    current tree".
+13. **A second operator for the genesis:** [testnet-v3-genesis.md](testnet-v3-genesis.md)
+    §6 step 3 has the owner and one operator obtain `H`'s hash independently from at
+    least two sources. Who that operator is, and on which machine, is not decided.
 
 ## 6. Accepted limitations
 
