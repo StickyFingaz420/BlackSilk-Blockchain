@@ -1,0 +1,17 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -424,13 +424,7 @@
+                         c.bridge_in += t.bridge_in as u128;
+                         c.bridge_out += t.bridge_out as u128;
+                         pool += t.bridge_in as u128;
+-                        match pool.checked_sub(t.bridge_out as u128) {
+-                            Some(p) => pool = p,
+-                            None => {
+-                                failures.push(format!("PX pool below zero in block {from}"));
+-                                pool = 0;
+-                            }
+-                        }
++                        pool = pool.saturating_sub(t.bridge_out as u128);
+                     }
+                     Transaction::PxDeploy(d) => {
+                         c.px_deploys += 1;

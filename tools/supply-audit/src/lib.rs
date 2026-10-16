@@ -803,3 +803,86 @@ mod tests {
         assert_eq!(amt(-150_000_000), "-1.50000000 BLK (-150000000)");
     }
 }
+/// Report text, amounts and the per-wallet maturity classes (G8 T10).
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+    use blacksilk_wallet::wallet::HeldOutput;
+
+    fn with_duplicates(v1: usize, px: usize) -> Report {
+        Report {
+            network: "regtest".into(),
+            build_flags: "build flags: none".into(),
+            height: 1,
+            tip: String::new(),
+            node_height: 1,
+            node_generated: 0,
+            chain: ChainSummary::default(),
+            wallets: vec![],
+            totals: Totals {
+                v1_duplicates: v1,
+                px_duplicates: px,
+                ..Default::default()
+            },
+            v1_difference: 0,
+            px_difference: 0,
+            total_difference: 0,
+            chain_failures: vec![],
+        }
+    }
+
+    #[test]
+    fn the_text_names_duplicates_only_when_there_are_some() {
+        let t = with_duplicates(1, 0).text();
+        assert!(
+            t.contains("  duplicates       1 v1 outputs, 0 PX records held by more than one wallet (counted once)\n"),
+            "{t}"
+        );
+        let t = with_duplicates(0, 2).text();
+        assert!(
+            t.contains("  duplicates       0 v1 outputs, 2 PX records"),
+            "{t}"
+        );
+        let t = with_duplicates(0, 0).text();
+        assert!(!t.contains("duplicates"), "{t}");
+    }
+
+    #[test]
+    fn amounts_of_zero_and_one_have_no_sign() {
+        assert_eq!(amt(0), "0.00000000 BLK (0)");
+        assert_eq!(amt(1), "0.00000001 BLK (1)");
+    }
+
+    fn held(height: u64, amount: u64, coinbase: bool) -> HeldOutput {
+        HeldOutput {
+            global_index: height * 100 + amount,
+            height,
+            amount,
+            coinbase,
+            spent_height: None,
+            pending: false,
+        }
+    }
+
+    /// An output is spendable in the block `created + COINBASE_MATURITY`
+    /// (coinbase, 60) or `created + SPENDABLE_AGE` (other, 10), the rule of
+    /// tx/src/decoy.rs (`height >= i + COINBASE_MATURITY`). At audit height
+    /// 100 the next block is 101: a coinbase from 41 and a transfer output
+    /// from 91 are exactly spendable there; at audit height 99 neither is.
+    #[test]
+    fn maturity_is_judged_at_the_next_block() {
+        let h = Holdings {
+            height: 100,
+            tip: None,
+            pending_txs: 0,
+            outputs: vec![held(41, 1, true), held(91, 2, false)],
+            px_records: vec![],
+        };
+        let s = summarize("w", &h, 100);
+        assert_eq!(s.name, "w");
+        assert_eq!((s.v1_unspent, s.v1_outputs), (3, 2));
+        assert_eq!((s.v1_immature_coinbase, s.v1_locked), (0, 0));
+        let s = summarize("w", &h, 99);
+        assert_eq!((s.v1_immature_coinbase, s.v1_locked), (1, 2));
+    }
+}

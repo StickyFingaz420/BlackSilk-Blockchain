@@ -210,3 +210,176 @@ fn the_pool_may_return_to_exactly_zero_and_an_overpaying_coinbase_is_reported() 
         "{failures:?}"
     );
 }
+
+/// The node's view, with the id of the entry at one height replaced.
+struct WrongId {
+    inner: Chain,
+    height: u64,
+    id: String,
+}
+
+impl NodeApi for WrongId {
+    fn info(&self) -> Result<rpc::Info, String> {
+        self.inner.info()
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        let mut b = self.inner.blocks(from, count)?;
+        for e in &mut b.blocks {
+            if e.height == self.height {
+                e.id = self.id.clone();
+            }
+        }
+        Ok(b)
+    }
+    fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        self.inner.distribution(to)
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        self.inner.outputs(i)
+    }
+    fn submit_tx(&self, t: &[u8]) -> Result<rpc::SubmitResult, String> {
+        self.inner.submit_tx(t)
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        self.inner.px_commitments(from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        self.inner.px_contracts(from)
+    }
+}
+
+/// G8 T2: a block is accepted only if both its id and its transactions match
+/// its header. A node that adds a transaction to a block (here a PX bridge-in
+/// of 500 that would inflate the pool) without changing the header keeps the
+/// block id but breaks the transaction root; a node that announces another id
+/// for an honest block breaks the id. Both are refused for that block.
+#[test]
+fn the_scan_refuses_a_block_whose_transactions_or_id_do_not_match() {
+    let p = ChainParams::regtest();
+    let honest = chain(&p, vec![vec![], vec![px(1, 0, 0)], vec![]], &[0; 3]);
+    let tip = honest[2].id(p.network_id);
+
+    // An extra transaction in block 2; its header (and so its id) unchanged.
+    let mut padded = honest.clone();
+    padded[1].txs.push(px(0, 500, 0));
+    let node = Chain {
+        blocks: padded,
+        network_id: p.network_id,
+    };
+    let e = scan_chain(&node, p.network_id, p.genesis_id(), 3, &tip).unwrap_err();
+    assert_eq!(e, "block 2 does not match its id");
+
+    // The honest block 2 announced under another id.
+    let node = WrongId {
+        inner: Chain {
+            blocks: honest,
+            network_id: p.network_id,
+        },
+        height: 2,
+        id: "07".repeat(32),
+    };
+    let e = scan_chain(&node, p.network_id, p.genesis_id(), 3, &tip).unwrap_err();
+    assert_eq!(e, "block 2 does not match its id");
+}
+
+/// A deploy with placeholder inputs, outputs, signatures and range proof and
+/// one placeholder program: it decodes like any deploy, and the scan only
+/// decodes (as the wallet's mock chain builds them, wallet/src/wallet/mock_chain.rs).
+fn deploy(fee: u64) -> Transaction {
+    use blacksilk_crypto::bulletproofs_plus::{rounds, BppProof};
+    use blacksilk_crypto::clsag::Clsag;
+    use blacksilk_crypto::{Point, Scalar};
+    use blacksilk_tx::params::RING_SIZE;
+    use blacksilk_tx::px::{PxDeploy, Registration, ABI_VERSION};
+    use blacksilk_tx::types::{Input, Output};
+    use blacksilk_zkvm::air::trace::Budget;
+    let point = |i: u8| Point::from_point(blacksilk_crypto::hash::hash_to_point("g8", &[&[i][..]]));
+    let mut ring = [0u64; RING_SIZE];
+    for (i, r) in ring.iter_mut().enumerate() {
+        *r = i as u64;
+    }
+    let outputs = (0..2u8)
+        .map(|i| Output {
+            one_time_key: point(10 + i),
+            ephemeral: point(20 + i),
+            view_tag: 0,
+            commitment: point(30 + i),
+            enc_amount: [0; 8],
+            enc_anchor: [0; 16],
+        })
+        .collect();
+    let p = point(1);
+    let n = rounds(2).unwrap();
+    Transaction::PxDeploy(Box::new(PxDeploy {
+        inputs: vec![Input {
+            key_image: point(2),
+            ring,
+        }],
+        outputs,
+        fee,
+        salt: [5; 32],
+        programs: vec![Registration {
+            elf: vec![0x7f, b'E', b'L', b'F'],
+            budget: Budget {
+                cycles: 0,
+                keys: 0,
+                add: 0,
+                bit: 0,
+                lt: 0,
+                shift: 0,
+                mul: 0,
+                poseidon: 0,
+            },
+            abi: ABI_VERSION,
+            out_words: 0,
+        }],
+        pseudo_outs: vec![p],
+        range_proof: BppProof {
+            a: p,
+            a1: p,
+            b: p,
+            r1: Scalar::ZERO,
+            s1: Scalar::ZERO,
+            d1: Scalar::ZERO,
+            l: vec![p; n],
+            r: vec![p; n],
+        },
+        signatures: vec![Clsag {
+            c0: Scalar::ZERO,
+            s: [Scalar::ZERO; RING_SIZE],
+            d: p,
+        }],
+    }))
+}
+
+/// G8 T3: a deploy is counted, and its fee is part of what the coinbase must
+/// pay (reward + every fee, blocks.md §2): a coinbase paying the reward and
+/// the deploy's 9 is consistent; one paying the reward only is reported.
+#[test]
+fn a_deploy_is_counted_and_its_fee_is_owed_by_the_coinbase() {
+    let p = ChainParams::regtest();
+    // `chain` adds PX fees only; the deploy's 9 is the `overpay` of block 2.
+    let blocks = chain(&p, vec![vec![], vec![deploy(9)], vec![]], &[0, 9, 0]);
+    let tip = blocks[2].id(p.network_id);
+    let node = Chain {
+        blocks,
+        network_id: p.network_id,
+    };
+    let (c, failures) = scan_chain(&node, p.network_id, p.genesis_id(), 3, &tip).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!((c.px_deploys, c.px_txs, c.transfers), (1, 0, 0));
+    assert_eq!(c.fees, 9);
+
+    let blocks = chain(&p, vec![vec![], vec![deploy(9)], vec![]], &[0; 3]);
+    let tip = blocks[2].id(p.network_id);
+    let node = Chain {
+        blocks,
+        network_id: p.network_id,
+    };
+    let (_, failures) = scan_chain(&node, p.network_id, p.genesis_id(), 3, &tip).unwrap();
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(
+        failures[0].starts_with("block 2: coinbase pays") && failures[0].ends_with("+ fees 9"),
+        "{failures:?}"
+    );
+}

@@ -1,0 +1,20 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -594,7 +594,7 @@
+     let pinned = Pinned::new(node, h, hex::encode(tip));
+     let mut summaries = Vec::new();
+     let mut v1: BTreeMap<u64, u64> = BTreeMap::new();
+-    let mut px: BTreeMap<String, u64> = BTreeMap::new();
++    let mut px: BTreeMap<u64, u64> = BTreeMap::new();
+     let mut totals = Totals::default();
+     for e in wallets.iter_mut() {
+         if e.wallet.network() != network {
+@@ -633,7 +633,7 @@
+             }
+         }
+         for r in hold.px_records.iter().filter(|r| r.spent_height.is_none()) {
+-            if px.insert(r.commitment.clone(), r.value).is_some() {
++            if px.insert(r.value, r.value).is_some() {
+                 totals.px_duplicates += 1;
+             }
+         }

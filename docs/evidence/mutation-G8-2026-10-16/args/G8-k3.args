@@ -1,0 +1,1 @@
+--re=^tools[/]supply\-audit[/]src[/]lib[.]rs[:]618[:]50[:] replace [>] with [>][=] in audit$

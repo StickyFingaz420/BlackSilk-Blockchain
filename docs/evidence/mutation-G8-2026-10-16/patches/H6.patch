@@ -1,0 +1,11 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -404,7 +404,7 @@
+             if b.header.prev_id != prev {
+                 return Err(format!("block {from} does not extend the previous block"));
+             }
+-            let reward = block_reward(from, generated);
++            let reward = block_reward(from - 1, generated);
+             generated = generated
+                 .checked_add(reward)
+                 .ok_or("emission overflows u64")?;

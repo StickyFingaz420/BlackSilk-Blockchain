@@ -176,3 +176,29 @@ fn run(args: &Args) -> Result<i32, String> {
     }
     Ok(report.exit_code(args.expect_complete))
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// G8 T9u: `--save` reuses the KDF parameters of the file's header
+    /// (wallet/src/file.rs: "BSW1", then m_kib, t, p as LE32) and nothing
+    /// else: a short or foreign file gives `None` (the default parameters),
+    /// a header of exactly 16 bytes is enough.
+    #[test]
+    fn file_kdf_reads_only_a_wallet_file_header() {
+        assert_eq!(file_kdf(b""), None);
+        assert_eq!(file_kdf(b"BSW"), None);
+        assert_eq!(file_kdf(b"BSW1\x01\x00\x00\x00"), None);
+        assert_eq!(file_kdf(&[0u8; 20]), None);
+        let mut h = b"BSW1".to_vec();
+        h.extend_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0]);
+        let want = Some(KdfParams {
+            m_kib: 1,
+            t: 2,
+            p: 3,
+        });
+        assert_eq!(file_kdf(&h), want);
+        h.extend_from_slice(&[9; 44]);
+        assert_eq!(file_kdf(&h), want);
+    }
+}

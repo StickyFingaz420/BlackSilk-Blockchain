@@ -8,13 +8,16 @@ use blacksilk_chain::store::MemoryStore;
 use blacksilk_consensus::{ChainParams, Hash, Network, PowFunction};
 use blacksilk_crypto::keys::Address;
 use blacksilk_node::router;
+use blacksilk_rpc as rpc;
 use blacksilk_rpc::Client;
 use blacksilk_supply_audit::{audit, Entry, Report};
 use blacksilk_tx::params::TxRules;
 use blacksilk_wallet::file::KdfParams;
+use blacksilk_wallet::node::NodeApi;
 use blacksilk_wallet::Wallet;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
 /// Every hash meets every difficulty (RandomX is tested in its own crates).
@@ -347,4 +350,266 @@ fn the_binary_is_read_only_and_reports_json_and_exit_codes() {
     assert_ne!(std::fs::read(&paths[0].0).unwrap(), before[0]);
     let w = blacksilk_wallet::load(&paths[0].0, b"miner").unwrap();
     assert_eq!(w.synced_height(), 102);
+}
+
+/// A node seen through a changed `info`: the header height computed from the
+/// height (G8 T4). Everything else is the node's.
+struct HeaderHeight<'a> {
+    inner: &'a Client,
+    header_height: fn(u64) -> u64,
+}
+
+impl NodeApi for HeaderHeight<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        let mut i = NodeApi::info(self.inner)?;
+        i.header_height = (self.header_height)(i.height);
+        Ok(i)
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        NodeApi::blocks(self.inner, from, count)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        NodeApi::headers(self.inner, from, count)
+    }
+    fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        NodeApi::distribution(self.inner, to)
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        NodeApi::outputs(self.inner, i)
+    }
+    fn submit_tx(&self, t: &[u8]) -> Result<rpc::SubmitResult, String> {
+        NodeApi::submit_tx(self.inner, t)
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        NodeApi::px_commitments(self.inner, from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        NodeApi::px_contracts(self.inner, from)
+    }
+    fn tx_status(&self, id: &[u8; 32]) -> Result<rpc::TxStatus, String> {
+        NodeApi::tx_status(self.inner, id)
+    }
+}
+
+/// G8 T4: a node still downloading blocks (header height above its height)
+/// is refused before anything is compared; a node that does not report a
+/// header height (older nodes: the field defaults to 0) is audited as usual.
+#[test]
+fn a_syncing_node_is_refused_and_one_without_a_header_height_is_audited() {
+    let (net, miner, alice, bob) = scenario();
+    let mut all = entries(vec![("miner", miner), ("alice", alice), ("bob", bob)]);
+    let ahead = HeaderHeight {
+        inner: &net.client,
+        header_height: |h| h + 1,
+    };
+    let e = audit(&ahead, &mut all, None).unwrap_err();
+    assert!(e.contains("still synchronizing"), "{e}");
+    let old = HeaderHeight {
+        inner: &net.client,
+        header_height: |_| 0,
+    };
+    let r = audit(&old, &mut all, None).unwrap();
+    check_zero(&r, 102);
+}
+
+/// Two chains at the same height: the audit (its block id, its scan and its
+/// final check) reads `a`; once the scan is done, the wallets' feeds come
+/// from `b` (G8 T5).
+struct Fork<'a> {
+    a: &'a Client,
+    b: &'a Client,
+    height: u64,
+    scanned: Cell<bool>,
+}
+
+impl Fork<'_> {
+    fn feed(&self) -> &Client {
+        if self.scanned.get() {
+            self.b
+        } else {
+            self.a
+        }
+    }
+}
+
+impl NodeApi for Fork<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        NodeApi::info(self.a)
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        // The audit's own single-block reads of the audit block (its id,
+        // before and after the wallets) always see `a`.
+        if count == 1 && from == self.height {
+            return NodeApi::blocks(self.a, from, count);
+        }
+        let r = NodeApi::blocks(self.feed(), from, count);
+        if count > 1 && from + count > self.height {
+            self.scanned.set(true);
+        }
+        r
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        NodeApi::headers(self.feed(), from, count)
+    }
+    fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        NodeApi::distribution(self.feed(), to)
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        NodeApi::outputs(self.feed(), i)
+    }
+    fn submit_tx(&self, t: &[u8]) -> Result<rpc::SubmitResult, String> {
+        NodeApi::submit_tx(self.a, t)
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        NodeApi::px_commitments(self.feed(), from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        NodeApi::px_contracts(self.feed(), from)
+    }
+    fn tx_status(&self, id: &[u8; 32]) -> Result<rpc::TxStatus, String> {
+        NodeApi::tx_status(self.a, id)
+    }
+}
+
+/// G8 T5: a wallet that ends at the audit height but on another block (its
+/// feed served a different chain) is refused, not compared.
+#[test]
+fn a_wallet_on_another_block_at_the_audit_height_is_refused() {
+    let mut a = Net::start();
+    let mut b = Net::start();
+    a.mine_n(5, &wallet(1).primary());
+    b.mine_n(5, &wallet(3).primary());
+    let fork = Fork {
+        a: &a.client,
+        b: &b.client,
+        height: 5,
+        scanned: Cell::new(false),
+    };
+    let mut ws = entries(vec![("miner", wallet(1))]);
+    let e = audit(&fork, &mut ws, None).unwrap_err();
+    assert!(
+        e.contains("miner: synced to height 5 (") && e.contains("refusing to compare"),
+        "{e}"
+    );
+    assert!(fork.scanned.get(), "the wallet's feed was never switched");
+}
+
+/// G8 T6: at the genesis nothing exists, also for a wallet that never synced.
+#[test]
+fn an_audit_at_the_genesis_with_a_wallet_that_never_synced() {
+    let mut net = Net::start();
+    net.mine_n(3, &wallet(1).primary());
+    let mut ws = entries(vec![("fresh", wallet(9))]);
+    let r = audit(&net.client, &mut ws, Some(0)).unwrap();
+    check_zero(&r, 0);
+    assert_eq!(r.wallets[0].v1_outputs, 0);
+}
+
+/// G8 (H3): two outputs of the same amount are two outputs. Alice receives
+/// 5 BLK twice; both count, and the set balances to zero.
+#[test]
+fn equal_amounts_in_distinct_outputs_are_each_counted() {
+    let mut net = Net::start();
+    let mut miner = wallet(1);
+    let alice = wallet(2);
+    let m = miner.primary();
+    net.mine_n(90, &m);
+    for _ in 0..2 {
+        miner
+            .transfer(
+                &net.client,
+                &alice.primary(),
+                5 * COIN,
+                &net.rules,
+                &mut net.rng,
+            )
+            .unwrap();
+        net.mine_n(1, &m);
+    }
+    net.mine_n(10, &m);
+    let mut ws = entries(vec![("miner", miner), ("alice", alice)]);
+    let r = audit(&net.client, &mut ws, None).unwrap();
+    check_zero(&r, 102);
+    assert_eq!(r.wallets[1].v1_outputs, 2);
+    assert_eq!(r.wallets[1].v1_unspent, 10 * COIN as u128);
+}
+
+/// G8 T8: one password file for two wallets is refused before any file is
+/// read (the wallet files here do not even exist).
+#[test]
+fn a_password_file_count_that_does_not_match_the_wallets_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let pw = dir.path().join("only.pw");
+    std::fs::write(&pw, "x").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_blacksilk-supply-audit"))
+        .arg("--wallet")
+        .arg(dir.path().join("a.wallet"))
+        .arg("--wallet")
+        .arg(dir.path().join("b.wallet"))
+        .arg("--password-file")
+        .arg(&pw)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("1 --password-file for 2 --wallet"), "{err}");
+}
+
+/// G8 T9: `--save` writes the wallet back with the KDF parameters the file
+/// had (here the test's fast 256 KiB, 1 pass, 1 lane), not the defaults.
+#[test]
+fn save_keeps_the_kdf_parameters_of_the_wallet_file() {
+    let mut net = Net::start();
+    let miner = wallet(1);
+    net.mine_n(3, &miner.primary());
+    let dir = tempfile::tempdir().unwrap();
+    let fast = KdfParams {
+        m_kib: 256,
+        t: 1,
+        p: 1,
+    };
+    let path = dir.path().join("miner.wallet");
+    blacksilk_wallet::save(&miner, &path, b"miner", fast).unwrap();
+    let pw = dir.path().join("miner.pw");
+    std::fs::write(&pw, "miner\n").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_blacksilk-supply-audit"))
+        .args(["--node", &net.addr])
+        .arg("--wallet")
+        .arg(&path)
+        .arg("--password-file")
+        .arg(&pw)
+        .arg("--save")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // wallet/src/file.rs: "BSW1" ‖ LE32 m_kib ‖ LE32 t ‖ LE32 p ‖ …
+    let b = std::fs::read(&path).unwrap();
+    assert_eq!(&b[..4], b"BSW1");
+    assert_eq!(&b[4..16], &[0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+    let w = blacksilk_wallet::load(&path, b"miner").unwrap();
+    assert_eq!(w.synced_height(), 3);
+}
+
+/// G8 T11: at the genesis nothing exists, also for a wallet whose kept block
+/// ids no longer reach the genesis. A wallet scanning from height 0 keeps the
+/// ids of its last `KEPT_BLOCK_IDS` = 720 blocks (wallet/src/wallet.rs); after
+/// 730 blocks the genesis id is gone (ids 11..=730 remain), and the rewind to
+/// the genesis keeps no tip id. The audit at height 0 is complete all the
+/// same.
+#[test]
+fn an_audit_at_the_genesis_after_the_kept_block_ids_moved_past_it() {
+    let mut net = Net::start();
+    let mut w = Wallet::from_seed(Network::Regtest, [8; 32], 0);
+    w.set_allow_stale_tip(true);
+    net.mine_n(730, &w.primary());
+    let mut ws = entries(vec![("long", w)]);
+    let r = audit(&net.client, &mut ws, None).unwrap();
+    check_zero(&r, 730);
+    let r = audit(&net.client, &mut ws, Some(0)).unwrap();
+    check_zero(&r, 0);
 }

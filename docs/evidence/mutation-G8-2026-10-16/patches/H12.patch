@@ -1,0 +1,10 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -124,7 +124,6 @@
+             .inner
+             .headers(from, count.min(self.height - from + 1))?;
+         let keep = ((self.height - from + 1) as usize) * rpc::HEADER_BYTES * 2;
+-        h.headers.truncate(keep.min(h.headers.len()));
+         h.height = self.height;
+         Ok(h)
+     }

@@ -29,6 +29,9 @@ zeroize = "1.8"
 blacksilk-node = { path = "../../node" }
 blacksilk-miner = { path = "../../miner" }
 blacksilk-crypto = { path = "../../crypto" }
+blacksilk-px = { path = "../../px" }
+blacksilk-px-core = { path = "../../px-core" }
+blacksilk-zkvm = { path = "../../zkvm" }
 tokio = { version = "1", features = ["rt-multi-thread", "net"] }
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 rand_chacha = { version = "0.3", default-features = false }

@@ -1,0 +1,13 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -134,8 +134,8 @@
+     fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+         self.inner.outputs(indices)
+     }
+-    fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+-        Err("the supply audit never submits transactions".into())
++    fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
++        self.inner.submit_tx(tx)
+     }
+     fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+         self.inner.px_commitments(from)

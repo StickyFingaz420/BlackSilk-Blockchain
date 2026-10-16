@@ -1,0 +1,11 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -632,7 +632,7 @@
+                 totals.v1_duplicates += 1;
+             }
+         }
+-        for r in hold.px_records.iter().filter(|r| r.spent_height.is_none()) {
++        for r in hold.px_records.iter() {
+             if px.insert(r.commitment.clone(), r.value).is_some() {
+                 totals.px_duplicates += 1;
+             }

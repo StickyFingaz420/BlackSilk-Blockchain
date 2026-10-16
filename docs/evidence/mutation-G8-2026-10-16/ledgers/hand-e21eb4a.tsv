@@ -1,0 +1,15 @@
+H1	exit 101	453s	compile_errors 2	env 0	failed: complete_set_balances_to_zero_and_a_missing_wallet_shows_its_exact_amount,audit_at_an_earlier_height_rewinds_the_wallets_to_it,the_binary_is_read_only_and_reports_json_and_exit_codes,
+H2	exit 0	487s	compile_errors 0	env 0	failed: 
+H3	exit 0	560s	compile_errors 0	env 0	failed: 
+H4	exit 0	475s	compile_errors 0	env 0	failed: 
+H5	exit 101	579s	compile_errors 2	env 0	failed: the_scan_sums_the_px_half_of_the_chain,
+H5b	exit 101	465s	compile_errors 2	env 0	failed: the_scan_sums_the_px_half_of_the_chain,
+H6	exit 101	510s	compile_errors 3	env 0	failed: the_pool_may_return_to_exactly_zero_and_an_overpaying_coinbase_is_reported,the_scan_sums_the_px_half_of_the_chain,complete_set_balances_to_zero_and_a_missing_wallet_shows_its_exact_amount,audit_at_an_earlier_height_rewinds_the_wallets_to_it,the_binary_is_read_only_and_reports_json_and_exit_codes,
+H7	exit 101	479s	compile_errors 2	env 0	failed: the_pool_may_return_to_exactly_zero_and_an_overpaying_coinbase_is_reported,
+H8	exit 0	438s	compile_errors 0	env 0	failed: 
+H9	exit 0	571s	compile_errors 0	env 0	failed: 
+H10	exit 0	568s	compile_errors 0	env 0	failed: 
+H10b	exit 0	653s	compile_errors 0	env 0	failed: 
+H10c	exit 101	440s	compile_errors 2	env 0	failed: audit_at_an_earlier_height_rewinds_the_wallets_to_it,
+H11	exit 0	570s	compile_errors 0	env 0	failed: 
+H12	exit 0	394s	compile_errors 0	env 0	failed: 

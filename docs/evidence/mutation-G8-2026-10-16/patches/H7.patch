@@ -1,0 +1,11 @@
+--- a/tools/supply-audit/src/lib.rs
++++ b/tools/supply-audit/src/lib.rs
+@@ -438,7 +438,7 @@
+                     }
+                 }
+             }
+-            if paid != reward as u128 + fees {
++            if paid != reward as u128 + fees && !b.txs.iter().any(|t| matches!(t, Transaction::Px(_))) {
+                 failures.push(format!(
+                     "block {from}: coinbase pays {paid}, reward {reward} + fees {fees}"
+                 ));
