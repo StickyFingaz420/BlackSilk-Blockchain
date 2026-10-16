@@ -96,7 +96,7 @@ ed82f30d005afd31ff8c9ea00b8b49b32ba8c214 none: predates gate-manifest-paths; wal
 # at their merge and were not re-reviewed for consensus effect here. All are
 # ancestors of the waiver horizon 432b8c2, which does not move.
 75dcf9cedca1f68cb024e4c6f7c87681c034b80b none: predates gate-coverage-2; supply chain: cargo-deny policy (deny.toml, .github/scripts/sys-crates.sh: new CI policy files; no code).
-e9be71d631edca61854567142a936d73ce4a23eb docs/reviews/v3-consensus-changes.md#daa-lwma75-warm (predates gate-coverage-2; the fingerprint re-pin in node/tests/deploy_configs.rs and px/tests/consensus_fingerprint.rs for that section; its trailer was a paragraph above Co-Authored-By, so git did not parse it)
+e9be71d631edca61854567142a936d73ce4a23eb docs/reviews/v3-consensus-changes.md#daa-lwma75-warm (predates gate-coverage-2; the fingerprint re-pin in node/tests/deploy_configs.rs and px/tests/consensus_fingerprint.rs for BS-ZK-3 and daa-lwma75-warm: the commit message lists both; the trailer cited one, and sat a paragraph above Co-Authored-By, so git did not parse it)
 730cf6346f57ea8d6ccb20af72d85ef642ac4357 none: predates gate-coverage-2; tools/check-test-features.sh added (a CI check that every test-only feature is marked).
 a049abcc737637249151b0b800ca4b51fcf5021f none: predates gate-coverage-2; chain/src/store.rs: tests only (added inside `mod tests`, mutation run F survivors).
 01fc5e42ca29ad74cdb12f288ed5b672350d92ab none: predates gate-coverage-2; .github/scripts/{doc-lint,hazmat-policy,sys-crates,unicode-scan}.sh no longer exclude the removed research/ tree.

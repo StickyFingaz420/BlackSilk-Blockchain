@@ -211,23 +211,67 @@ check_record_ref() {
 }
 
 # The paths a commit changes: against its parent (both sides of a rename), or
-# for a merge the paths its dense combined diff shows. NUL-terminated (-z):
-# a name git would quote (a `"`, `\`, tab, newline or control character) is
-# matched as it is, never as `"consensus/a\"b.rs"` (gate-coverage-2). For a
-# merge, `--cc --name-only` lists every path that differs from all parents
-# (a superset); a path is kept when its dense combined diff is not empty.
+# for a merge the paths its dense combined diff shows plus the paths it
+# reverts. NUL-terminated (-z): a name git would quote (a `"`, `\`, tab,
+# newline or control character) is matched as it is, never as
+# `"consensus/a\"b.rs"` (gate-coverage-2). For a merge:
+# - dense: `--cc --name-only` lists every path that differs from all parents
+#   (a superset); a path is kept when its dense combined diff is not empty
+#   (new content written in the merge);
+# - reverts (red team F1 of gate-coverage-2): a path whose merge version
+#   differs from the first parent's and equals its version at a merge base of
+#   the first parent and another parent (`merge-base --all`, any base, every
+#   other parent of an octopus): the merge undoes a change of the first
+#   parent's history, which no checked commit shows. A side's own change taken
+#   as it is (differs from the base) is not one; that commit was checked.
+# Fails closed (red team F2): any git failure prints why and returns 2.
 changed_paths() {
-  local c="$1" parents p
-  parents="$(git rev-list --parents -n 1 "$c" | wc -w)"
-  if [ "$parents" -gt 2 ]; then
-    while IFS= read -r -d '' p; do
-      if [ -n "$(git diff-tree --cc -p --no-commit-id "$c" -- ":(literal)$p")" ]; then
-        printf '%s\0' "$p"
-      fi
-    done < <(git diff-tree -r --cc --name-only -z --no-commit-id "$c")
-  else
-    git diff-tree -r --root --no-renames --name-only -z --no-commit-id "$c"
+  local c="$1" ids parents p1 k b bases out p n
+  ids="$(git rev-list --parents -n 1 "$c")" || { echo "gate: cannot read the parents of $c" >&2; return 2; }
+  read -r -a parents <<<"$ids"
+  if [ "${#parents[@]}" -le 2 ]; then
+    git diff-tree -r --root --no-renames --name-only -z --no-commit-id "$c" ||
+      { echo "gate: git diff-tree failed on $c" >&2; return 2; }
+    return 0
   fi
+  out="$(mktemp)" || return 2
+  git diff-tree -r --cc --name-only -z --no-commit-id "$c" >"$out" ||
+    { echo "gate: git diff-tree --cc failed on $c" >&2; rm -f "$out"; return 2; }
+  while IFS= read -r -d '' p; do
+    n="$(git diff-tree --cc -p --no-commit-id "$c" -- ":(literal)$p")" ||
+      { echo "gate: git diff-tree --cc -p failed on $c: $p" >&2; rm -f "$out"; return 2; }
+    [ -z "$n" ] || printf '%s\0' "$p"
+  done <"$out"
+  # Reverts: D(p1, c) minus D(base, c), for each other parent and base.
+  p1="${parents[1]}"
+  local -A from_p1=()
+  git diff-tree -r --no-renames --name-only -z "$p1" "$c" >"$out" ||
+    { echo "gate: git diff-tree failed on $p1 $c" >&2; rm -f "$out"; return 2; }
+  while IFS= read -r -d '' p; do from_p1["$p"]=1; done <"$out"
+  if [ "${#from_p1[@]}" -gt 0 ]; then
+    for k in "${parents[@]:2}"; do
+      local rc=0
+      bases="$(git merge-base --all "$p1" "$k")" || rc=$?
+      # Exit 1 with no output: unrelated histories, no base (the other
+      # parent's own commits are checked, from their root).
+      if [ "$rc" != 0 ]; then
+        [ "$rc" = 1 ] && [ -z "$bases" ] && continue
+        echo "gate: git merge-base failed on $p1 $k" >&2; rm -f "$out"; return 2
+      fi
+      for b in $bases; do
+        [ "$b" != "$p1" ] || continue
+        local -A from_b=()
+        git diff-tree -r --no-renames --name-only -z "$b" "$c" >"$out" ||
+          { echo "gate: git diff-tree failed on $b $c" >&2; rm -f "$out"; return 2; }
+        while IFS= read -r -d '' p; do from_b["$p"]=1; done <"$out"
+        for p in "${!from_p1[@]}"; do
+          [ -n "${from_b[$p]:-}" ] || printf '%s\0' "$p"
+        done
+        unset from_b
+      done
+    done
+  fi
+  rm -f "$out"
 }
 
 # valid_trailer [COMMIT]: the trailer values on stdin; 0 when one is valid.
@@ -469,8 +513,34 @@ selftest_history() {
     g add -A && g commit -q -m "$2"
   }
   conflict_merge two 'resolved to ours'
-  want_rc 0 HEAD^1 HEAD "a conflict resolved to one side's version"
+  want_rc 0 HEAD^1 HEAD "a conflict resolved to the first parent's version"
   g reset -q --hard HEAD^1
+  # Resolved to the side's version, which differs from the base: the side's
+  # checked change, taken as it is, passes.
+  conflict_merge one 'resolved to theirs'
+  want_rc 0 HEAD^1 HEAD "a conflict resolved to the side's version"
+  g reset -q --hard HEAD^1
+  # Resolved to the base's version after the first parent changed it: the
+  # merge reverts a change no checked commit undoes (red team F1).
+  conflict_merge "$(g show "$(g merge-base main c1):chain/src/sync_policy.rs")" 'resolved to the base'
+  want_rc 1 HEAD^1 HEAD "a conflict resolved to the base's version"
+  g reset -q --hard HEAD^1
+  # A side that does not touch the file, merged with the file set back to
+  # the base: a silent revert of the first parent's change (red team F1).
+  g checkout -q -b r1 "$(g merge-base main c1)" && expect 0 notes/r1.txt 'side, no gated file'
+  g checkout -q main
+  g merge -q --no-ff --no-commit r1 >/dev/null 2>&1
+  g show "$(g merge-base main r1):chain/src/sync_policy.rs" >"$t/repo/chain/src/sync_policy.rs"
+  g add -A && g commit -q -m 'merge reverting a gated change'
+  want_rc 1 HEAD^1 HEAD "a clean merge that reverts the first parent's gated change"
+  g reset -q --hard HEAD^1
+  # Unrelated histories: an orphan root holding a gated file, merged in. The
+  # root itself is checked (diff-tree --root), so the range fails (red team F3).
+  b="$(echo orphan | g hash-object -w --stdin)"
+  q="$(printf '100644 blob %s\tx.rs\n' "$b" | g mktree)"
+  c="$(g commit-tree "$(printf '040000 tree %s\tconsensus\n' "$q" | g mktree)" -m 'orphan root')"
+  c="$(g commit-tree "$(g rev-parse 'HEAD^{tree}')" -p HEAD -p "$c" -m 'merge an orphan root')"
+  want_rc 1 "$c^1" "$c" "an orphan root with a gated file, merged in"
   conflict_merge three 'resolved anew'
   want_rc 1 HEAD^1 HEAD "a conflict resolved to new content, no trailer"
   g reset -q --hard HEAD^1
@@ -531,6 +601,25 @@ selftest_history() {
   rc=0
   gate_run "" HEAD || rc=$?
   [ "$rc" = 1 ] || { echo "selftest: the whole fixture range passed (exit $rc)"; bad=1; }
+  # Fails closed (red team F2): a merge whose gated blob is missing from the
+  # object store (a damaged or partial clone) stops the gate with exit 2 and
+  # a message, never a pass. Last, as it damages the fixture.
+  local msg
+  g checkout -q -b f2 main~0 && expect 0 notes/f2.txt 'side'
+  g checkout -q main
+  g merge -q --no-ff --no-commit f2 >/dev/null 2>&1
+  echo "f2 evil $RANDOM" >>"$t/repo/chain/src/store.rs"
+  g add -A && g commit -q -m 'evil merge, blob to be lost'
+  b="$(g rev-parse HEAD:chain/src/store.rs)"
+  rm -f "$t/repo/.git/objects/${b:0:2}/${b:2}"
+  rc=0
+  msg="$(cd "$t/repo" && env -u GITHUB_ACTIONS -u GATE_CMD_TOKEN \
+    GATE_CUTOVER="$(git rev-list --max-parents=0 HEAD)" GATE_WAIVER_HORIZON="$old" \
+    bash "$t/gate/scripts/consensus-gate.sh" HEAD^1 HEAD 2>&1)" || rc=$?
+  if [ "$rc" != 2 ] || ! printf '%s\n' "$msg" | grep -q 'failing closed'; then
+    echo "selftest: a missing blob gave exit $rc, not a fail-closed stop: $(printf '%s' "$msg" | tail -n 1)"
+    bad=1
+  fi
   rm -rf "$t"
   return "$bad"
 }
@@ -577,14 +666,23 @@ main() {
   [ "$#" -le 2 ] || gate_die "usage: consensus-gate.sh [BASE [HEAD]]"
   local commits c hits bad=0 n=0 flagged=0
   commits="$(gate_commits "${1:-}" "${2:-HEAD}")"
+  # The paths go through a file, so a git failure stops the gate (red team
+  # F2 of gate-coverage-2): it never reads a short list as a clean commit.
+  GATE_PATHS_FILE="$(mktemp)" || gate_die "cannot create a temporary file"
+  trap 'rm -f "${GATE_PATHS_FILE:-}"' EXIT
   for c in $commits; do
     n=$((n + 1))
     hits=""
     local p
+    local -A seen=()
+    changed_paths "$c" >"$GATE_PATHS_FILE" || gate_die "cannot list the paths of commit $c; failing closed"
     while IFS= read -r -d '' p; do
       [ -n "$p" ] || continue
+      [ -z "${seen[$p]:-}" ] || continue
+      seen["$p"]=1
       if is_consensus_path "$p"; then hits+="${hits:+, }$p"; fi
-    done < <(changed_paths "$c")
+    done <"$GATE_PATHS_FILE"
+    unset seen
     [ -n "$hits" ] || continue
     flagged=$((flagged + 1))
     local trailers subject

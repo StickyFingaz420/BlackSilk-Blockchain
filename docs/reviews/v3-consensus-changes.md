@@ -5448,7 +5448,17 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
    Names are read NUL-separated: `git diff-tree -r --root --no-renames --name-only
    -z` for a commit; for a merge, `--cc --name-only -z` gives the candidates and a
    path is kept when its dense combined diff (`--cc -p -- ":(literal)<path>"`) is not
-   empty, the same paths as before for ordinary names.
+   empty, the same paths as before for ordinary names. Red team F1: a merge also
+   changes every path whose merge version differs from the first parent's and
+   equals its version at a merge base of the first parent and another parent
+   (`git merge-base --all`, any base; for an octopus, each other parent with the
+   first): the merge reverts a change of the first parent's history that no checked
+   commit undoes. A side's own change taken as it is differs from the base and is
+   not one (that commit was checked); unrelated histories have no base, and the
+   other parent's commits are checked from their root (`--root`). Red team F2: the
+   gate fails closed: any git failure while listing a commit's paths stops it with
+   exit 2 ("failing closed"); the paths go through a temporary file, not a process
+   substitution whose status is lost.
 
    `default-members` (separate commit): a bare `cargo build` or `cargo test` at the
    root now builds node, miner, wallet and genesis only, so the tools' manifests no
@@ -5462,13 +5472,16 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
    flags).
 6. **Activation.** None: CI only. The `gates` job runs the trusted copy of the gate,
    so the new paths are enforced from the first push after the merge; the branch's
-   own `gates-selftest` job runs the new selftest.
+   own `gates-selftest` job runs the new selftest. The merge push itself is judged
+   by the old gate (the trusted copy at the base, red team F6); this gate applies
+   from the next push on.
 7. **Compatibility.** The waiver file gains 8 lines (75dcf9c, e9be71d, 730cf63,
    a049abc, 01fc5e4, 969d5a9, 2e8410f, ff49210), each with the commit's subject and
    the newly gated paths it touched; their diffs of those paths were read (CI policy
    files and scripts, tests inside `mod tests` of `chain/src/store.rs`, doc comments
    and tests in `node/tests/px_fixture.rs`, one fingerprint re-pin that belongs to
-   `daa-lwma75-warm` and is waived with that citation). All 8 are ancestors of the
+   `daa-lwma75-warm` and `BS-ZK-3` (`e9be71d`'s message lists both; its trailer
+   cited one) and is waived with the `daa-lwma75-warm` citation, red team F4). All 8 are ancestors of the
    waiver horizon `432b8c2`, so the horizon does not move. No commit after it
    touches a newly gated path without a trailer.
 8. **Reorg, wallet, mining and P2P implications.** None. Development: a commit that
@@ -5489,9 +5502,15 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
       (built with `git mktree -z`, which works on Windows git as well), fail; a
       clean merge of two trailered sides passes; a clean merge of two changes to one
       gated file in different places passes; an edit inside a merge fails; a
-      conflict in a gated file resolved to one side's version passes, resolved to new
-      content fails without a trailer and passes with one; a clean octopus merge of
-      three trailered sides passes and an edit inside it fails.
+      conflict in a gated file resolved to the first parent's version passes, to the
+      side's version (which differs from the base) passes, to the base's version
+      fails, to new content fails without a trailer and passes with one; a clean
+      merge of a side that does not touch a gated file, with that file set back to
+      the base's version, fails (red team F1); a clean octopus merge of three
+      trailered sides passes and an edit inside it fails; an orphan root holding a
+      gated file, merged in, fails (red team F3); a merge whose gated blob is missing
+      from the object store stops the gate with exit 2 and "failing closed" (red
+      team F2).
 11. **Suite results** (2026-10-16, this machine, Git for Windows bash, on the
     branch's working tree before the commit):
     - `consensus-gate.sh --selftest`: pass (about 4.5 min alone, 7 min with three
@@ -5508,7 +5527,24 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
     - doc-lint (183 files clean), unicode-scan (1898 files, 0 findings).
     - No Rust code changed; `cargo` was not run for this change except `cargo
       metadata` and `cargo tree` (read-only) for the `default-members` check.
+    - After the red-team fixes (F1 merge reverts, F2 fail closed, F3 orphan root):
+      `--selftest` pass (about 8 min with five other runs in parallel). Five mutated
+      copies each FAIL it: the old `changed_paths` (4 failures: the quoted, tab and
+      newline names and the revert by merge), the dense filter dropped (1: the
+      two-sided clean merge), the perm/delivery pattern line deleted, `--root`
+      dropped (1: the orphan root), the revert check disabled (1: the revert by
+      merge). The whole history (`"" HEAD`, 717 commits, 126 merges after the
+      cut-over): 219 touch consensus paths, pass, and the commits flagged are
+      exactly those flagged before the fixes, so no historical merge reverts a
+      gated change and no waiver is added.
 12. **Open review points.**
+    - Merges (red team F1): a merge whose result is new content is caught by the
+      dense combined diff, and one that sets a path back to a merge base's version
+      after the first parent changed it is caught by the revert check. Anything
+      else a merge does relies on first-parent review: for example, a merge that
+      takes the side's version of a file the first parent also changed (the side's
+      change was checked, the choice between the two was not), or a revert to a
+      version that is no merge base's.
     - The owner's scope decision on `node/src/config.rs`, `node/src/main.rs`,
       `chain/src/actor.rs` and `chain/src/mempool.rs` (item 4).
     - A privacy review rule for `tx/src/decoy.rs` and the wallet's selection and
