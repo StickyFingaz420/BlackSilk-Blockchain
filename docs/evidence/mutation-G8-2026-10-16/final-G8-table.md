@@ -180,7 +180,7 @@
 | G8-176 | SC2 | caught (existing test) | audit_at_an_earlier_height_rewinds_the_wallets_to_it,complete_set_balances_to_zero_and_a_missing_wallet_shows_its_exact_amount,a_wallet_that_cannot_reach_the_au | tools/supply-audit/src/lib.rs:606:38: replace > with < in audit |
 | G8-177 | SC2 | caught (existing test) | audit_at_an_earlier_height_rewinds_the_wallets_to_it | tools/supply-audit/src/lib.rs:606:38: replace > with >= in audit |
 | G8-178 | SC2 | caught (new test, at f14a690) | a_wallet_on_another_block_at_the_audit_height_is_refused | tools/supply-audit/src/lib.rs:618:44: replace \|\| with && in audit |
-| G8-179 | SC2 | equivalent, pending second review | proof P1 (dispositions-G8.md) | tools/supply-audit/src/lib.rs:618:24: replace \|\| with && in audit |
+| G8-179 | SC2 | equivalent (exempt) | E90 | tools/supply-audit/src/lib.rs:618:24: replace \|\| with && in audit |
 | G8-180 | SC2 | caught (existing test) | audit_at_an_earlier_height_rewinds_the_wallets_to_it,complete_set_balances_to_zero_and_a_missing_wallet_shows_its_exact_amount,a_wallet_that_cannot_reach_the_au | tools/supply-audit/src/lib.rs:618:19: replace != with == in audit |
 | G8-181 | SC2 | caught (existing test) | complete_set_balances_to_zero_and_a_missing_wallet_shows_its_exact_amount,a_wallet_that_cannot_reach_the_audit_block_is_refused,audit_at_an_earlier_height_rewin | tools/supply-audit/src/lib.rs:618:39: replace != with == in audit |
 | G8-182 | SC2 | caught (existing test) | complete_set_balances_to_zero_and_a_missing_wallet_shows_its_exact_amount,audit_at_an_earlier_height_rewinds_the_wallets_to_it,a_wallet_that_cannot_reach_the_au | tools/supply-audit/src/lib.rs:618:54: replace && with \|\| in audit |
@@ -248,4 +248,4 @@
 | H11 | f14a690 | exit 101 | pinned_serves_exactly_the_audit_height |
 | H12 | f14a690 | exit 101 | pinned_serves_exactly_the_audit_height |
 
-Totals: caught 211, equivalent, pending second review 1, unviable 15
+Totals: caught 211, equivalent (E90) 1, unviable 15
