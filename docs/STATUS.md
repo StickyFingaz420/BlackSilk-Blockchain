@@ -231,7 +231,12 @@ evidence. None is decided or done; item 10 is an open owner action, not a decisi
    § Open items (a). A reproducible investigation plan with explicit pass/fail
    criteria, resource estimates and the owner's decision points (budget cap, branch
    failure, test-only draw hook, residual acceptance) is in
-   [plans-g8-742-2026-10-15.md](reviews/plans-g8-742-2026-10-15.md), Plan 2; not started.
+   [plans-g8-742-2026-10-15.md](reviews/plans-g8-742-2026-10-15.md), Plan 2. Stage 1 (owner-approved,
+   2026-10-16) is done: [rx742-stage1-2026-10-16.md](reviews/rx742-stage1-2026-10-16.md) proves
+   lemmas L0–L8 and the skip-cause lemma (checked by a second internal reviewer); L9 and the
+   descent closure are OPEN, so the item stays OPEN. An independent small-latency model finds
+   the critical state unreachable for L = 4, 5, 6 only, which implies nothing at L = 170;
+   L = 7 did not finish within the memory cap. Stages 2–3 are not started.
 2. **G8, the supply audit's mutation batch:** run it before the trial, or record a
    decision that defers it. §5, row "Mutation-testing freeze gate". A run plan (227
    mutants at `432b8c2`, oracle, security-critical classes SC1–SC4, hand mutants
