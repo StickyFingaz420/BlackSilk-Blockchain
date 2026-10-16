@@ -74,7 +74,7 @@ means recorded in the decisions log; it says nothing about code.
 | Genesis tool reserved ids and `verify` of the launched id (RTFP3-13, RTFP3-14; F40-1) | Complete but requires further testing: `generate --final` only for `0x0001D673`, `--rehearsal` only for `0x0001D6E0`–`EF`, the test-vector id never; `verify` accepts a registered id only for a built-in network's compiled genesis | `tools/genesis/tests/genesis.rs`; [testnet-v3-genesis.md](testnet-v3-genesis.md) §3 |
 | Testnet `D0` measured on reference hardware (genesis gate, F40-12); `T_g` by the two-stage announcement | Not implemented: `D0` and `TESTNET_GENESIS_TIME` in `consensus/src/params.rs` are placeholders | decisions, "Labnet deep reorgs (INV-REORG)", "Agent 40"; [testnet-v3-genesis.md](testnet-v3-genesis.md) §4, §5 |
 | Release signing: the owner's signing key, signed tags, a second channel for the release announcement (decisions "Agent 43", F48-4) | Trial uses the two-channel commit id (owner decision 2026-10-02): the exact commit id and the consensus fingerprints on two separate channels, compared by every operator, who builds that commit with `tools/release-build.sh` and recomputes the genesis. Signed tags before a public testnet: Not implemented (the repository has no tags and no signing key) | decisions "Agent 43", "Agent 48", "Threat model round 2"; [testnet.md](testnet.md) §2.1; [testnet-v3-genesis.md](testnet-v3-genesis.md) §6 |
-| CODEOWNERS and branch protection (F48-3) | Not implemented (owner tasks): the CI gates are advisory, since a direct push lands before CI runs | decisions "Agent 48"; `.github/workflows/ci.yml` |
+| CODEOWNERS and branch protection (F48-3) | Partially implemented: `.github/CODEOWNERS` names the owner (owner-approved 2026-10-16; it enforces nothing while one account maintains the repository); branch protection and required checks are owner tasks, so the CI gates stay advisory: a direct push lands before CI runs | decisions "Agent 48"; `.github/workflows/ci.yml` |
 | Closed-network pre-shared key (F48-1, W2-30) | Complete but requires further testing: `--network-psk-file` / `[p2p] network_psk_file` mixes a 32-byte key into the session key; a missing or wrong key fails the handshake, unscored. The trial procedure requires it, with generation, distribution and rotation ([testnet.md](testnet.md) §12.3). `/info` reports whether a key is loaded (`network_psk_loaded`, never the key) and `check-node.sh` warns on it (§3, `/info` row). The loaded state is tested at the binary level (`node/tests/node_binary.rs` `info_reports_a_loaded_psk_and_never_the_key`: `/info` and the start-up log hold neither the key in any checked encoding nor, with a 0600 key file, the key file's path, plain, JSON-escaped or by file name (the log assertion on the path since `42270c3`; only `RUST_LOG=info` is exercised, not `debug` or `trace`); `a_shared_psk_file_is_named_in_a_warning_but_the_key_never_is` (Unix only): with a group- or world-readable key file (0644) the start-up log names the file, its mode and `chmod 600` in a warning (operator guidance, `p2p/src/transport.rs` `warn_if_shared`), the node still starts with the key loaded, and neither `/info` nor the log holds the key; so the start-up log never holds the key, and holds the key file's path only in that Unix warning; `a_bad_network_psk_file_stops_the_node`: a missing, truncated, all-zero or UTF-16 key file stops the node before the RPC binds, without the key in the log; `9ed899b`). Open, low: with P2P disabled (`--no-p2p` or `[p2p] enabled = false`) a given key file is ignored without a warning and not checked (node/src/config.rs) | `e9ec2ff`; `p2p/tests/transport_adversarial.rs` (`a_man_in_the_middle_reads_the_traffic_unless_a_psk_is_set`, `only_nodes_with_the_network_psk_connect_and_others_are_not_banned`); `transport::tests::a_psk_session_talks_and_a_missing_or_wrong_psk_fails` |
 | Final genesis | **Blocked** until the protocol freeze (never generated before it) | [testnet-v3-genesis.md](testnet-v3-genesis.md) |
 | Protocol freeze | Not reached: the freeze gates of §5 are open | [waves.md](reviews/phase2-2026-09-27/waves.md); decisions "Threat model round 2" |
@@ -222,8 +222,8 @@ row says otherwise.
 ### 5.1 Open owner decisions and owner tasks
 
 A consolidated list; each item's row holds its status and evidence, and this list
-adds nothing to them, except items 9 to 13, which have no row and hold their own
-evidence. Item 2 is done; the others are open; items 10 and 11 are open actions,
+adds nothing to them, except items 9 to 11 and 13, which have no row of their own
+and hold their own evidence (item 12 also cites its rows). Item 2 is done; the others are open; items 10 and 11 are open actions,
 not decisions.
 
 1. **RandomX `superscalar.rs` 742:24:** formally accept it as a documented
@@ -247,8 +247,9 @@ not decisions.
 4. **Supply audit with a PX pool, a multi-machine 72-hour run** (needs the
    machines). §5, row "Supply audit with a PX pool".
 5. **Genesis rehearsal.** §5, row "Genesis rehearsal".
-6. **Branch protection, required checks and CODEOWNERS** on GitHub. §1, row
-   "CODEOWNERS and branch protection".
+6. **Branch protection and required checks** on GitHub (`.github/CODEOWNERS` exists).
+   §1, row "CODEOWNERS and branch protection". The owner approved a ruleset on
+   2026-10-16 and applies it; it is not applied yet.
 7. **Release signing:** the owner's signing key, signed tags and the second channel
    for the release announcement (the trial uses the two-channel commit id). §1, row
    "Release signing".
@@ -270,6 +271,8 @@ not decisions.
     decision): a manual `workflow_dispatch` run of CI on the exact candidate commit,
     with the `zkvm-stress` job green. Its last success is the scheduled run
     38239177329 at `bfb5d0d` (2026-10-12); every later push skipped it by design.
+    A manual run builds the branch head, so the candidate must be the head of
+    `rebuild/core` when the run is dispatched.
 12. **Labnet run C** (PX traffic in the labnet): not run. Its scope, pass bounds and
     size are not yet written; they are to be fixed before the run, and the run needs
     an owner-confirmed window. §5, rows "Labnet campaign" and "Labnet reruns on the
