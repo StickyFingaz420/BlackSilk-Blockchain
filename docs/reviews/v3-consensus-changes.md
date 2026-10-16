@@ -5448,12 +5448,14 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
    Names are read NUL-separated: `git diff-tree -r --root --no-renames --name-only
    -z` for a commit; for a merge, `--cc --name-only -z` gives the candidates and a
    path is kept when its dense combined diff (`--cc -p -- ":(literal)<path>"`) is not
-   empty, the same paths as before for ordinary names. Red team F1: a merge also
-   changes every path whose merge version differs from the first parent's and
-   equals its version at a merge base of the first parent and another parent
-   (`git merge-base --all`, any base; for an octopus, each other parent with the
-   first): the merge reverts a change of the first parent's history that no checked
-   commit undoes. A side's own change taken as it is differs from the base and is
+   empty, the same paths as before for ordinary names. Red team F1 and R2-F1: a
+   merge also changes every path whose merge version differs from a parent's and
+   equals its version at a merge base of that parent and another one (`git
+   merge-base --all`, any base; every ordered pair of parents, so an octopus and
+   both directions of a two-parent merge are covered): the merge reverts a change of
+   that parent's history that no checked commit undoes. Symmetry (R2-F1) catches a
+   revert made in a branch's update merge (the branch merges main and sets main's
+   change back), which reaches main by fast-forward or by a no-ff merge. A side's own change taken as it is differs from the base and is
    not one (that commit was checked); unrelated histories have no base, and the
    other parent's commits are checked from their root (`--root`). Red team F2: the
    gate fails closed: any git failure while listing a commit's paths stops it with
@@ -5483,7 +5485,13 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
    `daa-lwma75-warm` and `BS-ZK-3` (`e9be71d`'s message lists both; its trailer
    cited one) and is waived with the `daa-lwma75-warm` citation, red team F4). All 8 are ancestors of the
    waiver horizon `432b8c2`, so the horizon does not move. No commit after it
-   touches a newly gated path without a trailer.
+   touches a newly gated path without a trailer. The symmetric revert check (R2-F1)
+   flags one more historical commit, `4cd343e` (Merge `w1-cb-a`, 2026-09-27): it
+   resolved `node/tests/deploy_configs.rs` to the first parent's older pins and
+   dropped the side's fingerprint re-pin on purpose ("pins stay with the owner", its
+   message); the owner-authorized re-pins `e9be71d` and `3742e13` (2026-09-28) set
+   the pins again, and the pin test passes at `e21eb4a`. It is waived (a ninth line),
+   and is an ancestor of `432b8c2` as well.
 8. **Reorg, wallet, mining and P2P implications.** None. Development: a commit that
    edits one of these files now needs a trailer, `none: <reason>` for a routine edit
    (a test in `chain/src/store.rs`, a CI script fix).
@@ -5510,7 +5518,14 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
       trailered sides passes and an edit inside it fails; an orphan root holding a
       gated file, merged in, fails (red team F3); a merge whose gated blob is missing
       from the object store stops the gate with exit 2 and "failing closed" (red
-      team F2).
+      team F2). Red team R2: a branch's update merge that sets main's trailered
+      change back to the base fails, whether main then fast-forwards to the branch
+      (A) or merges it with --no-ff (A2); a criss-cross merge (two bases with
+      different versions) whose result is the version of the base that
+      `merge-base` without `--all` does not pick fails; an octopus whose result is
+      the version at the base of the first and the third parent only fails; a
+      merge whose second parent's parent commit is missing (the merge's own trees
+      are there, the merge-base walk fails) stops the gate with exit 2.
 11. **Suite results** (2026-10-16, this machine, Git for Windows bash, on the
     branch's working tree before the commit):
     - `consensus-gate.sh --selftest`: pass (about 4.5 min alone, 7 min with three
@@ -5537,14 +5552,24 @@ production code, rule, fingerprint, pin or dependency change; Cargo.lock is unch
       cut-over): 219 touch consensus paths, pass, and the commits flagged are
       exactly those flagged before the fixes, so no historical merge reverts a
       gated change and no waiver is added.
+    - After the round-2 red-team fixes (R2-F1 symmetric revert check, R2-F2
+      tests): `--selftest` pass (12.4 min with ten other runs in parallel). Nine
+      mutated copies each FAIL it: the old `changed_paths`, the dense filter
+      dropped, the perm/delivery pattern line deleted, `--root` dropped, the
+      revert check disabled, a merge-base failure skipped instead of fatal (the
+      missing-commit case), `merge-base` without `--all` (the criss-cross case),
+      only the second parent compared (the third-parent octopus case and A, A2),
+      only the first parent's side checked (A, A2, criss-cross). The whole history:
+      719 commits, 221 touch consensus paths, pass with the ninth waiver; the one
+      newly flagged commit is `4cd343e` (item 7).
 12. **Open review points.**
-    - Merges (red team F1): a merge whose result is new content is caught by the
-      dense combined diff, and one that sets a path back to a merge base's version
-      after the first parent changed it is caught by the revert check. Anything
-      else a merge does relies on first-parent review: for example, a merge that
-      takes the side's version of a file the first parent also changed (the side's
-      change was checked, the choice between the two was not), or a revert to a
-      version that is no merge base's.
+    - Merges (red team F1, R2-F1): a merge whose result is new content (it differs
+      from every parent) is caught by the dense combined diff, and one that sets a
+      path back to a merge base's version after any parent changed it is caught by
+      the revert check, in either direction. What remains relies on review of the
+      merge: a merge that takes one parent's version of a file that another parent
+      also changed, where that version is no merge base's (both changes were
+      checked; the choice that drops one of them was not).
     - The owner's scope decision on `node/src/config.rs`, `node/src/main.rs`,
       `chain/src/actor.rs` and `chain/src/mempool.rs` (item 4).
     - A privacy review rule for `tx/src/decoy.rs` and the wallet's selection and

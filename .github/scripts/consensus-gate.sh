@@ -218,15 +218,16 @@ check_record_ref() {
 # - dense: `--cc --name-only` lists every path that differs from all parents
 #   (a superset); a path is kept when its dense combined diff is not empty
 #   (new content written in the merge);
-# - reverts (red team F1 of gate-coverage-2): a path whose merge version
-#   differs from the first parent's and equals its version at a merge base of
-#   the first parent and another parent (`merge-base --all`, any base, every
-#   other parent of an octopus): the merge undoes a change of the first
-#   parent's history, which no checked commit shows. A side's own change taken
-#   as it is (differs from the base) is not one; that commit was checked.
+# - reverts (red team F1, R2-F1 of gate-coverage-2): a path whose merge
+#   version differs from a parent's and equals its version at a merge base of
+#   that parent and another one (`merge-base --all`, any base, every pair of
+#   parents of an octopus, either order): the merge undoes a change of that
+#   parent's history, which no checked commit shows. Taking one side's own
+#   change as it is (it differs from the base) is not one; that commit was
+#   checked.
 # Fails closed (red team F2): any git failure prints why and returns 2.
 changed_paths() {
-  local c="$1" ids parents p1 k b bases out p n
+  local c="$1" ids parents b bases out p n
   ids="$(git rev-list --parents -n 1 "$c")" || { echo "gate: cannot read the parents of $c" >&2; return 2; }
   read -r -a parents <<<"$ids"
   if [ "${#parents[@]}" -le 2 ]; then
@@ -242,35 +243,42 @@ changed_paths() {
       { echo "gate: git diff-tree --cc -p failed on $c: $p" >&2; rm -f "$out"; return 2; }
     [ -z "$n" ] || printf '%s\0' "$p"
   done <"$out"
-  # Reverts: D(p1, c) minus D(base, c), for each other parent and base.
-  p1="${parents[1]}"
-  local -A from_p1=()
-  git diff-tree -r --no-renames --name-only -z "$p1" "$c" >"$out" ||
-    { echo "gate: git diff-tree failed on $p1 $c" >&2; rm -f "$out"; return 2; }
-  while IFS= read -r -d '' p; do from_p1["$p"]=1; done <"$out"
-  if [ "${#from_p1[@]}" -gt 0 ]; then
-    for k in "${parents[@]:2}"; do
-      local rc=0
-      bases="$(git merge-base --all "$p1" "$k")" || rc=$?
-      # Exit 1 with no output: unrelated histories, no base (the other
-      # parent's own commits are checked, from their root).
-      if [ "$rc" != 0 ]; then
-        [ "$rc" = 1 ] && [ -z "$bases" ] && continue
-        echo "gate: git merge-base failed on $p1 $k" >&2; rm -f "$out"; return 2
-      fi
-      for b in $bases; do
-        [ "$b" != "$p1" ] || continue
-        local -A from_b=()
-        git diff-tree -r --no-renames --name-only -z "$b" "$c" >"$out" ||
-          { echo "gate: git diff-tree failed on $b $c" >&2; rm -f "$out"; return 2; }
-        while IFS= read -r -d '' p; do from_b["$p"]=1; done <"$out"
-        for p in "${!from_p1[@]}"; do
-          [ -n "${from_b[$p]:-}" ] || printf '%s\0' "$p"
+  # Reverts, for every parent P (red team R2-F1: symmetric, so a revert of
+  # the first parent's change inside a branch's update merge is caught as
+  # well): D(P, c) minus D(base, c), for each other parent Q and each base of
+  # P and Q. One version of a path at a base is enough.
+  local pi q
+  for pi in "${parents[@]:1}"; do
+    local -A from_p=()
+    git diff-tree -r --no-renames --name-only -z "$pi" "$c" >"$out" ||
+      { echo "gate: git diff-tree failed on $pi $c" >&2; rm -f "$out"; return 2; }
+    while IFS= read -r -d '' p; do from_p["$p"]=1; done <"$out"
+    if [ "${#from_p[@]}" -gt 0 ]; then
+      for q in "${parents[@]:1}"; do
+        [ "$q" != "$pi" ] || continue
+        local rc=0
+        bases="$(git merge-base --all "$pi" "$q")" || rc=$?
+        # Exit 1 with no output: unrelated histories, no base (the other
+        # parent's own commits are checked, from their root).
+        if [ "$rc" != 0 ]; then
+          [ "$rc" = 1 ] && [ -z "$bases" ] && continue
+          echo "gate: git merge-base failed on $pi $q" >&2; rm -f "$out"; return 2
+        fi
+        for b in $bases; do
+          [ "$b" != "$pi" ] || continue
+          local -A from_b=()
+          git diff-tree -r --no-renames --name-only -z "$b" "$c" >"$out" ||
+            { echo "gate: git diff-tree failed on $b $c" >&2; rm -f "$out"; return 2; }
+          while IFS= read -r -d '' p; do from_b["$p"]=1; done <"$out"
+          for p in "${!from_p[@]}"; do
+            [ -n "${from_b[$p]:-}" ] || printf '%s\0' "$p"
+          done
+          unset from_b
         done
-        unset from_b
       done
-    done
-  fi
+    fi
+    unset from_p
+  done
   rm -f "$out"
 }
 
@@ -541,6 +549,74 @@ selftest_history() {
   c="$(g commit-tree "$(printf '040000 tree %s\tconsensus\n' "$q" | g mktree)" -m 'orphan root')"
   c="$(g commit-tree "$(g rev-parse 'HEAD^{tree}')" -p HEAD -p "$c" -m 'merge an orphan root')"
   want_rc 1 "$c^1" "$c" "an orphan root with a gated file, merged in"
+  # Red team R2-F1: a revert inside a branch's update merge. The branch
+  # merges main and sets main's trailered change back to the base; main then
+  # takes the branch by fast-forward (A) or by a no-ff merge (A2).
+  local mainc
+  g checkout -q -b up "$(g rev-parse HEAD)" && expect 0 notes/up.txt 'branch work'
+  g checkout -q main && expect 0 chain/src/emission/m.rs "main fix$trailer"
+  mainc="$(g rev-parse HEAD)"
+  g checkout -q up
+  g merge -q --no-ff --no-commit main >/dev/null 2>&1
+  g show "$(g merge-base main up):chain/src/emission/m.rs" >"$t/repo/chain/src/emission/m.rs"
+  g add -A && g commit -q -m 'merge main into up, reverting its fix'
+  want_rc 1 "$mainc" up "A: main fast-forwarded to a branch whose update merge reverts main's change"
+  g checkout -q main
+  g merge -q --no-ff -m 'merge up' up >/dev/null 2>&1
+  want_rc 1 "$mainc" HEAD "A2: a no-ff merge of a branch whose update merge reverts main's change"
+  g reset -q --hard "$mainc"
+  # Red team R2-F2: a criss-cross merge, two bases (cx: x, cy: y). One
+  # parent keeps the version of the base that `merge-base` without --all
+  # does not pick; the other parent changes it (a trailered fix); the merge
+  # takes the kept version, so it reverts the fix to that base's version. The
+  # dense diff is empty (the result is a parent's), and only `--all` finds
+  # the base.
+  local cx cy x2 y2 one keep other ver fixc
+  g checkout -q -b cx main && printf 'x\n' >"$t/repo/chain/src/sync_policy.rs" && g commit -q -a -m "cx$trailer"
+  cx="$(g rev-parse HEAD)"
+  g checkout -q -b cy main && printf 'y\n' >"$t/repo/chain/src/sync_policy.rs" && g commit -q -a -m "cy$trailer"
+  cy="$(g rev-parse HEAD)"
+  g checkout -q -b x2 "$cx" && g merge -q --no-ff --no-commit "$cy" >/dev/null 2>&1
+  printf 'x\n' >"$t/repo/chain/src/sync_policy.rs" && g add -A && g commit -q -m 'x2'
+  x2="$(g rev-parse HEAD)"
+  g checkout -q -b y2 "$cy" && g merge -q --no-ff --no-commit "$cx" >/dev/null 2>&1
+  printf 'y\n' >"$t/repo/chain/src/sync_policy.rs" && g add -A && g commit -q -m 'y2'
+  y2="$(g rev-parse HEAD)"
+  one="$(g merge-base "$x2" "$y2")"
+  if [ "$one" = "$cy" ]; then keep="$x2" other="$y2" ver=x; else keep="$y2" other="$x2" ver=y; fi
+  g checkout -q -b ccfix "$other" && printf 'fix\n' >"$t/repo/chain/src/sync_policy.rs" &&
+    g commit -q -a -m "fix$trailer"
+  fixc="$(g rev-parse HEAD)"
+  g checkout -q -b cckeep "$keep"
+  if [ "$(g merge-base --all "$keep" "$fixc" | wc -l)" = 2 ] &&
+    [ "$(g merge-base "$keep" "$fixc")" = "$one" ] && [ "$(g merge-base "$fixc" "$keep")" = "$one" ]; then
+    g merge -q --no-ff --no-commit "$fixc" >/dev/null 2>&1
+    printf '%s\n' "$ver" >"$t/repo/chain/src/sync_policy.rs"
+    g add -A && g commit -q -m 'criss-cross merge back to the other base'
+    want_rc 1 "$keep" HEAD "a criss-cross merge reverting to the base merge-base does not pick"
+  else
+    echo "selftest: criss-cross fixture failed"; bad=1
+  fi
+  g checkout -q main && g reset -q --hard "$mainc"
+  # Red team R2-F2: an octopus where only the third parent's base with the
+  # first holds the reverted version. main: v1, then v2; o2 forks at v2, o3
+  # at v1; the merge sets v1.
+  local v1
+  expect 0 chain/src/block/oct.rs "v1$trailer"
+  v1="$(g rev-parse HEAD)"
+  expect 0 chain/src/block/oct.rs "v2$trailer"
+  g checkout -q -b q2 main && expect 0 notes/q2.txt q2
+  g checkout -q -b q3 "$v1" && expect 0 notes/q3.txt q3
+  g checkout -q main
+  g merge -q --no-ff --no-commit q2 q3 >/dev/null 2>&1
+  g show "$v1:chain/src/block/oct.rs" >"$t/repo/chain/src/block/oct.rs"
+  g add -A && g commit -q -m 'octopus reverting to the third parent base'
+  if [ "$(g rev-list --parents -n 1 HEAD | wc -w)" = 4 ]; then
+    want_rc 1 HEAD^1 HEAD "an octopus reverting to the version at the third parent's base"
+  else
+    echo "selftest: three-parent octopus fixture failed"; bad=1
+  fi
+  g reset -q --hard HEAD^1
   conflict_merge three 'resolved anew'
   want_rc 1 HEAD^1 HEAD "a conflict resolved to new content, no trailer"
   g reset -q --hard HEAD^1
@@ -618,6 +694,26 @@ selftest_history() {
     bash "$t/gate/scripts/consensus-gate.sh" HEAD^1 HEAD 2>&1)" || rc=$?
   if [ "$rc" != 2 ] || ! printf '%s\n' "$msg" | grep -q 'failing closed'; then
     echo "selftest: a missing blob gave exit $rc, not a fail-closed stop: $(printf '%s' "$msg" | tail -n 1)"
+    bad=1
+  fi
+  # Red team R2-F2: a merge whose second parent's parent commit is missing.
+  # The merge's own diffs read only trees, which are there; the merge base
+  # walk fails, and the gate must stop. The cut-over is the first parent, so
+  # the range walk itself does not need the missing commit.
+  local s1 p1
+  g checkout -q -b f3 main~0 && expect 0 notes/f3a.txt f3a
+  s1="$(g rev-parse HEAD)"
+  expect 0 notes/f3b.txt f3b
+  g checkout -q main && expect 0 notes/f3m.txt f3m
+  p1="$(g rev-parse HEAD)"
+  g merge -q --no-ff -m 'merge f3' f3 >/dev/null 2>&1
+  rm -f "$t/repo/.git/objects/${s1:0:2}/${s1:2}"
+  rc=0
+  msg="$(cd "$t/repo" && env -u GITHUB_ACTIONS -u GATE_CMD_TOKEN \
+    GATE_CUTOVER="$p1" GATE_WAIVER_HORIZON="$p1" \
+    bash "$t/gate/scripts/consensus-gate.sh" HEAD^2 HEAD 2>&1)" || rc=$?
+  if [ "$rc" != 2 ] || ! printf '%s\n' "$msg" | grep -q 'failing closed'; then
+    echo "selftest: a missing commit gave exit $rc, not a fail-closed stop: $(printf '%s' "$msg" | tail -n 1)"
     bad=1
   fi
   rm -rf "$t"

@@ -103,3 +103,6 @@ a049abcc737637249151b0b800ca4b51fcf5021f none: predates gate-coverage-2; chain/s
 969d5a93267a504ccb3e4c9c8738e2fbec429a0b none: predates gate-coverage-2; chain/src/store.rs: tests only (added inside `mod tests`, store repair cases).
 2e8410f57bd269e1a0b1fec3a9b1c9996696f6ae none: predates gate-coverage-2; node/tests/px_fixture.rs: two refusal tests added; no pin changed.
 ff4921064ba999b2fbb980ad74b4ee87aa03458d none: predates gate-coverage-2; node/tests/px_fixture.rs: doc comments only (the tamper sweep itself is node/tests/px_tamper.rs); no pin changed.
+# Red team R2-F1 of gate-coverage-2 made the merge revert check symmetric (any
+# parent against its bases with another parent). It flags one more commit:
+4cd343e9d520e1b17ba576f4c0cc358bf298c659 none: predates gate-coverage-2 (red team R2-F1); Merge w1-cb-a resolved node/tests/deploy_configs.rs to the first parent's older pins, dropping the side's fingerprint re-pin on purpose (its message: "pins stay with the owner"); the owner-authorized re-pins e9be71d and 3742e13 (2026-09-28) set the pins again, and the pin test passes at e21eb4a. Record: docs/reviews/v3-consensus-changes.md#gate-coverage-2.
