@@ -237,7 +237,12 @@ not decisions.
    lemmas L0–L8 and the skip-cause lemma (checked by a second internal reviewer); L9 and the
    descent closure are OPEN, so the item stays OPEN. An independent small-latency model finds
    the critical state unreachable for L = 4, 5, 6 only, which implies nothing at L = 170;
-   L = 7 did not finish within the memory cap. Stages 2–3 are not started.
+   L = 7 did not finish within the memory cap in stage 1. Follow-up E1/E2 (owner-approved,
+   2026-10-16; [rx742-stage1b-2026-10-16.md](reviews/rx742-stage1b-2026-10-16.md)) proves
+   E1.1–E1.6 (second internal reviewer), which rule out the critical state for 5 ≤ L ≤ 8
+   on paper, and an independent exhaustive run finds it unreachable at L = 7. Neither
+   implies anything at L = 170: the source-hop branch before the window and the tag
+   supply (the descent) are OPEN. Stage 2's descent closure (E3) is not started.
 2. **G8, the supply audit's mutation batch:** run on 2026-10-16 with the owner's
    approval; no survivor left unexplained (227 = 211 caught + 15 unviable + 1 exempt
    as E90). §5, row "Mutation-testing freeze gate"; [G8](evidence/mutation-G8-2026-10-16/README.md).
