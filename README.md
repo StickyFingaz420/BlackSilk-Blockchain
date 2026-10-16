@@ -1378,12 +1378,22 @@ The decisions log reopens several topics before mainnet: the difficulty rule tog
 
 ## Licence
 
-**BlackSilk has no licence for its own code yet; the choice is an open owner decision** (`deny.toml`). The repository root has no `LICENSE` file, so until one is added no licence is granted for the project's own code. Two parts carry their own terms:
+Except where noted below, BlackSilk is licensed under either of
 
-- `randomx/` is a Rust port of tevador/RandomX and is distributed under that project's BSD-3-Clause licence ([randomx/LICENSE](randomx/LICENSE)).
-- The patched Plonky3 crates in `third_party/` keep their upstream licence, `MIT OR Apache-2.0` (each crate's `Cargo.toml`).
+- the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), or
+- the MIT licence ([LICENSE-MIT](LICENSE-MIT)),
 
-Dependencies are limited to the licences listed in [deny.toml](deny.toml) and checked by the CI job `deny`.
+at your option (SPDX `MIT OR Apache-2.0`). Every crate manifest of this repository outside `randomx/` and `third_party/` declares it, including the separate workspaces `contracts/`, `fuzz/`, `tools/tpgate/` and `zkvm/guests/` and the guest SDK `zkvm/sdk/`. Unless you state otherwise, any contribution you intentionally submit for inclusion in this repository, as defined in the Apache-2.0 licence, is dual-licensed as above, without additional terms or conditions. The provenance review behind this choice, with its limits, is [licence-provenance-2026-10-17.md](docs/reviews/licence-provenance-2026-10-17.md); it is not a legal review.
+
+Exceptions, which carry their own terms:
+
+- `randomx/` is a Rust port of tevador/RandomX and is distributed under that project's BSD-3-Clause licence ([randomx/LICENSE](randomx/LICENSE)), with its copyright notices (tevador; The Monero Project).
+- The patched Plonky3 crates in `third_party/` keep their upstream licence, `MIT OR Apache-2.0`, copyright The Plonky3 Authors (each crate's `Cargo.toml`; the published crates carry no licence text files, and neither do these copies).
+- The English word list in `crypto/src/wordlist.rs` is the BIP-39 list (BIP-39, by Marek Palatinus, Pavol Rusnak, Aaron Voisine and Sean Bowe, is published under the MIT licence); only the list is taken.
+- The images in `blacksilklogos/` are not covered by these licences; their terms are an open owner decision.
+- Logs and outputs of third-party programs kept as evidence under `docs/evidence/` (for example xmrig's logs) are records, not code of this project.
+
+Releases that ship binaries must also ship the notices of the code compiled into them (randomx's BSD-3-Clause notice and the dependencies' notices); the release scripts do not collect them yet. Dependencies are limited to the licences listed in [deny.toml](deny.toml) and checked by the CI job `deny`.
 
 ## Further reading
 
