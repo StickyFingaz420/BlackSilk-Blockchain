@@ -379,7 +379,7 @@ fn a_deploy_is_counted_and_its_fee_is_owed_by_the_coinbase() {
     let (_, failures) = scan_chain(&node, p.network_id, p.genesis_id(), 3, &tip).unwrap();
     assert_eq!(failures.len(), 1, "{failures:?}");
     assert!(
-        failures[0].starts_with("block 2: coinbase pays"),
+        failures[0].starts_with("block 2: coinbase pays") && failures[0].ends_with("+ fees 9"),
         "{failures:?}"
     );
 }

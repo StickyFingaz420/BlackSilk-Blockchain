@@ -488,7 +488,7 @@ fn a_wallet_on_another_block_at_the_audit_height_is_refused() {
     let mut ws = entries(vec![("miner", wallet(1))]);
     let e = audit(&fork, &mut ws, None).unwrap_err();
     assert!(
-        e.contains("miner") && e.contains("refusing to compare"),
+        e.contains("miner: synced to height 5 (") && e.contains("refusing to compare"),
         "{e}"
     );
     assert!(fork.scanned.get(), "the wallet's feed was never switched");
