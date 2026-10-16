@@ -59,7 +59,8 @@ Embedded data and binaries:
 Searched comments and docs for "port of", "ported", "based on", "adapted from", "derived
 from", "translated", "reference implementation", "copied", "verbatim", "Monero",
 "monero-rs", "monero-oxide", "dalek", "curve25519", "bulletproofs", "CLSAG", "tevador",
-"xmrig", "Plonky3", "RustCrypto", "Zcash", "Bitcoin Core", and C/C++ file names.
+"xmrig", "Plonky3", "RustCrypto", "Zcash", "Bitcoin Core", "zawy", "LWMA", and C/C++
+file names ("zawy" and "LWMA" added after the internal review).
 
 Classes: (a) original, eligible; (b) derived from a permissive source, eligible only with
 its notice kept; (c) uncertain, a blocker for that file; (d) third-party, upstream licence
@@ -80,6 +81,7 @@ kept.
 | `zk/src/config.rs` | `:211` "Mirrors Plonky3 0.7.0's `DuplexChallenger::grind`" and then scans in order on one thread: a reimplementation of upstream behaviour. Even if read as derived, Plonky3 is MIT OR Apache-2.0. | (a), low residual risk |
 | `deny.toml` (bans) | monero-oxide rejected, "port the needed map instead" (decisions, Agent 44). No such port is in the tree (`git log -S monero-oxide` finds only comments). | n/a |
 | `randomx/src/fpu_oracle.rs` | Uses `rustc_apfloat` (a dev-dependency), no copied code. | (a) |
+| `consensus/src/difficulty.rs` | Implements LWMA-1 by zawy12, deliberately modified (`docs/consensus.md:201`, `:265`); a published algorithm with project changes, no copied code seen (internal review). | (a): from the published algorithm; credit zawy12 |
 | all other crates | No derivation markers found. | (a) |
 
 **No (c) blocker was found in the code.** `blacksilklogos/` is uncertain (§2) and is left

@@ -261,8 +261,8 @@ not decisions.
 8. **Authorizing the seven-device trial**, after the protocol freeze and the v3
    genesis. §1, row "Seven-device trial".
 9. **Licence for the project's own code.** The owner approved `MIT OR Apache-2.0` for the
-   eligible original code, subject to a provenance review. Prepared on branch
-   `chore/license-dual`, not merged: the provenance review
+   eligible original code, subject to a provenance review. Done on 2026-10-17 (merged
+   through branch `chore/license-dual`): the provenance review
    ([licence-provenance-2026-10-17.md](reviews/licence-provenance-2026-10-17.md); not a
    legal review), root `LICENSE-MIT` and `LICENSE-APACHE`, `license = "MIT OR Apache-2.0"`
    in every crate manifest outside `randomx/` and `third_party/`, and the README Licence
