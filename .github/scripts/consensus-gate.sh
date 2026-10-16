@@ -401,6 +401,11 @@ selftest_history() {
     git config commit.gpgsign false &&
     git config core.autocrlf false &&
     git config core.hooksPath /dev/null &&
+    git config gc.auto 0 &&
+    git config maintenance.auto false &&
+    git config core.commitGraph false &&
+    git config core.attributesFile /dev/null &&
+    git config rerere.enabled false &&
     echo base >README.md &&
     git add -A &&
     git commit -q -m base &&
@@ -498,9 +503,9 @@ selftest_history() {
   # combined diff is empty), so the clean merge passes.
   printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$t/repo/chain/src/emission/m.rs"
   g add -A && g commit -q -m "lines$trailer"
-  g checkout -q -b d1 && sed -i 's/^a$/A/' "$t/repo/chain/src/emission/m.rs" &&
+  g checkout -q -b d1 && printf 'A\nb\nc\nd\ne\nf\ng\nh\n' >"$t/repo/chain/src/emission/m.rs" &&
     g commit -q -a -m "d1$trailer"
-  g checkout -q main && sed -i 's/^h$/H/' "$t/repo/chain/src/emission/m.rs" &&
+  g checkout -q main && printf 'a\nb\nc\nd\ne\nf\ng\nH\n' >"$t/repo/chain/src/emission/m.rs" &&
     g commit -q -a -m "d2$trailer"
   g merge -q --no-ff -m 'clean merge, both sides' d1 >/dev/null 2>&1
   if [ "$(g rev-list --parents -n 1 HEAD | wc -w)" = 3 ]; then
@@ -566,12 +571,15 @@ selftest_history() {
   want_rc 1 "$mainc" HEAD "A2: a no-ff merge of a branch whose update merge reverts main's change"
   g reset -q --hard "$mainc"
   # Red team R2-F2: a criss-cross merge, two bases (cx: x, cy: y). One
-  # parent keeps the version of the base that `merge-base` without --all
-  # does not pick; the other parent changes it (a trailered fix); the merge
-  # takes the kept version, so it reverts the fix to that base's version. The
-  # dense diff is empty (the result is a parent's), and only `--all` finds
-  # the base.
-  local cx cy x2 y2 one keep other ver fixc
+  # parent ("keep") keeps the version of the base that `merge-base` without
+  # --all does not pick; the other parent changes it (a trailered fix); the
+  # merge takes the kept version, so it reverts the fix to that base's
+  # version. The dense diff is empty (the result is a parent's), and only
+  # `--all` finds the base. Which base git's tie-break picks differs between
+  # git versions, so both assignments are tried and the one where the pick
+  # (in the order the gate asks: the fix side first) is the other base is
+  # used.
+  local cx cy x2 y2 keep other ver fixc picked ok=""
   g checkout -q -b cx main && printf 'x\n' >"$t/repo/chain/src/sync_policy.rs" && g commit -q -a -m "cx$trailer"
   cx="$(g rev-parse HEAD)"
   g checkout -q -b cy main && printf 'y\n' >"$t/repo/chain/src/sync_policy.rs" && g commit -q -a -m "cy$trailer"
@@ -579,23 +587,34 @@ selftest_history() {
   g checkout -q -b x2 "$cx" && g merge -q --no-ff --no-commit "$cy" >/dev/null 2>&1
   printf 'x\n' >"$t/repo/chain/src/sync_policy.rs" && g add -A && g commit -q -m 'x2'
   x2="$(g rev-parse HEAD)"
-  g checkout -q -b y2 "$cy" && g merge -q --no-ff --no-commit "$cx" >/dev/null 2>&1
+  # y2 has the same first parent as x2 (cx), so a tie-break that follows
+  # first parents picks the same base for both assignments below (with y2
+  # on cy it could pick each kept side's own base, and no assignment works).
+  g checkout -q -b y2 "$cx" && g merge -q --no-ff --no-commit "$cy" >/dev/null 2>&1
   printf 'y\n' >"$t/repo/chain/src/sync_policy.rs" && g add -A && g commit -q -m 'y2'
   y2="$(g rev-parse HEAD)"
-  one="$(g merge-base "$x2" "$y2")"
-  if [ "$one" = "$cy" ]; then keep="$x2" other="$y2" ver=x; else keep="$y2" other="$x2" ver=y; fi
-  g checkout -q -b ccfix "$other" && printf 'fix\n' >"$t/repo/chain/src/sync_policy.rs" &&
-    g commit -q -a -m "fix$trailer"
-  fixc="$(g rev-parse HEAD)"
-  g checkout -q -b cckeep "$keep"
-  if [ "$(g merge-base --all "$keep" "$fixc" | wc -l)" = 2 ] &&
-    [ "$(g merge-base "$keep" "$fixc")" = "$one" ] && [ "$(g merge-base "$fixc" "$keep")" = "$one" ]; then
+  for keep in "$x2" "$y2"; do
+    if [ "$keep" = "$x2" ]; then other="$y2" ver=x; else other="$x2" ver=y; fi
+    g checkout -q -B ccfix "$other" && printf 'fix\n' >"$t/repo/chain/src/sync_policy.rs" &&
+      g commit -q -a -m "fix$trailer"
+    fixc="$(g rev-parse HEAD)"
+    picked="$(g merge-base "$fixc" "$keep")"
+    # Exactly the bases cx and cy, and the pick is the base whose version
+    # is not the kept one (x is cx's, y is cy's).
+    if [ "$(g merge-base --all "$fixc" "$keep" | sort | tr '\n' ' ')" = "$(printf '%s\n' "$cx" "$cy" | sort | tr '\n' ' ')" ] &&
+      { { [ "$ver" = x ] && [ "$picked" = "$cy" ]; } || { [ "$ver" = y ] && [ "$picked" = "$cx" ]; }; }; then
+      ok=1
+      break
+    fi
+  done
+  if [ -n "$ok" ]; then
+    g checkout -q -B cckeep "$keep"
     g merge -q --no-ff --no-commit "$fixc" >/dev/null 2>&1
     printf '%s\n' "$ver" >"$t/repo/chain/src/sync_policy.rs"
     g add -A && g commit -q -m 'criss-cross merge back to the other base'
     want_rc 1 "$keep" HEAD "a criss-cross merge reverting to the base merge-base does not pick"
   else
-    echo "selftest: criss-cross fixture failed"; bad=1
+    echo "selftest: criss-cross fixture failed (merge-base picked the kept version's base in both assignments)"; bad=1
   fi
   g checkout -q main && g reset -q --hard "$mainc"
   # Red team R2-F2: an octopus where only the third parent's base with the
@@ -687,6 +706,7 @@ selftest_history() {
   echo "f2 evil $RANDOM" >>"$t/repo/chain/src/store.rs"
   g add -A && g commit -q -m 'evil merge, blob to be lost'
   b="$(g rev-parse HEAD:chain/src/store.rs)"
+  [ -f "$t/repo/.git/objects/${b:0:2}/${b:2}" ] || { echo "selftest: the blob to delete is not a loose object"; bad=1; }
   rm -f "$t/repo/.git/objects/${b:0:2}/${b:2}"
   rc=0
   msg="$(cd "$t/repo" && env -u GITHUB_ACTIONS -u GATE_CMD_TOKEN \
@@ -707,6 +727,7 @@ selftest_history() {
   g checkout -q main && expect 0 notes/f3m.txt f3m
   p1="$(g rev-parse HEAD)"
   g merge -q --no-ff -m 'merge f3' f3 >/dev/null 2>&1
+  [ -f "$t/repo/.git/objects/${s1:0:2}/${s1:2}" ] || { echo "selftest: the commit to delete is not a loose object"; bad=1; }
   rm -f "$t/repo/.git/objects/${s1:0:2}/${s1:2}"
   rc=0
   msg="$(cd "$t/repo" && env -u GITHUB_ACTIONS -u GATE_CMD_TOKEN \
