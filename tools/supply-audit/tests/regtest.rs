@@ -594,3 +594,22 @@ fn save_keeps_the_kdf_parameters_of_the_wallet_file() {
     let w = blacksilk_wallet::load(&path, b"miner").unwrap();
     assert_eq!(w.synced_height(), 3);
 }
+
+/// G8 T11: at the genesis nothing exists, also for a wallet whose kept block
+/// ids no longer reach the genesis. A wallet scanning from height 0 keeps the
+/// ids of its last `KEPT_BLOCK_IDS` = 720 blocks (wallet/src/wallet.rs); after
+/// 730 blocks the genesis id is gone (ids 11..=730 remain), and the rewind to
+/// the genesis keeps no tip id. The audit at height 0 is complete all the
+/// same.
+#[test]
+fn an_audit_at_the_genesis_after_the_kept_block_ids_moved_past_it() {
+    let mut net = Net::start();
+    let mut w = Wallet::from_seed(Network::Regtest, [8; 32], 0);
+    w.set_allow_stale_tip(true);
+    net.mine_n(730, &w.primary());
+    let mut ws = entries(vec![("long", w)]);
+    let r = audit(&net.client, &mut ws, None).unwrap();
+    check_zero(&r, 730);
+    let r = audit(&net.client, &mut ws, Some(0)).unwrap();
+    check_zero(&r, 0);
+}
