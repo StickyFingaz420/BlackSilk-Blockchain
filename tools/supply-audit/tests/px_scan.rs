@@ -210,3 +210,74 @@ fn the_pool_may_return_to_exactly_zero_and_an_overpaying_coinbase_is_reported() 
         "{failures:?}"
     );
 }
+
+/// The node's view, with the id of the entry at one height replaced.
+struct WrongId {
+    inner: Chain,
+    height: u64,
+    id: String,
+}
+
+impl NodeApi for WrongId {
+    fn info(&self) -> Result<rpc::Info, String> {
+        self.inner.info()
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        let mut b = self.inner.blocks(from, count)?;
+        for e in &mut b.blocks {
+            if e.height == self.height {
+                e.id = self.id.clone();
+            }
+        }
+        Ok(b)
+    }
+    fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        self.inner.distribution(to)
+    }
+    fn outputs(&self, i: &[u64]) -> Result<rpc::Outputs, String> {
+        self.inner.outputs(i)
+    }
+    fn submit_tx(&self, t: &[u8]) -> Result<rpc::SubmitResult, String> {
+        self.inner.submit_tx(t)
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        self.inner.px_commitments(from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        self.inner.px_contracts(from)
+    }
+}
+
+/// G8 T2: a block is accepted only if both its id and its transactions match
+/// its header. A node that adds a transaction to a block (here a PX bridge-in
+/// of 500 that would inflate the pool) without changing the header keeps the
+/// block id but breaks the transaction root; a node that announces another id
+/// for an honest block breaks the id. Both are refused for that block.
+#[test]
+fn the_scan_refuses_a_block_whose_transactions_or_id_do_not_match() {
+    let p = ChainParams::regtest();
+    let honest = chain(&p, vec![vec![], vec![px(1, 0, 0)], vec![]], &[0; 3]);
+    let tip = honest[2].id(p.network_id);
+
+    // An extra transaction in block 2; its header (and so its id) unchanged.
+    let mut padded = honest.clone();
+    padded[1].txs.push(px(0, 500, 0));
+    let node = Chain {
+        blocks: padded,
+        network_id: p.network_id,
+    };
+    let e = scan_chain(&node, p.network_id, p.genesis_id(), 3, &tip).unwrap_err();
+    assert_eq!(e, "block 2 does not match its id");
+
+    // The honest block 2 announced under another id.
+    let node = WrongId {
+        inner: Chain {
+            blocks: honest,
+            network_id: p.network_id,
+        },
+        height: 2,
+        id: "07".repeat(32),
+    };
+    let e = scan_chain(&node, p.network_id, p.genesis_id(), 3, &tip).unwrap_err();
+    assert_eq!(e, "block 2 does not match its id");
+}
