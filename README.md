@@ -1106,7 +1106,7 @@ Start-up checks: the node and miner run the [RandomX self-test](#the-randomx-cra
 - **Linux.** No C compiler is needed. CI builds and tests on `ubuntu-24.04`.
 
 ```sh
-cargo build --release   # for your own machine only
+cargo build --release   # node, miner, wallet, genesis (default-members); other packages need -p; for your own machine only
 ```
 
 A plain `cargo build --release` embeds the build user's home directory in the binaries (panic locations). **Any binary that may leave your machine** (shared with someone, used in a trial, as evidence or for the genesis) is built from a clean checkout with:
@@ -1358,7 +1358,7 @@ The decisions log reopens several topics before mainnet: the difficulty rule tog
 
 - **Security issues** go through private reporting, never a public issue ([Reporting security issues](#reporting-security-issues)). Bugs and feature requests use the templates in `.github/ISSUE_TEMPLATE/`.
 - **Consensus changes** follow the 15-step discipline of [v3-consensus-changes.md](docs/reviews/v3-consensus-changes.md): problem, demonstrated failure, prior art, alternatives, affected components, activation, compatibility, reorg, wallet, mining and P2P implications, vectors, regression tests, suite results, and open review points.
-- **Commit trailers.** Every commit that touches a consensus path (listed in `.github/scripts/consensus-gate.sh`: consensus code and fixtures, the root `Cargo.toml`, the manifests, build scripts and module roots of the crates built with the node, the commit gates and the CI and build configuration) carries one of these trailers in the **last paragraph** of the message, together with any `Co-Authored-By:` line and with no blank line between them:
+- **Commit trailers.** Every commit that touches a consensus path (listed in `.github/scripts/consensus-gate.sh`: consensus code and fixtures, the root `Cargo.toml`, the manifests, build scripts and module roots of the crates built with the node, the commit gates and the CI and build configuration; the modules gated code computes with (`px/src/perm.rs`, `px/src/delivery.rs`, `zkvm/src/isa.rs`), the chain store, sync policy and build flags, the fingerprint, fixture and vector pins, and every CI script) carries one of these trailers in the **last paragraph** of the message, together with any `Co-Authored-By:` line and with no blank line between them:
   ```
   Consensus-Change: docs/reviews/v3-consensus-changes.md#<section>
   Consensus-Change: none: <why this edit does not change consensus>
