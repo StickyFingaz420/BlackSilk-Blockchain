@@ -1676,3 +1676,39 @@ mandate** ([CONTRIBUTING.md](CONTRIBUTING.md)):
 1. Confirmation of the logo rights: the creation record (prompts, input image and its
    source, service terms, human editing).
 2. Where Plonky3's licence texts live in the tree (outside the gated crate directories).
+
+## Pool and Explorer publications 2026-10-17 (internal red team; not an audit)
+
+Two separate repositories (AGPL-3.0-only, not in this repository) published work
+built on this repository's crates at `f4aef9b`. Each was reviewed only by internal
+red-team passes; no external review. Maturity of both: complete but requires further
+testing.
+
+**BlackSilk Pool** (repository `StickyFingaz420/BlackSilk-Pool`).
+- Phase 4 at main `3d4e5cc`: node templates through the chain crates at `f4aef9b`;
+  the EX + EVL payout planner with version-2 checkpoints and an independent watcher
+  (`verify`); this repository's Plonky3 patches enforced by a CI step
+  (`scripts/check-plonky3-patch.sh`); persisted windows; share-only bootstrap work
+  (owner decision 2026-10-17, disclosed).
+- Settlement at main `8b4c978` (from `f4c2aec`): settlement depth 60 confirmations, equal
+  to this chain's `COINBASE_MATURITY` and imported from it (owner decision 2026-10-17,
+  superseding 100); a deep-reorganisation alert at the chain's `DEEP_REORG_WARN_DEPTH`;
+  live fee reversal (`e09aae5`).
+- Two internal red-team passes; CI run 39033748293 (head `8b4c978`) succeeded.
+
+**BlackSilk Explorer** (repository `StickyFingaz420/BlackSilk-Explorer`).
+- Phase 5 at main `3758a92`: header rules checked at ingest; RandomX light-mode PoW for
+  the newest 720 blocks plus a 64-block sample seeded by an anchor block; this chain's
+  own whole-block validation on a rebuilt parent state.
+- Still trusted to the node: the future-time limit and heaviest-chain selection.
+- Three internal red-team passes; CI run 39034659529 (head `3758a92`) succeeded.
+
+**This repository.** Branch `feature/miner-pool-mode` (`blacksilk-miner` stratum
+client for the pool, based on `f4aef9b`) is pushed for a pull request
+and not merged; `Consensus-Change: none`.
+
+**Known limitations.**
+- The pool's deep-reorganisation alert has not been exercised against a live
+  reorganisation (tests only).
+- The explorer's PoW sample is predictable: it is seeded by a public anchor block, so
+  which older blocks it checks can be known in advance.
