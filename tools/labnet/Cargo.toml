@@ -2,6 +2,7 @@
 name = "blacksilk-labnet"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 description = "Lab network for BlackSilk: real node/miner processes behind latency and partition proxies, wallet traffic, invariant checks, long-duration runs"
 publish = false
 
