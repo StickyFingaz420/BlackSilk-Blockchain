@@ -260,12 +260,25 @@ not decisions.
    "Release signing".
 8. **Authorizing the seven-device trial**, after the protocol freeze and the v3
    genesis. §1, row "Seven-device trial".
-9. **Licence for the project's own code.** The repository root has no `LICENSE` file,
-   and no workspace `Cargo.toml` has a `license` field except `randomx/Cargo.toml`
-   (`BSD-3-Clause`, [randomx/LICENSE](../randomx/LICENSE)); until a licence is chosen,
-   none is granted for the project's own code ([README](../README.md), Licence). The
-   patched Plonky3 crates in `third_party/` (outside the workspace) carry their upstream
-   `MIT OR Apache-2.0` (each crate's `Cargo.toml`).
+9. **Licence for the project's own code.** The owner approved `MIT OR Apache-2.0` for the
+   eligible original code, subject to a provenance review. Done on 2026-10-17 (merged
+   through branch `chore/license-dual`): the provenance review
+   ([licence-provenance-2026-10-17.md](reviews/licence-provenance-2026-10-17.md); not a
+   legal review), root `LICENSE-MIT` and `LICENSE-APACHE`, `license = "MIT OR Apache-2.0"`
+   in every crate manifest outside `randomx/` and `third_party/`, and the README Licence
+   section. On that branch, `randomx/` stays `BSD-3-Clause`
+   ([randomx/LICENSE](../randomx/LICENSE)), the patched Plonky3 crates in `third_party/`
+   keep their upstream `MIT OR Apache-2.0`, and `blacksilklogos/` is reserved (all rights
+   reserved, unregistered marks; [blacksilklogos/NOTICE.md](../blacksilklogos/NOTICE.md),
+   which records the claim and the images' AI-tool provenance, not proof of ownership).
+   The copyright holder is "The BlackSilk developers" (owner, 2026-10-17).
+   `THIRD-PARTY-NOTICES.md` ships with the release binaries and the Docker image (generated
+   by `tools/third-party-notices.py`, checked in CI job `deny`). Summary, limits and the
+   owner decisions still open: [AUDIT.md](../AUDIT.md), "Licence review 2026-10-17".
+   Contribution policy ([CONTRIBUTING.md](../CONTRIBUTING.md), decided by the lead under
+   the owner's 2026-10-17 mandate): inbound = outbound `MIT OR Apache-2.0`, DCO 1.1
+   sign-off for external commits (CI enforcement planned before the first external
+   merge, not in place), and an AI-assistance policy.
 10. **Windows Defender and Windows Update on the operator machine** (an operational
     item, not a gate): both were found disabled at the labnet v3 prerequisite check on
     2026-10-15 ([labnet-v3 evidence](evidence/labnet-v3-2026-10-15/README.md) §1, the

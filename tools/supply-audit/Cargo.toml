@@ -2,6 +2,7 @@
 name = "blacksilk-supply-audit"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 description = "Closed-set supply audit for BlackSilk trials: the sum of every wallet's v1 and PX holdings against the chain's emission and PX pool"
 publish = false
 

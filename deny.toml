@@ -40,11 +40,12 @@ ignore = [
 # list cannot drift from the graph, and a crate with any other licence fails.
 # Add a licence only in the commit that brings the crate needing it
 # ("Apache-2.0 WITH LLVM-exception" came with the approved rustc_apfloat dev
-# dependency of blacksilk-randomx, decisions "Agent 44"). BlackSilk itself
-# has no outbound licence yet (an owner decision). Its crates are skipped as
-# unpublished, which requires `publish = false` in every workspace member's
-# [package]; without it, the licence check reports them as unlicensed and the
-# wildcard check refuses their path dependencies.
+# dependency of blacksilk-randomx, decisions "Agent 44"). BlackSilk's own
+# crates declare `MIT OR Apache-2.0` (blacksilk-randomx: `BSD-3-Clause`; README,
+# Licence), but that outbound licence is not checked here: the crates are
+# skipped as unpublished, which requires `publish = false` in every workspace
+# member's [package]; without it, the wildcard check refuses their path
+# dependencies.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception", # rustc_apfloat (dev-only, randomx tests)
