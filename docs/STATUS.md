@@ -242,7 +242,13 @@ not decisions.
    E1.1–E1.6 (second internal reviewer), which rule out the critical state for 5 ≤ L ≤ 8
    on paper, and an independent exhaustive run finds it unreachable at L = 7. Neither
    implies anything at L = 170: the source-hop branch before the window and the tag
-   supply (the descent) are OPEN. Stage 2's descent closure (E3) is not started.
+   supply (the descent) are OPEN. E3, the descent go/no-go (owner-approved 2026-10-17, budget
+   10-40 CPU-hours, 6 GB): NO-GO ([rx742-e3-2026-10-17.md](reviews/rx742-e3-2026-10-17.md),
+   second internal review with corrections). No terminating descent is known; instrumented
+   sampling at L = 170 shows both open branches' premises occur, and no feasible sound
+   exhaustive check is known. About 0.2 CPU-hours used. The item stays OPEN; the options
+   (an IMUL_RCP tag bound, a SAT/SMT window encoding, or the owner's decision D4 at the
+   freeze) are owner decisions; no full-closure phase is started.
 2. **G8, the supply audit's mutation batch:** run on 2026-10-16 with the owner's
    approval; no survivor left unexplained (227 = 211 caught + 15 unviable + 1 exempt
    as E90). §5, row "Mutation-testing freeze gate"; [G8](evidence/mutation-G8-2026-10-16/README.md).
