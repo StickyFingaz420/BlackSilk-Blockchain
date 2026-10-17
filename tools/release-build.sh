@@ -80,5 +80,5 @@ ls "$out"/blacksilk-* >/dev/null 2>&1 || {
     "copy LICENSE-MIT, LICENSE-APACHE and THIRD-PARTY-NOTICES.md next to the binaries yourself" >&2
   exit 1
 }
-cpLICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md "$out/"
+cp LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md "$out/"
 echo "release-build: copied LICENSE-MIT, LICENSE-APACHE and THIRD-PARTY-NOTICES.md to $out" >&2
