@@ -17,6 +17,7 @@ use blacksilk_chain::build_flags::BuildFlags;
 use blacksilk_chain::emission::format_amount;
 use blacksilk_consensus::Network;
 use blacksilk_crypto::keys::Address;
+use blacksilk_miner::pool::{self, PoolConfig, PoolError, PoolMode};
 use blacksilk_miner::{
     build_block, search, ContextBuilder, PowContext, RandomXBuilder, SeedPlan, SeedPlanner,
     TipSignal, TipSource, TipWatcher, TIP_WAIT_SECS,
@@ -85,6 +86,36 @@ struct Args {
     /// build that fails it mines blocks the network rejects).
     #[arg(long)]
     skip_randomx_self_test: bool,
+    /// Mine for a BlackSilk Pool at `host:port` (stratum over plain TCP)
+    /// instead of a node; needs --pool-mode and --accept-fee. There is no
+    /// TLS: use a local TLS proxy or onion forwarder for a remote pool
+    /// (miner/README.md).
+    #[arg(long, requires_all = ["pool_mode", "accept_fee"], conflicts_with = "rpc_cookie")]
+    pool: Option<String>,
+    /// The pool payout mode you accept: `pooled` or `solo` (no default).
+    #[arg(long, value_enum, requires = "pool")]
+    pool_mode: Option<PoolModeArg>,
+    /// The pool fee you accept, in basis points (200 = 2.00 %). It must equal
+    /// the fee the pool publishes for the mode, or the miner refuses to mine
+    /// (no default).
+    #[arg(long, requires = "pool", value_parser = clap::value_parser!(u16).range(0..=10_000))]
+    accept_fee: Option<u16>,
+}
+
+/// `--pool-mode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum PoolModeArg {
+    Pooled,
+    Solo,
+}
+
+impl From<PoolModeArg> for PoolMode {
+    fn from(m: PoolModeArg) -> Self {
+        match m {
+            PoolModeArg::Pooled => PoolMode::Pooled,
+            PoolModeArg::Solo => PoolMode::Solo,
+        }
+    }
 }
 
 /// `--prebuild` (decisions "W2-09").
@@ -299,6 +330,8 @@ fn main() {
             .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
             .max(1);
         self_test_only(args.light, threads)
+    } else if args.pool.is_some() {
+        run_pool(args)
     } else {
         run(args)
     };
@@ -750,6 +783,113 @@ fn run(args: Args) -> Result<(), Fatal> {
     }
 }
 
+/// The network a payout address belongs to: the one network whose address
+/// tag and checksum it decodes under. Pool mode has no node to ask.
+fn address_network(address: &str) -> Result<Network, Fatal> {
+    let nets: Vec<Network> = [Network::Mainnet, Network::Testnet, Network::Regtest]
+        .into_iter()
+        .filter(|n| decode_address(*n, address).is_ok())
+        .collect();
+    match nets.as_slice() {
+        [n] => Ok(*n),
+        _ => Err(Fatal::Config(format!(
+            "--address is not a valid BlackSilk address: {:?}",
+            decode_address(Network::Testnet, address).err()
+        ))),
+    }
+}
+
+/// Whether `pool` (`host:port`) is on this machine: anything else is a
+/// plain-TCP connection across a network.
+fn is_local(pool: &str) -> bool {
+    let host = pool.rsplit_once(':').map_or(pool, |(h, _)| h);
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    // An IP literal only: a name such as `127.evil.example` is resolved
+    // elsewhere and is not local.
+    let ip = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    ip.parse::<std::net::IpAddr>()
+        .is_ok_and(|a| a.is_loopback())
+}
+
+/// `--pool`: mines a BlackSilk Pool's jobs (blacksilk_miner::pool). No
+/// node, no RPC cookie and no wallet keys; only the payout address.
+fn run_pool(args: Args) -> Result<(), Fatal> {
+    let flags = BuildFlags::of_chain_layer();
+    log::info!(
+        "blacksilk-miner {} commit {BUILD_COMMIT}, {}",
+        env!("CARGO_PKG_VERSION"),
+        flags.line()
+    );
+    let require_clean = blacksilk_chain::build_flags::require_clean(args.require_clean_build);
+    if require_clean {
+        flags
+            .check_clean("blacksilk-miner")
+            .map_err(Fatal::Config)?;
+    }
+    let pool_addr = args.pool.clone().unwrap_or_default();
+    pool::check_pool_address(&pool_addr).map_err(Fatal::Config)?;
+    let address = args.address.clone().unwrap_or_default();
+    let net = address_network(&address)?;
+    check_build(&flags, net, require_clean)?;
+    let (Some(mode), Some(fee_bp)) = (args.pool_mode, args.accept_fee) else {
+        return Err(Fatal::Config(
+            "--pool needs --pool-mode and --accept-fee".into(),
+        ));
+    };
+    // Before any hashing (decisions "Agent 08").
+    start_up_self_test(args.skip_randomx_self_test)?;
+    let threads = args
+        .threads
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .max(1);
+    let build_threads = args.build_threads.unwrap_or(threads / 4).max(1);
+    // Jobs carry no next key, so nothing is prebuilt; full mode bridges a
+    // key switch in light mode while the new dataset is built.
+    let plan = Prebuild::Off.plan(!args.light);
+    if !is_local(&pool_addr) {
+        log::warn!(
+            "the connection to {pool_addr} is plain TCP: the payout address, the accepted \
+             fee and every share are readable on the path; prefer the pool's TLS port or onion \
+             service through a local proxy (miner/README.md)"
+        );
+    }
+    log::info!(
+        "pool mode: mining for {pool_addr} ({:?} address) as {} at an accepted fee of {fee_bp} \
+         bp with {threads} threads ({} mode)",
+        net,
+        PoolMode::from(mode).as_str(),
+        if args.light { "light" } else { "full" },
+    );
+    let cfg = PoolConfig {
+        pool: pool_addr,
+        login: address,
+        mode: mode.into(),
+        fee_bp,
+        agent: format!("blacksilk-miner/{}", env!("CARGO_PKG_VERSION")),
+        threads,
+        timing: pool::Timing::default(),
+    };
+    let planner = SeedPlanner::new(
+        RandomXBuilder {
+            threads: build_threads,
+            first_threads: threads,
+        },
+        plan,
+    );
+    let never = Arc::new(AtomicBool::new(false));
+    match pool::run(cfg, planner, never) {
+        Ok(_) => Ok(()),
+        Err(PoolError::Config(e)) => Err(Fatal::Config(e)),
+        Err(PoolError::SelfTest(e)) => Err(Fatal::SelfTest(self_test_message(&e))),
+        Err(PoolError::Other(e)) => Err(Fatal::Other(e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1115,6 +1255,94 @@ mod tests {
         assert!(Args::try_parse_from(["blacksilk-miner"]).is_err());
         let a = parse(&[]);
         assert!(!a.randomx_self_test && !a.skip_randomx_self_test);
+    }
+
+    /// `--pool` needs an explicit mode and fee (no defaults), the fee is at
+    /// most 10 000 bp, and the pool options need `--pool`; node mode parses
+    /// as before.
+    #[test]
+    fn pool_options_have_no_defaults() {
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["blacksilk-miner", "--address", "x"];
+            argv.extend_from_slice(extra);
+            Args::try_parse_from(argv)
+        };
+        let a = parse(&[
+            "--pool",
+            "127.0.0.1:3333",
+            "--pool-mode",
+            "solo",
+            "--accept-fee",
+            "300",
+        ])
+        .unwrap();
+        assert_eq!(a.pool.as_deref(), Some("127.0.0.1:3333"));
+        assert_eq!(a.pool_mode, Some(PoolModeArg::Solo));
+        assert_eq!(a.accept_fee, Some(300));
+        for bad in [
+            &["--pool", "127.0.0.1:3333"][..],
+            &["--pool", "127.0.0.1:3333", "--pool-mode", "pooled"],
+            &["--pool", "127.0.0.1:3333", "--accept-fee", "200"],
+            &["--pool-mode", "pooled", "--accept-fee", "200"],
+            &["--accept-fee", "200"],
+            &[
+                "--pool",
+                "h:1",
+                "--pool-mode",
+                "pplns",
+                "--accept-fee",
+                "200",
+            ],
+            &[
+                "--pool",
+                "h:1",
+                "--pool-mode",
+                "solo",
+                "--accept-fee",
+                "10001",
+            ],
+            &["--pool", "h:1", "--pool-mode", "solo", "--accept-fee", "-1"],
+            &[
+                "--pool",
+                "h:1",
+                "--pool-mode",
+                "solo",
+                "--accept-fee",
+                "300",
+                "--rpc-cookie",
+                "c",
+            ],
+        ] {
+            assert!(parse(bad).is_err(), "accepted {bad:?}");
+        }
+        let a = parse(&[]).unwrap();
+        assert!(a.pool.is_none() && a.pool_mode.is_none() && a.accept_fee.is_none());
+        assert_eq!(a.node, "127.0.0.1:29333");
+    }
+
+    /// Pool mode finds the address's network from the address itself; an
+    /// invalid address is a configuration error.
+    #[test]
+    fn the_payout_address_names_its_network() {
+        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let (keys, _) = WalletKeys::generate(&mut rng);
+        let a = keys.address(SubaddressIndex::PRIMARY);
+        for net in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+            let s = blacksilk_chain::address::encode_address(net, &a);
+            assert_eq!(address_network(&s).ok(), Some(net));
+        }
+        assert!(matches!(address_network("x"), Err(Fatal::Config(_))));
+        assert!(is_local("127.0.0.1:3333") && is_local("localhost:1") && is_local("[::1]:2"));
+        assert!(!is_local("pool.example:3333") && !is_local("10.0.0.1:3333"));
+        assert!(is_local("127.0.0.2:3333") && is_local("LOCALHOST:1"));
+        for remote in [
+            "127.evil.example:3333",
+            "127.0.0.1.nip.io:1",
+            "[::2]:3",
+            "0.0.0.0:1",
+        ] {
+            assert!(!is_local(remote), "{remote}");
+        }
     }
 
     /// A6: the first hash-rate window opens at the first search, so the
