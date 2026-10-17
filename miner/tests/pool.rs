@@ -435,3 +435,47 @@ fn a_fee_or_mode_mismatch_refuses_to_mine() {
     let mut rest = Vec::new();
     let _ = c.r.read_to_end(&mut rest);
 }
+
+/// Opt-in: mines against a real BlackSilk Pool on synthetic work for 120 s
+/// and expects at least one accepted share. Start the pool first (a build
+/// with its `test-work` feature and its `config/synthetic.example.toml`;
+/// miner/README.md), then run
+/// `BLACKSILK_POOL_TEST=127.0.0.1:3333 cargo test -p blacksilk-miner --test pool -- --ignored`.
+/// `BLACKSILK_POOL_TEST_LOGIN` overrides the login (default `SYNTHETIC-test`).
+#[test]
+#[ignore = "needs a running BlackSilk Pool (BLACKSILK_POOL_TEST=host:port)"]
+fn a_real_pool_accepts_shares() {
+    let addr = std::env::var("BLACKSILK_POOL_TEST")
+        .expect("set BLACKSILK_POOL_TEST to the pool's stratum host:port");
+    let login = std::env::var("BLACKSILK_POOL_TEST_LOGIN").unwrap_or("SYNTHETIC-test".into());
+    let _g = hashing();
+    let cfg = PoolConfig {
+        pool: addr,
+        login,
+        mode: PoolMode::Pooled,
+        fee_bp: 200,
+        agent: "blacksilk-miner/test".into(),
+        threads: 2,
+        timing: Timing::default(),
+    };
+    let planner = SeedPlanner::new(
+        RandomXBuilder {
+            threads: 1,
+            first_threads: 2,
+        },
+        SeedPlan {
+            full: false,
+            prebuild: false,
+            fallback: false,
+        },
+    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let s = stop.clone();
+    let handle = std::thread::spawn(move || pool::run(cfg, planner, s));
+    std::thread::sleep(Duration::from_secs(120));
+    let summary = finish((handle, stop)).expect("no configuration error");
+    assert_eq!(summary.logins, 1, "{summary:?}");
+    assert!(summary.accepted >= 1, "{summary:?}");
+    // A share on a job whose synthetic tip moved meanwhile is `Stale job`.
+    assert!(summary.rejected <= summary.accepted, "{summary:?}");
+}

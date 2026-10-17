@@ -632,7 +632,7 @@ only the payout address. `--pool-mode` and `--accept-fee` (basis points: 200 =
 reply, or the miner refuses to mine and exits with status 78. The connection is plain
 TCP without TLS: use the pool's TLS port or onion service through a local proxy.
 Usage, validation rules and limits: [miner/README.md](../miner/README.md). Status:
-complete but requires further testing (tested against an in-process fake pool only).
+complete but requires further testing (an in-process fake pool and one manual smoke run against the real pool on synthetic work).
 
 ## 6. Seed nodes
 

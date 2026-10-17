@@ -9,8 +9,8 @@ one of two modes:
   (the pool repository's `docs/PROTOCOL.md`), shares submitted to the pool. Below.
 
 Status of pool mode: complete but requires further testing. It is tested against an
-in-process fake pool (`miner/tests/pool.rs`), not yet against the real pool binary or
-with real network work.
+in-process fake pool (`miner/tests/pool.rs`) and in one manual smoke run against the real pool
+on synthetic work (below), not with real network work.
 
 ## Pool mode
 
@@ -58,7 +58,7 @@ Every message from the pool is untrusted:
   `algo` is `rx/blacksilk`; its `seed_hash` is 32 bytes. Nothing in a job is used as
   a path or a size.
 - The session id must be 16 hex characters. Pool-supplied text (errors, notices) is
-  logged with control characters replaced and cut at 400 characters.
+  logged with control characters replaced and cut at 2 048 characters.
 
 After a session ends the miner reconnects with a pause of 2 s doubling to 60 s (reset
 after a session that lasted a minute). It sends `keepalived` after 60 s without
@@ -96,14 +96,34 @@ beyond that is dropped and counted.
 ### Testing against a real pool
 
 The tests run an in-process fake pool (`cargo test -p blacksilk-miner --test pool`).
-To try the real pool on synthetic work, start BlackSilk Pool's server from its
-repository with its synthetic job source on a loopback port (its own
-documentation), then run, for example:
+For the real pool on synthetic work, build BlackSilk Pool's server from its repository
+with its `test-work` feature and start it with its `config/synthetic.example.toml`
+(stratum on 127.0.0.1:3333; the pool's README), then either run the miner, for example
 
 ```sh
-blacksilk-miner --pool 127.0.0.1:3333 --pool-mode solo --accept-fee 300 \
-    --address <regtest address> --light --threads 1
+blacksilk-miner --pool 127.0.0.1:3333 --pool-mode pooled --accept-fee 200 \
+    --address <regtest address> --light --threads 2
 ```
 
-and check that the pool logs the login and accepted shares. That run is not part of
-the test suite and has not been recorded as evidence yet.
+or the opt-in test, which mines for 120 s and expects accepted shares:
+
+```sh
+BLACKSILK_POOL_TEST=127.0.0.1:3333 cargo test -p blacksilk-miner --test pool -- --ignored
+```
+
+Manual run, 2026-10-17, one Windows machine, loopback, the pool at its `dev/phase4-clean`
+head built with `test-work` (synthetic work, light-mode validator), the miner a debug
+build of this branch in light mode on 2 threads (about 4 H/s):
+
+- `--pool-mode solo --accept-fee 200`: refused by the pool (`Fee mismatch: solo fee is
+  300 bp (policy 1)`), the miner exited with status 78 without mining;
+- `--pool-mode pooled --accept-fee 200`: login confirmed (mode, fee, policy 1), the
+  share-only notice and the synthetic-work warning logged; 10 shares submitted and 10
+  accepted in 300 s across 5 jobs (new synthetic tips and a VarDiff change);
+- the opt-in test: 7 shares submitted, 6 accepted, 1 rejected (not logged by the test;
+  most likely `Stale job` after a synthetic tip change);
+- the pool stopped while the miner was connected: the miner reconnected with pauses
+  of 2, 4, 8, 16, 32 and 60 s.
+
+This is a smoke run on synthetic work, not evidence for network work, and not a
+measurement of performance.

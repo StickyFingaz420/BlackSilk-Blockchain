@@ -59,7 +59,7 @@ const MAX_PENDING: usize = 32;
 
 /// The longest pool-supplied text (error message, notice) that is logged,
 /// in characters.
-const MAX_LOGGED: usize = 400;
+const MAX_LOGGED: usize = 2048;
 
 /// The payout mode the operator accepted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
