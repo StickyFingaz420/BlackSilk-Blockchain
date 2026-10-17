@@ -4,6 +4,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod pool;
+
 use blacksilk_chain::block::Block;
 use blacksilk_chain::emission::format_amount;
 use blacksilk_consensus::merkle::tx_root;
@@ -711,6 +713,65 @@ pub fn search(
     )
 }
 
+// ------------------------------------------------ pool work (stratum client)
+
+/// Offset of the miner's 4 nonce bytes in a pool job's blob: bytes 39..43
+/// (the low half of the header nonce); bytes 43..47 are the pool's
+/// extranonce and are never changed.
+pub const SHARE_NONCE_OFFSET: usize = POW_NONCE_OFFSET;
+
+/// The pool's share filter (BlackSilk Pool docs/PROTOCOL.md section 4, as
+/// xmrig): a hash is a share iff its last 8 bytes, read little-endian, are
+/// below `target64`. Coarser than [`check_hash`]; the pool recomputes and
+/// rechecks every share.
+pub fn meets_share_target(hash: &Hash, target64: u64) -> bool {
+    let top: [u8; 8] = hash[24..32].try_into().expect("8 bytes");
+    u64::from_le_bytes(top) < target64
+}
+
+/// Searches a pool job's 47-byte `blob`: the 32-bit nonce `start, start+1,
+/// …` (wrapping) is written little-endian at bytes 39..43 on `threads`
+/// threads, bytes 43..47 stay as served. Every hash that meets `target64`
+/// ([`meets_share_target`]) is passed to `share` (from the hashing thread)
+/// with its 32-bit nonce, and the search goes on until `stop` is set or all
+/// 2^32 nonces were tried. Returns the number of hashes computed.
+pub fn search_shares(
+    pow: &PowContext,
+    blob: &[u8; blacksilk_consensus::POW_BLOB_SIZE],
+    target64: u64,
+    start: u32,
+    threads: usize,
+    stop: &AtomicBool,
+    share: &(dyn Fn(u32, Hash) + Sync),
+) -> u64 {
+    const SPACE: u64 = 1 << 32;
+    let threads = threads.max(1) as u64;
+    let hashes = AtomicU64::new(0);
+    std::thread::scope(|s| {
+        for t in 0..threads {
+            let hashes = &hashes;
+            s.spawn(move || {
+                let mut vm = pow.vm();
+                let mut bytes = *blob;
+                let mut k = t;
+                while k < SPACE && !stop.load(Ordering::Relaxed) {
+                    // `k < 2^32`, so the truncation is exact.
+                    let nonce = start.wrapping_add(k as u32);
+                    bytes[SHARE_NONCE_OFFSET..SHARE_NONCE_OFFSET + 4]
+                        .copy_from_slice(&nonce.to_le_bytes());
+                    let h = vm.hash(&bytes);
+                    hashes.fetch_add(1, Ordering::Relaxed);
+                    if meets_share_target(&h, target64) {
+                        share(nonce, h);
+                    }
+                    k += threads;
+                }
+            });
+        }
+    });
+    hashes.load(Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1295,5 +1356,57 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         let (found, n) = search(&pow, &header, 1, 0, 2, 1000, &stop);
         assert_eq!((found, n), (None, 0));
+    }
+
+    /// Pool work: every reported share recomputes with the reference light
+    /// hash over the blob with the nonce at 39..43 and the extranonce bytes
+    /// 43..47 unchanged, and meets the 64-bit target; the nonces wrap
+    /// around `u32::MAX`; a set stop flag hashes nothing.
+    #[test]
+    fn shares_recompute_and_meet_the_target() {
+        let seed = [5u8; 32];
+        let pow = PowContext::new(seed, false, 1);
+        let mut blob = [0u8; blacksilk_consensus::POW_BLOB_SIZE];
+        blob[..7].copy_from_slice(blacksilk_consensus::header::POW_BLOB_TAG);
+        blob[7..39].copy_from_slice(&[0x42; 32]);
+        blob[43..].copy_from_slice(&[9, 8, 7, 6]);
+        // Difficulty 4: about one hash in four is a share.
+        let target = u64::MAX / 4;
+        let shares = Mutex::new(Vec::new());
+        let stop = AtomicBool::new(false);
+        let sink = |n: u32, h: Hash| {
+            let mut s = shares.lock().unwrap();
+            s.push((n, h));
+            if s.len() >= 6 {
+                stop.store(true, Ordering::Relaxed);
+            }
+        };
+        let start = u32::MAX - 3;
+        let n = search_shares(&pow, &blob, target, start, 2, &stop, &sink);
+        let shares = shares.into_inner().unwrap();
+        assert!(shares.len() >= 6 && n >= shares.len() as u64, "{n}");
+        let cache = blacksilk_randomx::Cache::new(&seed);
+        let mut vm = Vm::light(&cache);
+        for (nonce, h) in &shares {
+            let mut b = blob;
+            b[39..43].copy_from_slice(&nonce.to_le_bytes());
+            assert_eq!(&vm.hash(&b), h, "nonce {nonce:08x}");
+            assert!(meets_share_target(h, target));
+            assert_eq!(&b[43..], &[9, 8, 7, 6]);
+        }
+        assert!(
+            shares.iter().any(|(n, _)| *n < 64),
+            "the nonce wraps: {shares:?}"
+        );
+        let stopped = AtomicBool::new(true);
+        assert_eq!(
+            search_shares(&pow, &blob, u64::MAX, 0, 2, &stopped, &|_, _| {
+                panic!("no share after stop")
+            }),
+            0
+        );
+        let mut top = [0u8; 32];
+        top[24..].copy_from_slice(&41u64.to_le_bytes());
+        assert!(meets_share_target(&top, 42) && !meets_share_target(&top, 41));
     }
 }

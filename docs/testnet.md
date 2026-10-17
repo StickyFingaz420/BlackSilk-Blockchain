@@ -618,6 +618,22 @@ blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie <node data dir>/rpc.cookie \
 - Rewards pay a one-time stealth output to your address. They are spendable after 60
   blocks.
 
+### 5.1 Pool mode (BlackSilk Pool)
+
+```sh
+blacksilk-miner --pool 127.0.0.1:3333 --pool-mode pooled|solo --accept-fee <bp> \
+    --address <address> [--threads N] [--light] [--build-threads N]
+```
+
+The miner speaks the BlackSilk Pool stratum protocol (the pool repository's
+docs/PROTOCOL.md) instead of the node RPC: no node, no RPC cookie and no wallet keys,
+only the payout address. `--pool-mode` and `--accept-fee` (basis points: 200 =
+2.00 %) have no defaults; the pool must state exactly that mode and fee in its login
+reply, or the miner refuses to mine and exits with status 78. The connection is plain
+TCP without TLS: use the pool's TLS port or onion service through a local proxy.
+Usage, validation rules and limits: [miner/README.md](../miner/README.md). Status:
+complete but requires further testing (tested against an in-process fake pool only).
+
 ## 6. Seed nodes
 
 A seed is an always-on, publicly reachable testnet node with a stable address. New nodes
