@@ -147,3 +147,5 @@ before this change, including the removed `legacy/` tree.
    (`blacksilklogos/NOTICE.md`); the rights themselves stay unconfirmed.
 6. The README's inbound-contribution clause (contributions dual-licensed unless stated
    otherwise) is the common Rust convention, added on the branch; keep or drop.
+   Update 2026-10-17: kept, with a DCO 1.1 sign-off and an AI-assistance policy
+   (CONTRIBUTING.md; decided by the lead under the owner's mandate, AUDIT.md).

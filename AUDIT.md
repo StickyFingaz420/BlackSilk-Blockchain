@@ -1651,12 +1651,28 @@ list is a union over binaries and targets; copyright lines are extracted mechani
 - Notices obligations hold for every binary distribution; a distribution made outside
   `tools/release-build.sh` or the Docker image must carry the files itself.
 
+**Contribution policy, decided by the lead under the owner's 2026-10-17 autonomy
+mandate** ([CONTRIBUTING.md](CONTRIBUTING.md)):
+1. **Inbound = outbound kept:** contributions are licensed `MIT OR Apache-2.0` (the README
+   clause). Rationale: without an explicit clause, the inbound terms of a contribution
+   would only be implied (at best MIT through the repository licence); stating them
+   removes the doubt.
+2. **DCO 1.1, not a CLA:** every external commit carries `Signed-off-by:`
+   ([docs/DCO.txt](docs/DCO.txt), verbatim). Rationale: a DCO costs a contributor one
+   flag (`git commit -s`); a CLA is not needed because MIT and Apache-2.0 already let
+   anyone, the project included, redistribute and sublicense downstream. The cost: a
+   later relicensing of the project itself under other terms needs every contributor's
+   consent. A required CI sign-off check is to be in place before the first external
+   merge (a separate, gated change; not done).
+3. **AI-assistance policy added:** a human reviews and answers for every line and signs
+   the DCO, an AI never signs off, assistance is disclosed by trailer (`Assisted-by:` or
+   `Co-Authored-By:`), and no code of incompatible or unknown licence may be pasted.
+   Rationale: no disclosure rule specific to AI is known to apply; the legal risk is
+   reproduced third-party code, which the policy addresses; disclosure is project policy.
+4. **Pool and Explorer stay AGPL-3.0** (the owner's earlier choice; separate projects,
+   not in this repository, not reviewed here; no change).
+
 **Decisions still requiring owner approval.**
-1. The README's inbound-contribution clause (kept as written, pending the owner).
-2. A DCO or CLA for outside contributions (none today).
-3. A policy on AI-assisted authorship (disclosure, review, attribution).
-4. Licence consistency with the separate Pool and Explorer projects (AGPL per the
-   owner; not in this repository and not reviewed here).
-5. Confirmation of the logo rights: the creation record (prompts, input image and its
+1. Confirmation of the logo rights: the creation record (prompts, input image and its
    source, service terms, human editing).
-6. Where Plonky3's licence texts live in the tree (outside the gated crate directories).
+2. Where Plonky3's licence texts live in the tree (outside the gated crate directories).

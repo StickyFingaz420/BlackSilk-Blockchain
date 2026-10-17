@@ -275,6 +275,10 @@ not decisions.
    `THIRD-PARTY-NOTICES.md` ships with the release binaries and the Docker image (generated
    by `tools/third-party-notices.py`, checked in CI job `deny`). Summary, limits and the
    owner decisions still open: [AUDIT.md](../AUDIT.md), "Licence review 2026-10-17".
+   Contribution policy ([CONTRIBUTING.md](../CONTRIBUTING.md), decided by the lead under
+   the owner's 2026-10-17 mandate): inbound = outbound `MIT OR Apache-2.0`, DCO 1.1
+   sign-off for external commits (CI enforcement planned before the first external
+   merge, not in place), and an AI-assistance policy.
 10. **Windows Defender and Windows Update on the operator machine** (an operational
     item, not a gate): both were found disabled at the labnet v3 prerequisite check on
     2026-10-15 ([labnet-v3 evidence](evidence/labnet-v3-2026-10-15/README.md) §1, the
