@@ -39,6 +39,7 @@ fn timing() -> Timing {
         backoff_first: Duration::from_millis(50),
         backoff_max: Duration::from_millis(200),
         stable: Duration::from_secs(600),
+        reply_stall: Duration::from_secs(600),
     }
 }
 
@@ -478,4 +479,39 @@ fn a_real_pool_accepts_shares() {
     assert!(summary.accepted >= 1, "{summary:?}");
     // A share on a job whose synthetic tip moved meanwhile is `Stale job`.
     assert!(summary.rejected <= summary.accepted, "{summary:?}");
+}
+
+/// A pool that stops answering submits: once 32 are outstanding the miner
+/// drops further shares (counted), and after the reply-stall timeout it
+/// ends the session and reconnects instead of mining blind.
+#[test]
+fn an_unanswering_pool_ends_the_session() {
+    let _g = hashing();
+    let pool = FakePool::new();
+    let t = Timing {
+        reply_stall: Duration::from_secs(3),
+        ..timing()
+    };
+    let client = start(pool.addr(), PoolMode::Solo, 300, t);
+    let mut c = pool.accept();
+    c.login("mode=solo;fee=300");
+    // Every hash is a share.
+    c.send(&login_reply(
+        job("1", &blob(1, 1), u64::MAX),
+        Some(confirmation("solo", 300)),
+    ));
+    let started = Instant::now();
+    let mut submits = 0;
+    while let Some(m) = c.recv() {
+        assert_eq!(m["method"], "submit", "{m}");
+        submits += 1;
+    }
+    let took = started.elapsed();
+    assert_eq!(submits, 32, "the submit window");
+    assert!(took >= Duration::from_secs(3), "{took:?}");
+    let mut c2 = pool.accept();
+    c2.login("mode=solo;fee=300");
+    let s = finish(client).expect("stopped cleanly");
+    assert_eq!((s.logins, s.submitted, s.accepted), (1, 32, 0), "{s:?}");
+    assert!(s.dropped > 0, "shares beyond the window are dropped: {s:?}");
 }

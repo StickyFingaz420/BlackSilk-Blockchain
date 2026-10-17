@@ -803,7 +803,17 @@ fn address_network(address: &str) -> Result<Network, Fatal> {
 /// plain-TCP connection across a network.
 fn is_local(pool: &str) -> bool {
     let host = pool.rsplit_once(':').map_or(pool, |(h, _)| h);
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]") || host.starts_with("127.")
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    // An IP literal only: a name such as `127.evil.example` is resolved
+    // elsewhere and is not local.
+    let ip = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    ip.parse::<std::net::IpAddr>()
+        .is_ok_and(|a| a.is_loopback())
 }
 
 /// `--pool`: mines a BlackSilk Pool's jobs (blacksilk_miner::pool). No
@@ -1324,6 +1334,15 @@ mod tests {
         assert!(matches!(address_network("x"), Err(Fatal::Config(_))));
         assert!(is_local("127.0.0.1:3333") && is_local("localhost:1") && is_local("[::1]:2"));
         assert!(!is_local("pool.example:3333") && !is_local("10.0.0.1:3333"));
+        assert!(is_local("127.0.0.2:3333") && is_local("LOCALHOST:1"));
+        for remote in [
+            "127.evil.example:3333",
+            "127.0.0.1.nip.io:1",
+            "[::2]:3",
+            "0.0.0.0:1",
+        ] {
+            assert!(!is_local(remote), "{remote}");
+        }
     }
 
     /// A6: the first hash-rate window opens at the first search, so the

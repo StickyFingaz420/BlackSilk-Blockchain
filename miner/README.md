@@ -58,7 +58,10 @@ Every message from the pool is untrusted:
   `algo` is `rx/blacksilk`; its `seed_hash` is 32 bytes. Nothing in a job is used as
   a path or a size.
 - The session id must be 16 hex characters. Pool-supplied text (errors, notices) is
-  logged with control characters replaced and cut at 2 048 characters.
+  logged with control and Unicode format characters (bidirectional overrides,
+  zero-width characters) replaced and cut at 2 048 characters. Per-job lines,
+  unknown-notification and dropped-share warnings are limited to one per second, with
+  a count of the lines held back.
 
 After a session ends the miner reconnects with a pause of 2 s doubling to 60 s (reset
 after a session that lasted a minute). It sends `keepalived` after 60 s without
@@ -73,7 +76,11 @@ blob are iterated, from a random 32-bit start per job (a start at 0, as xmrig's,
 fingerprints the miner); bytes 43..47 are the pool's extranonce and are kept. A hash
 is submitted when its last 8 bytes, read little-endian, are below the job's target;
 the pool recomputes every share. At most 32 submits are outstanding; a share found
-beyond that is dropped and counted.
+beyond that, or while the queue from the hashing threads (256 events) is full, is
+dropped and counted (a full submit window is also warned about). A window that stays
+full for 60 s without a reply ends the session (reconnect). The pool's lines are
+read only as fast as the miner handles them, so a flooding pool is slowed by TCP flow
+control.
 
 ### Privacy and security limits
 

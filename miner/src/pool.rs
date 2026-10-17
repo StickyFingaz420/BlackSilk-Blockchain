@@ -34,8 +34,9 @@ use serde_json::json;
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -56,6 +57,18 @@ const RECENT_JOBS: usize = 16;
 /// Submits and keepalives awaiting a reply; a share found while this many
 /// are outstanding is dropped (the pool's submit bucket holds 10).
 const MAX_PENDING: usize = 32;
+
+/// Capacity of the event queue from the reader and hashing threads to the
+/// controller. The reader blocks when it is full, so a pool that floods
+/// lines is slowed down by TCP flow control instead of growing memory; a
+/// hashing thread never blocks on it (a share that does not fit is dropped
+/// and counted).
+const EVENTS_CAP: usize = 256;
+
+/// A full submit window (`MAX_PENDING` outstanding) with no reply from the
+/// pool for this long ends the session ([`Timing::reply_stall`] default):
+/// mining on would only drop every share.
+const REPLY_STALL: Duration = Duration::from_secs(60);
 
 /// The longest pool-supplied text (error message, notice) that is logged,
 /// in characters.
@@ -99,6 +112,9 @@ pub struct Timing {
     pub backoff_max: Duration,
     /// A session that lasted this long resets the pause.
     pub stable: Duration,
+    /// With `MAX_PENDING` (32) requests outstanding and no reply for this
+    /// long, the session ends and the client reconnects.
+    pub reply_stall: Duration,
 }
 
 impl Default for Timing {
@@ -112,6 +128,7 @@ impl Default for Timing {
             backoff_first: Duration::from_secs(2),
             backoff_max: Duration::from_secs(60),
             stable: Duration::from_secs(60),
+            reply_stall: REPLY_STALL,
         }
     }
 }
@@ -283,19 +300,93 @@ impl Job {
     }
 }
 
+/// Whether `c` is a Unicode format character (general category Cf): the
+/// zero-width and joiner characters, the bidirectional embeddings,
+/// overrides and isolates, the byte-order mark, the interlinear
+/// annotations and the tag characters. These ranges are the Cf set of
+/// Unicode 15 (no dependency on a Unicode table crate).
+fn is_format_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
 /// Pool-supplied text made safe for a log line: control characters (a
-/// terminal escape, a forged line break) become `?`, and the text is cut
-/// at [`MAX_LOGGED`] characters.
+/// terminal escape, a forged line break) and format characters (a
+/// bidirectional override that reorders what the operator reads, a
+/// zero-width character) become `?`, and the text is cut at
+/// [`MAX_LOGGED`] characters.
 pub fn printable(s: &str) -> String {
     let mut out: String = s
         .chars()
         .take(MAX_LOGGED)
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| {
+            if c.is_control() || is_format_char(c) {
+                '?'
+            } else {
+                c
+            }
+        })
         .collect();
     if s.chars().count() > MAX_LOGGED {
         out.push('…');
     }
     out
+}
+
+/// At most one log line per [`Throttle::EVERY`] for one kind of event; the
+/// lines held back are counted and reported with the next one let through.
+#[derive(Debug, Default)]
+struct Throttle {
+    last: Option<Instant>,
+    held: u64,
+}
+
+impl Throttle {
+    const EVERY: Duration = Duration::from_secs(1);
+
+    /// `Some(held back since the last line)` if a line may be logged now.
+    fn allow(&mut self, now: Instant) -> Option<u64> {
+        if self
+            .last
+            .is_some_and(|l| now.saturating_duration_since(l) < Self::EVERY)
+        {
+            self.held += 1;
+            return None;
+        }
+        self.last = Some(now);
+        Some(std::mem::take(&mut self.held))
+    }
+}
+
+/// The note for a throttled line that follows `n` held-back ones.
+fn held_note(n: u64) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!(" ({n} similar lines held back)")
+    }
 }
 
 // ------------------------------------------------------------- messages
@@ -520,14 +611,18 @@ where
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed).map_err(|e| PoolError::Other(format!("OS RNG: {e}")))?;
     let rng = ChaCha20Rng::from_seed(seed);
-    let (events_tx, events) = mpsc::channel::<Event>();
+    let (events_tx, events) = mpsc::sync_channel::<Event>(EVENTS_CAP);
+    let lost = Arc::new(AtomicU64::new(0));
     let (work_tx, work_rx) = mpsc::channel::<Work>();
     let worker = {
         let events = events_tx.clone();
         let threads = cfg.threads.max(1);
         std::thread::Builder::new()
             .name("pool-hashing".into())
-            .spawn(move || hashing_thread(planner, rng, threads, work_rx, events))
+            .spawn({
+                let lost = lost.clone();
+                move || hashing_thread(planner, rng, threads, work_rx, events, lost)
+            })
             .map_err(|e| PoolError::Other(format!("hashing thread: {e}")))?
     };
     let mut client = Client {
@@ -543,7 +638,8 @@ where
     };
     let result = client.run_sessions();
     client.stop_job();
-    let summary = client.summary;
+    let mut summary = client.summary;
+    summary.dropped += lost.load(Ordering::Relaxed);
     drop(client);
     let _ = worker.join();
     log::info!(
@@ -564,7 +660,8 @@ fn hashing_thread<B>(
     mut rng: ChaCha20Rng,
     threads: usize,
     work: Receiver<Work>,
-    events: Sender<Event>,
+    events: SyncSender<Event>,
+    lost: Arc<AtomicU64>,
 ) where
     B: ContextBuilder<Ctx = PowContext>,
 {
@@ -580,6 +677,8 @@ fn hashing_thread<B>(
             Ok(c) => c,
             Err(e) => {
                 if let Some(m) = planner.self_test_failure() {
+                    // Blocking is safe: the controller drains the queue until
+                    // it returns, and then this send fails.
                     let _ = events.send(Event::Fatal(PoolError::SelfTest(m.to_owned())));
                     return;
                 }
@@ -597,13 +696,18 @@ fn hashing_thread<B>(
         let start = rng.next_u32();
         let job_id: Arc<str> = Arc::from(w.job.id.as_str());
         let conn = w.conn;
+        // Never blocks a hashing thread: with the event queue full the
+        // share is dropped and counted ([`Summary::dropped`]).
         let sink = |nonce: u32, hash: Hash| {
-            let _ = events.send(Event::Share {
+            let share = Event::Share {
                 conn,
                 job_id: job_id.clone(),
                 nonce,
                 hash,
-            });
+            };
+            if let Err(TrySendError::Full(_)) = events.try_send(share) {
+                lost.fetch_add(1, Ordering::Relaxed);
+            }
         };
         let started = Instant::now();
         let hashes = search_shares(
@@ -631,7 +735,7 @@ fn hashing_thread<B>(
 struct Client {
     cfg: PoolConfig,
     events: Receiver<Event>,
-    events_tx: Sender<Event>,
+    events_tx: SyncSender<Event>,
     work_tx: Sender<Work>,
     shutdown: Arc<AtomicBool>,
     /// The current connection's number (events of earlier ones are ignored).
@@ -653,6 +757,14 @@ struct Session {
     pending: HashMap<u64, Pending>,
     last_sent: Instant,
     last_heard: Instant,
+    /// Since when the submit window has been full ([`MAX_PENDING`]
+    /// outstanding) with no reply freeing a slot (the reply-stall timeout).
+    full_since: Option<Instant>,
+    /// Rate limits for the per-job, unknown-notification and dropped-share
+    /// log lines.
+    job_log: Throttle,
+    unknown_log: Throttle,
+    drop_log: Throttle,
 }
 
 impl Client {
@@ -769,6 +881,10 @@ impl Client {
             pending: HashMap::new(),
             last_sent: now,
             last_heard: now,
+            full_since: None,
+            job_log: Throttle::default(),
+            unknown_log: Throttle::default(),
+            drop_log: Throttle::default(),
         };
         let login = json!({
             "id": 1,
@@ -951,6 +1067,15 @@ impl Client {
             if s.pending.len() > MAX_PENDING * 2 {
                 return Err("the pool does not answer its requests".into());
             }
+            if s.pending.len() < MAX_PENDING {
+                s.full_since = None;
+            } else if now.duration_since(*s.full_since.get_or_insert(now)) >= t.reply_stall {
+                return Err(format!(
+                    "{} requests outstanding and none answered for {:.0?}: the pool does not answer submits",
+                    s.pending.len(),
+                    t.reply_stall
+                ));
+            }
             let ev = match self.events.recv_timeout(Duration::from_millis(100)) {
                 Ok(ev) => ev,
                 Err(RecvTimeoutError::Timeout) => continue,
@@ -966,12 +1091,15 @@ impl Client {
                     s.last_heard = Instant::now();
                     match msg {
                         Incoming::Job(Ok(job)) => {
-                            log::info!(
-                                "pool job {} at height {} (share target {:016x})",
-                                job.id,
-                                job.height,
-                                job.target64
-                            );
+                            if let Some(held) = s.job_log.allow(Instant::now()) {
+                                log::info!(
+                                    "pool job {} at height {} (share target {:016x}){}",
+                                    job.id,
+                                    job.height,
+                                    job.target64,
+                                    held_note(held)
+                                );
+                            }
                             s.recent.push_back(job.id.clone());
                             if s.recent.len() > RECENT_JOBS {
                                 s.recent.pop_front();
@@ -981,7 +1109,12 @@ impl Client {
                         Incoming::Job(Err(e)) => return Err(format!("refused a job: {e}")),
                         Incoming::Reply { id, line } => self.reply(s, id, &line)?,
                         Incoming::Unknown(m) => {
-                            log::warn!("pool sent an unknown notification {m:?}: ignored")
+                            if let Some(held) = s.unknown_log.allow(Instant::now()) {
+                                log::warn!(
+                                    "pool sent an unknown notification {m:?}: ignored{}",
+                                    held_note(held)
+                                );
+                            }
                         }
                         Incoming::Malformed(e) => return Err(e),
                     }
@@ -997,6 +1130,12 @@ impl Client {
                     }
                     if s.pending.len() >= MAX_PENDING {
                         self.summary.dropped += 1;
+                        if let Some(held) = s.drop_log.allow(Instant::now()) {
+                            log::warn!(
+                                "share dropped: {MAX_PENDING} submits await the pool's reply{}",
+                                held_note(held)
+                            );
+                        }
                         continue;
                     }
                     let id = s.next_id;
@@ -1075,7 +1214,7 @@ fn send(s: &mut Session, msg: &serde_json::Value) -> SessionEnd {
 
 /// Reads the pool's lines and classifies them, until the connection ends
 /// (the controller shuts the socket down to end it).
-fn reader_thread(stream: TcpStream, conn: u64, events: Sender<Event>) {
+fn reader_thread(stream: TcpStream, conn: u64, events: SyncSender<Event>) {
     let mut r = BufReader::new(stream);
     loop {
         let why = match read_line(&mut r) {
@@ -1262,5 +1401,38 @@ mod tests {
         assert_eq!(printable("a\nb\x1b[31mc"), "a?b?[31mc");
         let long = "x".repeat(MAX_LOGGED + 10);
         assert_eq!(printable(&long).chars().count(), MAX_LOGGED + 1);
+        // Format characters: a right-to-left override that would show
+        // "fee 002" as "fee 200", zero-width ones, isolates, the BOM, tags.
+        assert_eq!(printable("fee \u{202E}002"), "fee ?002");
+        for c in [
+            '\u{200B}',
+            '\u{200D}',
+            '\u{200E}',
+            '\u{200F}',
+            '\u{202A}',
+            '\u{202D}',
+            '\u{2060}',
+            '\u{2066}',
+            '\u{2069}',
+            '\u{FEFF}',
+            '\u{00AD}',
+            '\u{E0041}',
+        ] {
+            assert_eq!(printable(&format!("a{c}b")), "a?b", "U+{:04X}", c as u32);
+        }
+        assert_eq!(printable("2.00 % é ü 中"), "2.00 % é ü 中");
+    }
+
+    #[test]
+    fn log_lines_are_throttled() {
+        let t0 = Instant::now();
+        let mut t = Throttle::default();
+        assert_eq!(t.allow(t0), Some(0));
+        assert_eq!(t.allow(t0 + Duration::from_millis(10)), None);
+        assert_eq!(t.allow(t0 + Duration::from_millis(900)), None);
+        assert_eq!(t.allow(t0 + Duration::from_millis(1001)), Some(2));
+        assert_eq!(t.allow(t0 + Duration::from_millis(2500)), Some(0));
+        assert_eq!(held_note(0), "");
+        assert_eq!(held_note(3), " (3 similar lines held back)");
     }
 }
