@@ -15,6 +15,8 @@ BlackSilk's crates are licensed `MIT OR Apache-2.0` (LICENSE-MIT, LICENSE-APACHE
 - `blacksilk-randomx` is a Rust port of tevador/RandomX under its `BSD-3-Clause` licence, reproduced in §4.1.
 - The English word list in `blacksilk-crypto` (crypto/src/wordlist.rs) is the BIP-39 list; BIP-39 is published under the MIT licence (§4.2).
 
+**The Rust standard library.** `std`, `core`, `alloc` and the crates the standard library vendors (for example `compiler_builtins`, `hashbrown`, `gimli`, `addr2line`) are linked into every binary, under `MIT OR Apache-2.0`, copyright The Rust Project Developers (the Apache-2.0 text is in §3). The notices of the standard library's own vendored dependencies are not collected here (a limitation of this file); they are in the Rust source distribution of the toolchain used (`rust-src`, rustup component; https://github.com/rust-lang/rust).
+
 | Crate | Version | Licence |
 |---|---|---|
 | blacksilk-chain | 0.1.0 | MIT OR Apache-2.0 |
@@ -108,7 +110,7 @@ Kind: `linked` (compiled into the binaries), `proc-macro` (runs in the compiler 
 | getrandom | 0.2.17 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2018-2024 The rust-random Project Developers; Copyright (c) 2014 The Rust Project Developers |
 | ghash | 0.5.1 | linked | Apache-2.0 OR MIT | crates.io | Copyright (c) 2019 RustCrypto Developers |
 | hashbrown | 0.17.1 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2016 Amanieu d'Antras |
-| heck | 0.5.0 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2015 The Rust Project Developers |
+| heck | 0.5.0 | proc-macro | MIT OR Apache-2.0 | crates.io | Copyright (c) 2015 The Rust Project Developers |
 | hex | 0.4.3 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2013-2014 The Rust Project Developers.; Copyright (c) 2015-2020 The rust-hex Developers |
 | http | 1.5.0 | linked | MIT OR Apache-2.0 | crates.io | Copyright 2017 http-rs authors; Copyright (c) 2017 http-rs authors |
 | http-body | 1.1.0 | linked | MIT | crates.io | Copyright (c) 2019-2026 Sean McArthur & Hyper Contributors |
@@ -185,8 +187,8 @@ Kind: `linked` (compiled into the binaries), `proc-macro` (runs in the compiler 
 | postcard | 1.1.3 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2019 Anthony James Munns |
 | potential_utf | 0.1.4 | linked | Unicode-3.0 | crates.io | Copyright © 2020-2024 Unicode, Inc. |
 | ppv-lite86 | 0.2.21 | linked | MIT OR Apache-2.0 | crates.io | Copyright 2019 The CryptoCorrosion Contributors; Copyright (c) 2019 The CryptoCorrosion Contributors |
-| proc-macro2 | 1.0.95 | linked | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay, Alex Crichton |
-| quote | 1.0.40 | linked | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
+| proc-macro2 | 1.0.95 | proc-macro | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay, Alex Crichton |
+| quote | 1.0.40 | proc-macro | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
 | rand | 0.10.3 | linked | MIT OR Apache-2.0 | crates.io | Copyright 2018 Developers of the Rand project; Copyright (c) 2014 The Rust Project Developers |
 | rand_chacha | 0.3.1 | linked | MIT OR Apache-2.0 | crates.io | Copyright 2018 Developers of the Rand project; Copyright (c) 2014 The Rust Project Developers |
 | rand_core | 0.10.1 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2018-2026 The Rand Project Developers |
@@ -217,10 +219,10 @@ Kind: `linked` (compiled into the binaries), `proc-macro` (runs in the compiler 
 | stable_deref_trait | 1.2.1 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2017 Robert Grosse |
 | strsim | 0.11.1 | linked | MIT | crates.io | Copyright (c) 2015 Danny Guo; Copyright (c) 2016 Titus Wormer; Copyright (c) 2018 Akash Kurdekar |
 | subtle | 2.6.1 | linked | BSD-3-Clause | crates.io | Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.; Copyright (c) 2016-2024 Isis Agora Lovecruft. All rights reserved. |
-| syn | 2.0.104 | linked | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
-| syn | 3.0.6 | linked | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
+| syn | 2.0.104 | proc-macro | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
+| syn | 3.0.6 | proc-macro | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
 | sync_wrapper | 1.0.2 | linked | Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): Actyx AG |
-| synstructure | 0.13.2 | linked | MIT | crates.io | Copyright 2016 Nika Layzell |
+| synstructure | 0.13.2 | proc-macro | MIT | crates.io | Copyright 2016 Nika Layzell |
 | thiserror | 2.0.20 | linked | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
 | thiserror-impl | 2.0.20 | proc-macro | MIT OR Apache-2.0 | crates.io | not stated in its licence files; authors (Cargo.toml): David Tolnay |
 | tinystr | 0.8.2 | linked | Unicode-3.0 | crates.io | Copyright © 2020-2024 Unicode, Inc. |
@@ -239,7 +241,7 @@ Kind: `linked` (compiled into the binaries), `proc-macro` (runs in the compiler 
 | tracing-core | 0.1.36 | linked | MIT | crates.io | Copyright (c) 2019 Tokio Contributors |
 | try-lock | 0.2.5 | linked | MIT | crates.io | Copyright (c) 2018-2023 Sean McArthur; Copyright (c) 2016 Alex Crichton |
 | typenum | 1.20.1 | linked | MIT OR Apache-2.0 | crates.io | Copyright 2014 Paho Lurie-Gregg; Copyright (c) 2014 Paho Lurie-Gregg |
-| unicode-ident | 1.0.18 | linked | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io | Copyright © 1991-2023 Unicode, Inc. |
+| unicode-ident | 1.0.18 | proc-macro | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io | Copyright © 1991-2023 Unicode, Inc. |
 | universal-hash | 0.5.1 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2019-2020 RustCrypto Developers |
 | url | 2.5.8 | linked | MIT OR Apache-2.0 | crates.io | Copyright (c) 2013-2025 The rust-url developers |
 | utf8_iter | 1.0.4 | linked | Apache-2.0 OR MIT | crates.io | not stated in its licence files; authors (Cargo.toml): Henri Sivonen |
@@ -267,7 +269,7 @@ Kind: `linked` (compiled into the binaries), `proc-macro` (runs in the compiler 
 
 ## 3. Apache License 2.0
 
-The crates below include the Apache License 2.0 with the standard terms (their files differ at most in whitespace and in the appendix, whose filled-in copyright lines are in §2). None of the listed crates ships a NOTICE file. The text follows the list.
+The crates below include the Apache License 2.0 with the standard terms (their files differ at most in whitespace and in the appendix, whose filled-in copyright lines are in §2). The scan found no NOTICE file in any listed crate. The text follows the list.
 
 aead 0.5.2, aes 0.8.4, aes-gcm 0.10.3, allocator-api2 0.2.21, anstream 0.6.21, anstyle 1.0.14, anstyle-parse 0.2.7, anstyle-query 1.1.5, anstyle-wincon 3.0.11, argon2 0.5.3, async-trait 0.1.92, atomic-waker 1.1.2, autocfg 1.5.1, base64 0.22.1, base64ct 1.8.3, bitflags 2.13.2, blake2 0.10.6, block-buffer 0.10.4, block-buffer 0.12.1, bs58 0.5.1, cfg-if 1.0.1, chacha20 0.10.2, chacha20 0.9.1, chacha20poly1305 0.10.1, cipher 0.4.4, clap 4.5.60, clap_builder 4.5.60, clap_derive 4.5.55, clap_lex 1.1.1, cmov 0.5.4, cobs 0.3.0, colorchoice 1.0.5, cpufeatures 0.2.17, cpufeatures 0.3.1, crc32fast 1.4.2, crossbeam-deque 0.8.8, crossbeam-epoch 0.9.21, crossbeam-utils 0.8.23, crypto-common 0.1.6, crypto-common 0.2.2, ctr 0.9.2, ctutils 0.4.2, curve25519-dalek-derive 0.1.1, digest 0.10.7, digest 0.11.3, displaydoc 0.2.7, either 1.18.0, env_logger 0.8.4, equivalent 1.0.2, errno 0.3.13, form_urlencoded 1.2.2, fs2 0.4.3, futures-channel 0.3.34, futures-core 0.3.34, futures-io 0.3.34, futures-sink 0.3.34, futures-task 0.3.34, futures-util 0.3.34, ghash 0.5.1, hashbrown 0.17.1, heck 0.5.0, hex 0.4.3, http 1.5.0, httparse 1.10.1, httpdate 1.0.3, humantime 2.4.0, hybrid-array 0.4.15, idna 1.1.0, idna_adapter 1.2.1, indexmap 2.14.2, inout 0.1.4, ipnet 2.12.2, is_terminal_polyfill 1.70.2, itertools 0.15.0, itoa 1.0.18, keccak 0.2.2, libc 0.2.174, lock_api 0.4.14, log 0.4.27, mime 0.3.17, ml-kem 0.3.2, module-lattice 0.2.3, num-bigint 0.5.1, num-integer 0.1.47, num-traits 0.2.19, once_cell 1.21.3, once_cell_polyfill 1.70.2, opaque-debug 0.3.1, p3-air 0.7.0 (supplied), p3-baby-bear 0.7.0 (supplied), p3-batch-stark 0.7.0 (supplied), p3-challenger 0.7.0 (supplied), p3-commit 0.7.0 (supplied), p3-dft 0.7.0 (supplied), p3-field 0.7.0 (supplied), p3-fri 0.7.0 (supplied), p3-lookup 0.7.0 (supplied), p3-matrix 0.7.0 (supplied), p3-maybe-rayon 0.7.0 (supplied), p3-mds 0.7.0 (supplied), p3-merkle-tree 0.7.0 (supplied), p3-monty-31 0.7.0 (supplied), p3-multilinear-util 0.7.0 (supplied), p3-poseidon1 0.7.0 (supplied), p3-poseidon2 0.7.0 (supplied), p3-poseidon2-air 0.7.0 (supplied), p3-security 0.7.0 (supplied), p3-symmetric 0.7.0 (supplied), p3-uni-stark 0.7.0 (supplied), p3-util 0.7.0 (supplied), password-hash 0.5.0, paste 1.0.15, percent-encoding 2.3.2, pin-project-lite 0.2.17, poly1305 0.8.0, polyval 0.6.2, postcard 1.1.3, ppv-lite86 0.2.21, proc-macro2 1.0.95, quote 1.0.40, rayon 1.12.0, rayon-core 1.13.0, reqwest 0.12.28, rpassword 7.5.4, rtoolbox 0.0.6, rustc_version 0.4.1, rustversion 1.0.23, ryu 1.0.23, scopeguard 1.2.0, semver 1.0.26, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_path_to_error 0.1.20, serde_spanned 0.6.9, serde_urlencoded 0.7.1, sha3 0.11.0, signal-hook-registry 1.4.8, smallvec 1.16.1, socket2 0.6.5, stable_deref_trait 1.2.1, syn 2.0.104, syn 3.0.6, sync_wrapper 1.0.2, thiserror 2.0.20, thiserror-impl 2.0.20, toml 0.8.23, toml_datetime 0.6.11, toml_edit 0.22.27, toml_write 0.1.2, typenum 1.20.1, unicode-ident 1.0.18, universal-hash 0.5.1, url 2.5.8, utf8_iter 1.0.4, utf8parse 0.2.2, version_check 0.9.5, winapi 0.3.9, windows-link 0.2.1, windows-sys 0.48.0, windows-sys 0.61.2, windows-targets 0.48.5, windows_x86_64_msvc 0.48.5, zerocopy 0.8.26, zeroize 1.8.1
 
@@ -474,6 +476,8 @@ aead 0.5.2, aes 0.8.4, aes-gcm 0.10.3, allocator-api2 0.2.21, anstream 0.6.21, a
    See the License for the specific language governing permissions and
    limitations under the License.
 ~~~~
+
+**MPL-2.0 (§3.2(a)).** The source code of the MPL-2.0 crates is available from crates.io: option-ext 0.2.0 at https://crates.io/crates/option-ext/0.2.0. The MPL-2.0 text is in §4.
 
 ## 4. Other licence and notice texts
 

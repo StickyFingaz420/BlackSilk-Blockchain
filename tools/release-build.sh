@@ -74,5 +74,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 out="$out${triple:+/$triple}/release"
-cp LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md "$out/"
+# A --profile or a build.target in a cargo config puts the binaries elsewhere.
+ls "$out"/blacksilk-* >/dev/null 2>&1 || {
+  echo "release-build: no blacksilk-* binary in $out (a --profile or build.target setting?);" \
+    "copy LICENSE-MIT, LICENSE-APACHE and THIRD-PARTY-NOTICES.md next to the binaries yourself" >&2
+  exit 1
+}
+cpLICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md "$out/"
 echo "release-build: copied LICENSE-MIT, LICENSE-APACHE and THIRD-PARTY-NOTICES.md to $out" >&2

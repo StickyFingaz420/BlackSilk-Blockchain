@@ -151,8 +151,8 @@ def fence(text):
 
 
 def tree(root, edges):
-    """(name, version) -> kind, over every release target."""
-    keys = {}
+    """The (name, version) set of the four packages' graph over every release target."""
+    keys = set()
     for t in TARGETS:
         cmd = ["cargo", "tree", "--locked", "-e", edges, "--target", t,
                "--prefix", "none", "-f", "{p}"]
@@ -161,19 +161,21 @@ def tree(root, edges):
         for line in run(cmd, root).splitlines():
             parts = line.split()
             if len(parts) >= 2 and parts[1].startswith("v"):
-                macro = "(proc-macro)" in line
-                keys[(parts[0], parts[1][1:])] = "proc-macro" if macro else "linked"
+                keys.add((parts[0], parts[1][1:]))
     return keys
 
 
 def crate_set(root):
-    """Normal edges (linked code and proc-macros) plus build-only crates."""
+    """(name, version) -> kind: `linked` (reachable by normal edges without passing
+    through a proc-macro), `proc-macro` (reachable by normal edges only through a
+    proc-macro, the macro itself included), `build only` (only through build edges)."""
+    linked = tree(root, "normal,no-proc-macro")
     normal = tree(root, "normal")
     full = tree(root, "normal,build")
+    kinds = {}
     for k in full:
-        if k not in normal:
-            normal[k] = "build only"
-    return normal
+        kinds[k] = "linked" if k in linked else "proc-macro" if k in normal else "build only"
+    return kinds
 
 
 def generate(root):
@@ -193,6 +195,7 @@ def generate(root):
         (own if pkgs[k]["id"] in members else third).append(pkgs[k])
 
     apache_users = []  # crates whose Apache file has the standard terms
+    notice_files = []  # NOTICE files found (reproduced verbatim in §4)
     texts = {}  # normalized text -> set of "name version (file)"
     rows = []
     for p in third:
@@ -208,6 +211,7 @@ def generate(root):
         files = sorted(f for f in os.listdir(d)
                        if LICENCE_FILE.match(f) and os.path.isfile(os.path.join(d, f)))
         cr = []
+        notice_files += [f"{name} {ver} ({f})" for f in files if f.upper().startswith("NOTICE")]
         for f in files:
             t = norm(read(os.path.join(d, f)))
             cr += copyright_lines(t)
@@ -236,6 +240,13 @@ def generate(root):
         rows.append((name, ver, kinds[(name, ver)], p.get("license") or "(none declared)",
                      source + note,
                      "; ".join(seen)))
+
+    if notice_files:
+        notice_sentence = ("NOTICE files, reproduced verbatim in §4: "
+                           + ", ".join(sorted(notice_files)) + ".")
+    else:
+        notice_sentence = "The scan found no NOTICE file in any listed crate."
+    mpl = sorted(f"{r[0]} {r[1]}" for r in rows if "MPL-2.0" in r[3])
 
     o = []
     o.append("# Third-party notices\n\n")
@@ -271,6 +282,14 @@ def generate(root):
              "licence, reproduced in §4.1.\n")
     o.append("- The English word list in `blacksilk-crypto` (crypto/src/wordlist.rs) is the "
              "BIP-39 list; BIP-39 is published under the MIT licence (§4.2).\n\n")
+    o.append("**The Rust standard library.** `std`, `core`, `alloc` and the crates the "
+             "standard library vendors (for example `compiler_builtins`, `hashbrown`, "
+             "`gimli`, `addr2line`) are linked into every binary, under `MIT OR Apache-2.0`, "
+             "copyright The Rust Project Developers (the Apache-2.0 text is in §3). "
+             "The notices of the standard library's own vendored dependencies are not "
+             "collected here (a limitation of this file); they are in the Rust source "
+             "distribution of the toolchain used (`rust-src`, rustup component; "
+             "https://github.com/rust-lang/rust).\n\n")
     o.append("| Crate | Version | Licence |\n|---|---|---|\n")
     for p in own:
         o.append(f"| {p['name']} | {p['version']} | {cell(p.get('license') or '(none)')} |\n")
@@ -287,11 +306,18 @@ def generate(root):
     o.append("\n## 3. Apache License 2.0\n\n")
     o.append("The crates below include the Apache License 2.0 with the standard terms "
              "(their files differ at most in whitespace and in the appendix, whose filled-in "
-             "copyright lines are in §2). None of the listed crates ships a NOTICE file. "
+             "copyright lines are in §2). "
+             f"{notice_sentence} "
              "The text follows the list.\n\n")
     o.append(", ".join(sorted(apache_users)) + "\n\n")
     o.append(fence(canon_apache))
 
+    if mpl:
+        o.append("\n**MPL-2.0 (§3.2(a)).** The source code of the MPL-2.0 crates is available "
+                 "from crates.io: "
+                 + "; ".join(f"{m} at https://crates.io/crates/{m.split()[0]}/{m.split()[1]}"
+                             for m in mpl)
+                 + ". The MPL-2.0 text is in §4.\n")
     o.append("\n## 4. Other licence and notice texts\n\n")
     o.append("### 4.1 blacksilk-randomx (randomx/LICENSE)\n\n")
     o.append(fence(norm(read(os.path.join(root, "randomx", "LICENSE")))))
