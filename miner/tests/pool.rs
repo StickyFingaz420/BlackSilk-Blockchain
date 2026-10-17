@@ -40,6 +40,7 @@ fn timing() -> Timing {
         backoff_max: Duration::from_millis(200),
         stable: Duration::from_secs(600),
         reply_stall: Duration::from_secs(600),
+        reply_stall_drops: 0,
     }
 }
 
@@ -483,13 +484,17 @@ fn a_real_pool_accepts_shares() {
 
 /// A pool that stops answering submits: once 32 are outstanding the miner
 /// drops further shares (counted), and after the reply-stall timeout it
-/// ends the session and reconnects instead of mining blind.
+/// ends the session and reconnects instead of mining blind. The stall here
+/// also waits for one dropped share (`reply_stall_drops`), so the test does
+/// not depend on how fast it hashes.
 #[test]
 fn an_unanswering_pool_ends_the_session() {
     let _g = hashing();
     let pool = FakePool::new();
     let t = Timing {
-        reply_stall: Duration::from_secs(3),
+        reply_stall: Duration::from_secs(1),
+        reply_stall_drops: 1,
+        silence: Duration::from_secs(600),
         ..timing()
     };
     let client = start(pool.addr(), PoolMode::Solo, 300, t);
@@ -508,7 +513,7 @@ fn an_unanswering_pool_ends_the_session() {
     }
     let took = started.elapsed();
     assert_eq!(submits, 32, "the submit window");
-    assert!(took >= Duration::from_secs(3), "{took:?}");
+    assert!(took >= Duration::from_secs(1), "{took:?}");
     let mut c2 = pool.accept();
     c2.login("mode=solo;fee=300");
     let s = finish(client).expect("stopped cleanly");

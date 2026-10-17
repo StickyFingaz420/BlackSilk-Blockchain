@@ -58,8 +58,10 @@ Every message from the pool is untrusted:
   `algo` is `rx/blacksilk`; its `seed_hash` is 32 bytes. Nothing in a job is used as
   a path or a size.
 - The session id must be 16 hex characters. Pool-supplied text (errors, notices) is
-  logged with control and Unicode format characters (bidirectional overrides,
-  zero-width characters) replaced and cut at 2 048 characters. Per-job lines,
+  logged with control characters (including the C1 next line U+0085), the line and
+  paragraph separators U+2028 and U+2029, and Unicode format characters
+  (bidirectional overrides, zero-width characters) replaced and cut at 2 048
+  characters. Per-job lines,
   unknown-notification and dropped-share warnings are limited to one per second, with
   a count of the lines held back.
 

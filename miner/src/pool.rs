@@ -115,6 +115,10 @@ pub struct Timing {
     /// With `MAX_PENDING` (32) requests outstanding and no reply for this
     /// long, the session ends and the client reconnects.
     pub reply_stall: Duration,
+    /// The reply stall also needs this many shares dropped since the window
+    /// filled. Production: 0 (the timeout alone ends the session); a test
+    /// sets 1 so that it observes a dropped share however slowly it hashes.
+    pub reply_stall_drops: u64,
 }
 
 impl Default for Timing {
@@ -129,6 +133,7 @@ impl Default for Timing {
             backoff_max: Duration::from_secs(60),
             stable: Duration::from_secs(60),
             reply_stall: REPLY_STALL,
+            reply_stall_drops: 0,
         }
     }
 }
@@ -332,8 +337,16 @@ fn is_format_char(c: char) -> bool {
     )
 }
 
+/// Whether `c` is the line separator U+2028 (general category Zl) or the
+/// paragraph separator U+2029 (Zp). Neither is a control character, yet
+/// some log viewers break the line at them, so a pool could forge a line.
+fn is_line_separator(c: char) -> bool {
+    matches!(c, '\u{2028}' | '\u{2029}')
+}
+
 /// Pool-supplied text made safe for a log line: control characters (a
-/// terminal escape, a forged line break) and format characters (a
+/// terminal escape, a forged line break, the C1 next line U+0085), the line
+/// and paragraph separators U+2028 and U+2029, and format characters (a
 /// bidirectional override that reorders what the operator reads, a
 /// zero-width character) become `?`, and the text is cut at
 /// [`MAX_LOGGED`] characters.
@@ -342,7 +355,7 @@ pub fn printable(s: &str) -> String {
         .chars()
         .take(MAX_LOGGED)
         .map(|c| {
-            if c.is_control() || is_format_char(c) {
+            if c.is_control() || is_line_separator(c) || is_format_char(c) {
                 '?'
             } else {
                 c
@@ -760,6 +773,8 @@ struct Session {
     /// Since when the submit window has been full ([`MAX_PENDING`]
     /// outstanding) with no reply freeing a slot (the reply-stall timeout).
     full_since: Option<Instant>,
+    /// Shares dropped since `full_since` (reset with it).
+    dropped_while_full: u64,
     /// Rate limits for the per-job, unknown-notification and dropped-share
     /// log lines.
     job_log: Throttle,
@@ -882,6 +897,7 @@ impl Client {
             last_sent: now,
             last_heard: now,
             full_since: None,
+            dropped_while_full: 0,
             job_log: Throttle::default(),
             unknown_log: Throttle::default(),
             drop_log: Throttle::default(),
@@ -1069,7 +1085,10 @@ impl Client {
             }
             if s.pending.len() < MAX_PENDING {
                 s.full_since = None;
-            } else if now.duration_since(*s.full_since.get_or_insert(now)) >= t.reply_stall {
+                s.dropped_while_full = 0;
+            } else if now.duration_since(*s.full_since.get_or_insert(now)) >= t.reply_stall
+                && s.dropped_while_full >= t.reply_stall_drops
+            {
                 return Err(format!(
                     "{} requests outstanding and none answered for {:.0?}: the pool does not answer submits",
                     s.pending.len(),
@@ -1130,6 +1149,7 @@ impl Client {
                     }
                     if s.pending.len() >= MAX_PENDING {
                         self.summary.dropped += 1;
+                        s.dropped_while_full += 1;
                         if let Some(held) = s.drop_log.allow(Instant::now()) {
                             log::warn!(
                                 "share dropped: {MAX_PENDING} submits await the pool's reply{}",
@@ -1417,6 +1437,11 @@ mod tests {
             '\u{FEFF}',
             '\u{00AD}',
             '\u{E0041}',
+            // Line breaks other than ASCII ones: the C1 next line (a control
+            // character), the line and paragraph separators (Zl, Zp).
+            '\u{0085}',
+            '\u{2028}',
+            '\u{2029}',
         ] {
             assert_eq!(printable(&format!("a{c}b")), "a?b", "U+{:04X}", c as u32);
         }
