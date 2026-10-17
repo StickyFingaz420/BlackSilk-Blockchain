@@ -1598,3 +1598,65 @@ costs.
    pseudo-output commitments with a balance check, and range proofs, all over a
    single curve. The "quantum ring signature" should be removed and not
    advertised until a real, reviewed scheme exists.
+
+## Licence review 2026-10-17 (internal; not a legal audit)
+
+Internal engineering work on branch `chore/license-dual`, not merged when written. No
+lawyer reviewed it; it is neither legal advice nor an audit. Full record:
+[licence-provenance-2026-10-17.md](docs/reviews/licence-provenance-2026-10-17.md).
+
+**Findings.**
+- One author account (`StickyFingaz420`, two identities, 1,221 commits to 2026-10-16);
+  801 commits AI co-authored; no third-party contributor.
+- No GPL-family code in the tree; no file of uncertain origin among the code. Derived
+  parts: `randomx/` (port of tevador/RandomX, stays BSD-3-Clause with its notices),
+  `third_party/p3-*` (Plonky3, MIT OR Apache-2.0), the BIP-39 word list (MIT).
+- Result: root `LICENSE-MIT` ("The BlackSilk developers", kept by the owner) and
+  `LICENSE-APACHE`; `license = "MIT OR Apache-2.0"` in every crate outside `randomx/` and
+  `third_party/`.
+- `blacksilklogos/`: reserved as proprietary project assets by owner decision
+  ([blacksilklogos/NOTICE.md](blacksilklogos/NOTICE.md)). The one file with provenance metadata
+  carried a C2PA manifest (stripped in `6cf70f8`) naming ChatGPT / GPT-4o and an input
+  image; the others appear derived. Status per file: intended, uncertain; none confirmed.
+- `THIRD-PARTY-NOTICES.md` (225 third-party crates of the release build of node, miner,
+  wallet and genesis over the four release targets, licence texts included), generated
+  by `tools/third-party-notices.py`, shipped by `tools/release-build.sh` and the
+  Dockerfile.
+
+**Verification (2026-10-17, Windows, cargo-deny 0.20.2, Python 3.13).**
+
+| Command | Result |
+|---|---|
+| `cargo deny --offline check -D warnings` (root, `fuzz/`, `tools/tpgate/`; the workspaces with a deny.toml) | advisories, bans, licenses, sources ok (local advisory database) |
+| `cargo deny --offline list` (root, fuzz, contracts, contracts/fuzz, tpgate, zkvm/guests) | permissive licences only; MPL-2.0 option-ext; NCSA libfuzzer-sys in the fuzz workspaces only |
+| `python3 tools/third-party-notices.py --check`, twice; regenerate and `cmp` | current both times; byte-identical |
+| `bash .github/scripts/doc-lint.sh`; `bash .github/scripts/unicode-scan.sh` | clean; 0 findings |
+| `bash .github/scripts/consensus-gate.sh db12c0c HEAD`; `bash .github/scripts/lockfile-gate.sh db12c0c HEAD` | pass (trailers `none:`); no locked crate changed |
+| `cargo metadata --offline --no-deps` in all six workspaces | every manifest parses |
+
+**Limitations.** Provenance was read from history, comments and docs, not from a
+textual comparison with every possible upstream. Git history before the licence change
+(including the removed `legacy/`) was not reviewed and is not relicensed. The notices
+list is a union over binaries and targets; copyright lines are extracted mechanically
+(the verbatim texts govern). The guest ELFs and the release binaries were not rebuilt;
+`tools/release-build.sh`'s copy step was not run. The CI steps were not run on GitHub.
+
+**Remaining risks.**
+- AI-assisted authorship: protection of purely AI-generated code or images may be
+  limited in some jurisdictions; the licences grant whatever rights exist.
+- Logo provenance: AI-generated from an input image of unknown origin; the project's
+  claim to the images and marks is unconfirmed. No trademark search was made.
+- `third_party/p3-*` ship no licence texts (as published upstream); the texts are only in
+  `THIRD-PARTY-NOTICES.md`.
+- Notices obligations hold for every binary distribution; a distribution made outside
+  `tools/release-build.sh` or the Docker image must carry the files itself.
+
+**Decisions still requiring owner approval.**
+1. The README's inbound-contribution clause (kept as written, pending the owner).
+2. A DCO or CLA for outside contributions (none today).
+3. A policy on AI-assisted authorship (disclosure, review, attribution).
+4. Licence consistency with the separate Pool and Explorer projects (AGPL per the
+   owner; not in this repository and not reviewed here).
+5. Confirmation of the logo rights: the creation record (prompts, input image and its
+   source, service terms, human editing).
+6. Where Plonky3's licence texts live in the tree (outside the gated crate directories).
